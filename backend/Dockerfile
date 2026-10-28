@@ -10,6 +10,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Системные библиотеки для печатных форм в PDF (WeasyPrint) и шрифт с кириллицей.
+RUN apt-get update -o Acquire::Retries=5 \
+    && apt-get install -y --no-install-recommends -o Acquire::Retries=5 \
+       libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 # Этап 0 — образ для разработки (с инструментами проверок).
 # Отдельный образ для сервера клиники появится на этапе 4.
 COPY requirements.txt requirements-dev.txt ./

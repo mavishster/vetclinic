@@ -47,6 +47,7 @@ class DirectoryViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     model: ClassVar[type[Directory]]
     extra_fields: ClassVar[tuple[str, ...]] = ()
     filter_fields: ClassVar[tuple[str, ...]] = ()
+    serializer_base: ClassVar[type[DirectorySerializer]] = DirectorySerializer
 
     def get_serializer_class(self) -> type[DirectorySerializer]:
         meta = type(
@@ -54,7 +55,7 @@ class DirectoryViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             (),
             {"model": self.model, "fields": ["id", "name", "is_active", *self.extra_fields]},
         )
-        return type(f"{self.model.__name__}Serializer", (DirectorySerializer,), {"Meta": meta})
+        return type(f"{self.model.__name__}Serializer", (self.serializer_base,), {"Meta": meta})
 
     def get_queryset(self) -> QuerySet[Directory]:
         queryset = self.model.objects.all()

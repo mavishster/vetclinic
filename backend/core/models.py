@@ -403,3 +403,43 @@ class LedgerEntry(models.Model):
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         raise LedgerError("Записи журнала не удаляются: исправление — обратной записью.")
+
+
+# --- Печатные формы ---------------------------------------------------------------
+
+
+class PrintTemplate(Directory):
+    """Шаблон печатной формы: HTML с переменными {{ ... }} (core.printing).
+
+    Вид (kind) определяет, какие данные доступны: «счёт», «медкарта», «договор»…
+    Название уникально в пределах вида.
+    """
+
+    unique_within = ("kind",)
+
+    kind = models.CharField("вид", max_length=50)
+    body = models.TextField("шаблон (HTML)")
+
+    class Meta(Directory.Meta):
+        verbose_name = "печатная форма"
+        verbose_name_plural = "печатные формы"
+        ordering = ["kind", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                "kind",
+                Lower("name"),
+                condition=models.Q(is_deleted=False),
+                name="core_printtemplate_unique_name_in_kind",
+            )
+        ]
+
+    def clean(self) -> None:
+        from django.core.exceptions import ValidationError
+
+        from core import services
+        from core.printing import PrintTemplateError
+
+        try:
+            services.validate_print_template(self.kind, self.body)
+        except PrintTemplateError as error:
+            raise ValidationError({"body": str(error)}) from error

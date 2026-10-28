@@ -19,9 +19,9 @@ from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
-from core import events, numbering
+from core import events, numbering, printing
 from core.context import get_current_user
-from core.models import Clinic, Document, DocumentError, LedgerEntry, User
+from core.models import Clinic, Document, DocumentError, LedgerEntry, PrintTemplate, User
 
 
 class HealthStatus(TypedDict):
@@ -257,3 +257,40 @@ def reverse_entries[L: LedgerEntry](model: type[L], document: Document) -> list[
 
 
 _LEDGER_SERVICE_FIELDS = {"id", "created_at", "created_by", "node_id", "posted_at", "reversal_of"}
+
+
+# --- Печатные формы ----------------------------------------------------------------
+
+
+def common_print_context(user: User | None = None) -> dict[str, Any]:
+    """Переменные, доступные в любой печатной форме: clinic, user, today, now."""
+    user = user or get_current_user()
+    clinic = current_clinic()
+    now = timezone.localtime()
+    return {
+        "clinic": {"name": clinic.name, "address": clinic.address, "phone": clinic.phone},
+        "user": {
+            "full_name": user.full_name if user else "",
+            "short_name": user.short_name if user else "",
+        },
+        "today": now.date(),
+        "now": now,
+    }
+
+
+def validate_print_template(kind: str, body: str) -> None:
+    """Проверить шаблон на примере данных вида. Ошибка — PrintTemplateError."""
+    printing.validate(body, kind, common_print_context())
+
+
+def render_print(template: PrintTemplate, context: dict[str, Any]) -> bytes:
+    """Напечатать: шаблон + данные документа (+ общие переменные) → PDF."""
+    return printing.render_pdf(template.body, {**common_print_context(), **context})
+
+
+def render_print_sample(template: PrintTemplate, as_pdf: bool = True) -> bytes | str:
+    """Предпросмотр шаблона на примере данных его вида."""
+    context = {**common_print_context(), **printing.get_kind(template.kind).sample()}
+    if as_pdf:
+        return printing.render_pdf(template.body, context)
+    return printing.render_html(template.body, context)

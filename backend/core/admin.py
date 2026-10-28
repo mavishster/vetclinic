@@ -1,9 +1,12 @@
+from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from django.http import HttpResponse
+from django.utils.html import format_html_join
 from simple_history.admin import SimpleHistoryAdmin
 
-from core import services
-from core.models import Clinic, User
+from core import printing, services
+from core.models import Clinic, PrintTemplate, User
 
 
 @admin.register(User)
@@ -76,3 +79,52 @@ class DirectoryAdmin(SimpleHistoryAdmin):  # type: ignore[misc]
         for entry in queryset:
             entry.is_active = active
             entry.save(update_fields=["is_active"])
+
+
+class PrintTemplateForm(forms.ModelForm):  # type: ignore[type-arg]
+    kind = forms.ChoiceField(label="Вид", choices=())
+
+    class Meta:
+        model = PrintTemplate
+        fields = ("kind", "name", "is_active", "body")
+        widgets = {
+            "body": forms.Textarea(
+                attrs={"rows": 30, "style": "width: 100%; font-family: monospace;"}
+            )
+        }
+
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self.fields["kind"].choices = [(k.code, k.title) for k in printing.kinds()]
+
+
+@admin.register(PrintTemplate)
+class PrintTemplateAdmin(DirectoryAdmin):
+    form = PrintTemplateForm
+    list_display = ("name", "kind_title", "is_active")
+    list_filter = ("kind", "is_active")
+    readonly_fields = ("variables_help",)
+    fields = ("kind", "name", "is_active", "body", "variables_help")
+    actions = ("activate", "deactivate", "preview_pdf")
+
+    @admin.display(description="Вид")
+    def kind_title(self, template: PrintTemplate) -> str:
+        try:
+            return printing.get_kind(template.kind).title
+        except printing.PrintTemplateError:
+            return template.kind
+
+    @admin.display(description="Доступные переменные и фильтры")
+    def variables_help(self, template: PrintTemplate) -> str:
+        variables = dict(printing.COMMON_VARIABLES)
+        if template.kind:
+            variables.update(printing.get_kind(template.kind).variables)
+        rows = [(f"{{{{ {name} }}}}", text) for name, text in variables.items()]
+        rows += [(f"|{name}", text) for name, text in printing.FILTERS_HELP.items()]
+        return format_html_join("", "<div><code>{}</code> — {}</div>", rows)
+
+    @admin.action(description="Предпросмотр PDF на примере данных")
+    def preview_pdf(self, request, queryset):  # type: ignore[no-untyped-def]
+        template = queryset.first()
+        pdf = services.render_print_sample(template)
+        return HttpResponse(pdf, content_type="application/pdf")
