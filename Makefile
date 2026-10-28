@@ -1,6 +1,6 @@
 # Частые команды. Всё выполняется внутри контейнеров — на компьютере нужен только Docker.
 
-.PHONY: up down logs shell migrate migrations superuser test lint check
+.PHONY: up down logs shell migrate migrations superuser test lint check ping-worker
 
 up:            ## Запустить систему
 	@test -f .env || cp .env.example .env
@@ -24,6 +24,10 @@ migrations:    ## Создать миграции после изменения 
 
 superuser: migrate  ## Создать администратора (сначала применяются миграции)
 	docker compose exec backend python manage.py createsuperuser
+
+ping-worker:   ## Проверить фоновые задачи: результат — в админке, «Фоновые задачи → Successful tasks»
+	docker compose exec backend python manage.py shell -c "from core.tasks import run_in_background; run_in_background('core.tasks.ping')"
+	@echo "Задача отправлена. Через пару секунд она появится в админке: Фоновые задачи → Successful tasks"
 
 test:          ## Тесты
 	docker compose exec backend pytest

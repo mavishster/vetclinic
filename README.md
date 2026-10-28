@@ -36,6 +36,7 @@ make superuser   # создать администратора (логин, emai
 | `make test` | Только тесты |
 | `make migrations` / `make migrate` | Создать / применить миграции |
 | `make shell` | Консоль Django |
+| `make ping-worker` | Проверить фоновые задачи (результат — в админке, «Фоновые задачи») |
 
 ## Проверки перед коммитом
 
@@ -51,8 +52,9 @@ pre-commit install
 ## Структура
 
 ```
-backend/     Django: config/ + модули (core, clients, catalog, staff, scheduling,
-             medical, billing, inventory, cash, sync)
+backend/     Django: config/ и модули core, clients, catalog, staff, scheduling,
+             medical, billing, inventory, cash, sync; сервис worker выполняет
+             фоновые задачи из того же кода
 frontend/    Vue 3 + Quasar: src/modules/ — экраны по модулям
 docs/        PROJECT_PLAN.md и записи о решениях (adr/)
 ```

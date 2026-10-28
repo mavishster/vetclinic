@@ -8,3 +8,6 @@ from config.settings import *  # noqa: F403
 from config.settings import INSTALLED_APPS
 
 INSTALLED_APPS = [*INSTALLED_APPS, "core.tests.testapp"]
+
+# В тестах фоновые задачи выполняются сразу, без отдельного процесса.
+Q_CLUSTER = {**Q_CLUSTER, "sync": True}  # noqa: F405

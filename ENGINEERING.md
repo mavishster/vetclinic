@@ -42,6 +42,7 @@
 - Новый документ: модель наследует `core.models.Document`, задаёт `doc_type` (для нумерации) и при необходимости `on_execute()` / `on_rollback()`. Выполнение и откат — только `core.services.execute_document()` / `rollback_document()`.
 - Новый журнал движений: модель наследует `core.models.LedgerEntry`, в `amount_fields` перечисляет суммы. Записи — `services.post_entry()`, сторно — `services.reverse_entries()`. Остаток — сумма записей.
 - Реакция на чужие документы — подписка на `core.events.document_executed` / `document_rolled_back`. Получатель работает в той же транзакции; уведомления — через `transaction.on_commit()`.
+- Фоновая работа (SMS, напоминания, выгрузка) — `core.tasks.run_in_background("модуль.функция", ...)`: задача уходит в очередь только после фиксации транзакции и выполняется от имени того же пользователя. В тестах задачи выполняются сразу.
 - Механики ядра проверяются на примерах из `core/tests/testapp` (подключается только в тестах, `config/settings_test.py`).
 - Права: все API по умолчанию проверяют права роли (ADR-013). Открытый адрес — только с явным `permission_classes`. Важные операции подтверждаются `core.services.confirm_action(user, pin)` (ADR-014).
 - Журнал аудита ведётся автоматически для всех моделей на `BaseModel` (django-simple-history). Массовые изменения делайте через `save()` записей, а не `QuerySet.update()`, иначе они не попадут в журнал и не изменят версию.

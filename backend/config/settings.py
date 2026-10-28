@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "simple_history",
+    "django_q",
     *PROJECT_APPS,
 ]
 
@@ -132,4 +133,17 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "core.api.permissions.ModelPermissions",
     ],
+}
+
+# Фоновые задачи (Django-Q2): очередь хранится в самой PostgreSQL — отдельный Redis не нужен.
+# Задачи ставятся через core.tasks.run_in_background(), выполняет их сервис worker.
+Q_CLUSTER = {
+    "name": "vetclinic",
+    "orm": "default",
+    "workers": int(os.environ.get("TASK_WORKERS", "2")),
+    "timeout": 300,  # задача дольше 5 минут прерывается
+    "retry": 360,  # должно быть больше timeout
+    "max_attempts": 3,
+    "catch_up": False,  # пропущенные из-за выключения расписания не догоняются пачкой
+    "label": "Фоновые задачи",
 }
