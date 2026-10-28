@@ -55,11 +55,19 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.context.CurrentUserMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
+
+# Учётная запись сотрудника (ADR-022).
+AUTH_USER_MODEL = "core.User"
+
+# Код узла: локальный сервер клиники, облако… Пишется в каждую запись и в номера документов
+# (ADR-002, ADR-012). Латиница и цифры, коротко.
+NODE_ID = os.environ.get("NODE_ID", "K1")
 WSGI_APPLICATION = "config.wsgi.application"
 
 TEMPLATES = [
