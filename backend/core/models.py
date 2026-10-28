@@ -9,8 +9,10 @@ from typing import Any, TypeVar
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
+from django.contrib.contenttypes.fields import GenericForeignKey
 from django.db import models
 from django.db.models.functions import Lower
+from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from core.context import get_current_user
@@ -222,3 +224,182 @@ class Directory(BaseModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+# --- Нумерация документов (ADR-012) -----------------------------------------------
+
+
+class DocumentCounter(models.Model):
+    """Счётчик номеров по типу документа на узле.
+
+    Служебная таблица узла: не наследует BaseModel и не синхронизируется —
+    у каждого узла свои счётчики, а префикс узла в номере исключает совпадения.
+    """
+
+    doc_type = models.CharField(max_length=50)
+    node_id = models.CharField(max_length=16)
+    last_number = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["doc_type", "node_id"], name="core_counter_unique")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.doc_type}@{self.node_id}: {self.last_number}"
+
+
+# --- Базовый документ (ADR-005) ---------------------------------------------------
+
+
+class DocumentError(Exception):
+    """Операция с документом невозможна. Текст — для пользователя."""
+
+
+class Document(BaseModel):
+    """Основа документов: счёт, приход, расход, перемещение, инвентаризация, кассовые…
+
+    Жизненный цикл: черновик → выполнен → (откат) → черновик.
+    Выполненный документ не изменяется и не удаляется (ADR-005).
+    Выполнение и откат — только через core.services.execute_document / rollback_document.
+
+    Подкласс задаёт doc_type (для нумерации) и при необходимости переопределяет
+    on_execute() / on_rollback() — что сделать при выполнении и откате (проводки,
+    проверки). Ошибка в них отменяет операцию целиком.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "черновик"
+        EXECUTED = "executed", "выполнен"
+
+    doc_type: str = ""
+    # Статус, прочитанный из базы, и разрешение сменить статус (только из сервисов ядра).
+    _stored_status: str | None = None
+    _status_change: bool = False
+
+    number = models.CharField("номер", max_length=32, editable=False)
+    date = models.DateTimeField("дата", default=timezone.now, db_index=True)
+    status = models.CharField(
+        "статус", max_length=16, choices=Status.choices, default=Status.DRAFT, editable=False
+    )
+    executed_at = models.DateTimeField("выполнен", null=True, blank=True, editable=False)
+    executed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="выполнил",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name="+",
+    )
+    comment = models.TextField("комментарий", blank=True)
+
+    class Meta:
+        abstract = True
+        ordering = ["-date"]
+        constraints = [
+            models.UniqueConstraint(fields=["number"], name="%(app_label)s_%(class)s_unique_number")
+        ]
+
+    def __str__(self) -> str:
+        return f"№ {self.number}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self._state.adding and not self.number:
+            from core.numbering import next_number
+
+            self.number = next_number(self.doc_type)
+        if self._stored_status == self.Status.EXECUTED and not self._status_change:
+            raise DocumentError("Выполненный документ нельзя изменить. Сначала сделайте откат.")
+        super().save(*args, **kwargs)
+        self._stored_status = self.status
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        if self.is_executed:
+            raise DocumentError("Выполненный документ нельзя удалить. Сначала сделайте откат.")
+        return super().delete(*args, **kwargs)
+
+    @classmethod
+    def from_db(cls, db: Any, field_names: Any, values: Any) -> "Document":
+        instance = super().from_db(db, field_names, values)
+        instance._stored_status = instance.__dict__.get("status")
+        return instance
+
+    @property
+    def is_executed(self) -> bool:
+        return self.status == self.Status.EXECUTED
+
+    def on_execute(self) -> None:
+        """Что сделать при выполнении (проводки, проверки). По умолчанию — ничего."""
+
+    def on_rollback(self) -> None:
+        """Что сделать при откате (обратные проводки, проверки). По умолчанию — ничего."""
+
+
+# --- Журнал движений (ADR-004) ----------------------------------------------------
+
+
+class LedgerError(Exception):
+    """Попытка изменить или удалить запись журнала."""
+
+
+class LedgerQuerySet(models.QuerySet[_M]):
+    def delete(self) -> tuple[int, dict[str, int]]:
+        raise LedgerError("Записи журнала не удаляются: исправление — обратной записью.")
+
+
+class LedgerEntry(models.Model):
+    """Основа журналов движений: склад, касса, баланс клиента, долги поставщикам.
+
+    В журнал записи только добавляются (ADR-004). Остаток = сумма записей.
+    Исправление — обратной записью (reversal_of), а не правкой.
+
+    Подкласс добавляет свои измерения (товар, склад, касса, клиент…) и суммы,
+    а в amount_fields перечисляет поля, которые меняют знак в обратной записи.
+    """
+
+    amount_fields: tuple[str, ...] = ()
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    created_at = models.DateTimeField("записано", auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="записал",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name="+",
+    )
+    node_id = models.CharField("узел", max_length=16, default="", editable=False)
+    posted_at = models.DateTimeField("дата движения", default=timezone.now, db_index=True)
+    document_type = models.ForeignKey(
+        "contenttypes.ContentType", on_delete=models.PROTECT, related_name="+"
+    )
+    document_id = models.UUIDField()
+    document = GenericForeignKey("document_type", "document_id")
+    reversal_of = models.OneToOneField(
+        "self",
+        verbose_name="отменяет запись",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="reversed_by",
+    )
+
+    objects = LedgerQuerySet.as_manager()
+
+    class Meta:
+        abstract = True
+        ordering = ["posted_at", "created_at"]
+        indexes = [models.Index(fields=["document_type", "document_id"])]
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if not self._state.adding:
+            raise LedgerError("Записи журнала не изменяются: исправление — обратной записью.")
+        self.node_id = self.node_id or settings.NODE_ID
+        self.created_by = self.created_by or get_current_user()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise LedgerError("Записи журнала не удаляются: исправление — обратной записью.")

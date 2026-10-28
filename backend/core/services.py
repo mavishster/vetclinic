@@ -9,15 +9,19 @@
 
 import itertools
 from datetime import timedelta
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import Group, Permission
-from django.db import DatabaseError, connection
+from django.contrib.contenttypes.models import ContentType
+from django.db import DatabaseError, connection, transaction
+from django.db.models import QuerySet
 from django.utils import timezone
 
-from core.models import Clinic, User
+from core import events, numbering
+from core.context import get_current_user
+from core.models import Clinic, Document, DocumentError, LedgerEntry, User
 
 
 class HealthStatus(TypedDict):
@@ -156,3 +160,100 @@ def module_actions(role: Group, app_label: str) -> set[str]:
         if perms and all(perm.pk in granted for perm in perms):
             result.add(action)
     return result
+
+
+# --- Документы и журнал движений (ADR-004, ADR-005, ADR-012) ----------------------
+
+next_number = numbering.next_number
+
+
+def execute_document[D: Document](document: D) -> D:
+    """Выполнить документ: проверки и проводки (on_execute), статус, событие.
+
+    Всё в одной транзакции: если что-то не удалось — документ остаётся черновиком,
+    и ни одна проводка не сохраняется.
+    """
+    with transaction.atomic():
+        _lock(document)
+        if document.is_deleted:
+            raise DocumentError("Документ удалён.")
+        if document.is_executed:
+            raise DocumentError("Документ уже выполнен.")
+        document.on_execute()
+        document.status = Document.Status.EXECUTED
+        document.executed_at = timezone.now()
+        document.executed_by = get_current_user()
+        _save_status(document)
+        events.document_executed.send(sender=type(document), document=document)
+    return document
+
+
+def rollback_document[D: Document](document: D) -> D:
+    """Откатить выполненный документ: обратные проводки (on_rollback), статус «черновик»."""
+    with transaction.atomic():
+        _lock(document)
+        if not document.is_executed:
+            raise DocumentError("Откатить можно только выполненный документ.")
+        document.on_rollback()
+        document.status = Document.Status.DRAFT
+        document.executed_at = None
+        document.executed_by = None
+        _save_status(document)
+        events.document_rolled_back.send(sender=type(document), document=document)
+    return document
+
+
+def _lock(document: Document) -> None:
+    """Блокирует строку документа и сверяет статус: два человека не выполнят его дважды."""
+    stored = type(document).all_objects.select_for_update().get(pk=document.pk)
+    document.status = stored.status
+    document.is_deleted = stored.is_deleted
+    document._stored_status = stored.status
+
+
+def _save_status(document: Document) -> None:
+    document._status_change = True
+    try:
+        document.save(update_fields=["status", "executed_at", "executed_by"])
+    finally:
+        document._status_change = False
+
+
+def post_entry[L: LedgerEntry](model: type[L], document: Document, **fields: Any) -> L:
+    """Добавить запись в журнал движений от имени документа."""
+    entry: L = model.objects.create(
+        document_type=ContentType.objects.get_for_model(document),
+        document_id=document.pk,
+        **fields,
+    )
+    return entry
+
+
+def entries_of[L: LedgerEntry](model: type[L], document: Document) -> QuerySet[L]:
+    """Записи журнала, созданные документом (включая обратные)."""
+    return model.objects.filter(
+        document_type=ContentType.objects.get_for_model(document), document_id=document.pk
+    )
+
+
+def reverse_entries[L: LedgerEntry](model: type[L], document: Document) -> list[L]:
+    """Сторнировать действующие записи документа: каждая получает обратную запись.
+
+    Дата обратной записи — момент отката, поэтому отчёты «на дату» до отката
+    по-прежнему показывают исходное движение.
+    """
+    active = entries_of(model, document).filter(reversal_of__isnull=True, reversed_by__isnull=True)
+    reversals = []
+    for entry in active:
+        copy = {
+            field.name: getattr(entry, field.name)
+            for field in model._meta.concrete_fields
+            if field.name not in _LEDGER_SERVICE_FIELDS
+        }
+        for name in model.amount_fields:
+            copy[name] = -copy[name]
+        reversals.append(model.objects.create(**copy, reversal_of=entry, posted_at=timezone.now()))
+    return reversals
+
+
+_LEDGER_SERVICE_FIELDS = {"id", "created_at", "created_by", "node_id", "posted_at", "reversal_of"}
