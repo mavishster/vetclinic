@@ -1,0 +1,12 @@
+// Фирменные цвета интерфейса. Меняются здесь — и везде сразу.
+$primary: #24566a;   // петроль — основной
+$secondary: #5e7f66; // шалфей
+$accent: #b5832a;    // охра
+$positive: #3c7a4e;
+$negative: #b23a3a;
+$warning: #c98a1b;
+$info: #3a6f8f;
+$dark: #1d2326;
+
+// Системные шрифты: интерфейс работает в локальной сети без интернета (ADR-021).
+$typography-font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;

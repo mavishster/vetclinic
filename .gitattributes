@@ -1,0 +1,9 @@
+# Единые переводы строк (LF) для macOS и Windows — без «изменённых» файлов на ровном месте.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.ico binary
+*.woff2 binary

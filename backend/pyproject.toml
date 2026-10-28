@@ -1,0 +1,84 @@
+# Настройки инструментов качества кода. Зависимости — в requirements*.txt.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["*/migrations/*"]
+
+[tool.ruff.lint]
+# E/W — стиль, F — ошибки, I — порядок импортов, B — типичные баги,
+# UP — современный синтаксис, DJ — правила Django, SIM — упрощения.
+select = ["E", "W", "F", "I", "B", "UP", "DJ", "SIM"]
+
+[tool.mypy]
+# Типы обязательны в публичных входах модулей (ENGINEERING.md).
+files = ["*/services.py"]
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+strict = true
+ignore_missing_imports = false
+
+[tool.django-stubs]
+django_settings_module = "config.settings"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py"]
+addopts = "--strict-markers"
+
+# Границы модулей (PROJECT_PLAN, 4.2): верхний уровень может импортировать нижний,
+# но не наоборот. Через ":" перечислены модули одного уровня — им можно
+# пользоваться друг другом, но только через services.py (контракты ниже).
+[tool.importlinter]
+root_packages = [
+    "config", "core", "clients", "catalog", "staff",
+    "scheduling", "medical", "billing", "inventory", "cash", "sync",
+]
+
+[[tool.importlinter.contracts]]
+name = "Уровни модулей"
+type = "layers"
+layers = [
+    "config",
+    "sync",
+    "scheduling : medical : billing : inventory : cash",
+    "clients : catalog : staff",
+    "core",
+]
+
+# Модули операционного уровня общаются друг с другом только через services.py:
+# чужие models и api недоступны (PROJECT_PLAN, 4.3, правила 1–2).
+
+[[tool.importlinter.contracts]]
+name = "Внутренности календаря закрыты"
+type = "forbidden"
+source_modules = ["medical", "billing", "inventory", "cash"]
+forbidden_modules = ["scheduling.models", "scheduling.api"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Внутренности медкарты закрыты"
+type = "forbidden"
+source_modules = ["scheduling", "billing", "inventory", "cash"]
+forbidden_modules = ["medical.models", "medical.api"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Внутренности счетов закрыты"
+type = "forbidden"
+source_modules = ["scheduling", "medical", "inventory", "cash"]
+forbidden_modules = ["billing.models", "billing.api"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Внутренности склада закрыты"
+type = "forbidden"
+source_modules = ["scheduling", "medical", "billing", "cash"]
+forbidden_modules = ["inventory.models", "inventory.api"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Внутренности кассы закрыты"
+type = "forbidden"
+source_modules = ["scheduling", "medical", "billing", "inventory"]
+forbidden_modules = ["cash.models", "cash.api"]
+allow_indirect_imports = true

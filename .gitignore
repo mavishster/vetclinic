@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+backend/media/
+backend/staticfiles/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+.idea/
+.vscode/
+.import_linter_cache/

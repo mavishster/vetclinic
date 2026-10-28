@@ -1,0 +1,55 @@
+# Окружение разработки: одна команда — `make up` (или `docker compose up --build`).
+# Конфигурация сервера клиники появится на этапе 4 (ADR-021).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vetclinic}
+      POSTGRES_USER: ${POSTGRES_USER:-vetclinic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vetclinic}
+    volumes:
+      # Данные — в томе Docker, а не в папке хоста: быстрее и без проблем с правами на Windows.
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    image: node:22-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    environment:
+      VITE_API_TARGET: http://backend:8000
+    volumes:
+      - ./frontend:/app
+      # node_modules — в отдельном томе: быстрее на macOS и не смешивается с хостом.
+      - node_modules:/app/node_modules
+    ports:
+      - "9000:9000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  node_modules:
