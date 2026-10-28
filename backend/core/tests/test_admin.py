@@ -30,3 +30,22 @@ def test_clinic_admin_pages_open(admin_client) -> None:
     assert admin_client.get(reverse("admin:core_clinic_changelist")).status_code == 200
     url = reverse("admin:core_clinic_change", args=[clinic.pk])
     assert admin_client.get(url).status_code == 200
+
+
+def test_user_can_be_created_with_full_name(admin_client) -> None:
+    response = admin_client.post(
+        reverse("admin:core_user_add"),
+        {
+            "username": "petrova",
+            "last_name": "Петрова",
+            "first_name": "Мария",
+            "middle_name": "Сергеевна",
+            "usable_password": "true",
+            "password1": "Vet-clinic-2026",
+            "password2": "Vet-clinic-2026",
+        },
+    )
+
+    assert response.status_code == 302
+    created = get_user_model().objects.get(username="petrova")
+    assert created.full_name == "Петрова Мария Сергеевна"

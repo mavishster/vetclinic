@@ -22,7 +22,7 @@ migrate:       ## Применить миграции
 migrations:    ## Создать миграции после изменения моделей
 	docker compose exec backend python manage.py makemigrations
 
-superuser:     ## Создать администратора
+superuser: migrate  ## Создать администратора (сначала применяются миграции)
 	docker compose exec backend python manage.py createsuperuser
 
 test:          ## Тесты

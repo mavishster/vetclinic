@@ -10,6 +10,7 @@ from typing import Any, TypeVar
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils import timezone
 
 from core.context import get_current_user
@@ -154,6 +155,38 @@ class Clinic(BaseModel):
     class Meta:
         verbose_name = "клиника"
         verbose_name_plural = "клиники"
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Directory(BaseModel):
+    """Справочник: виды животных, породы, цели обращения, города… (DRY, PROJECT_PLAN 3.2).
+
+    - is_active=False — запись больше не предлагается для выбора, но остаётся
+      в старых документах и карточках («деактивировать»);
+    - delete() — мягкое удаление ошибочной записи (ADR-003);
+    - название уникально без учёта регистра среди неудалённых записей.
+
+    Если уникальность нужна в пределах другого поля (порода — в пределах вида),
+    модель задаёт unique_within и своё ограничение в Meta.constraints.
+    """
+
+    unique_within: tuple[str, ...] = ()
+
+    name = models.CharField("название", max_length=200)
+    is_active = models.BooleanField("активна", default=True, db_index=True)
+
+    class Meta:
+        abstract = True
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"),
+                condition=models.Q(is_deleted=False),
+                name="%(app_label)s_%(class)s_unique_name",
+            )
+        ]
 
     def __str__(self) -> str:
         return self.name
