@@ -11,9 +11,14 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.db.models.functions import Lower
-from django.utils import timezone
+from simple_history.models import HistoricalRecords
 
 from core.context import get_current_user
+
+
+def _history_user(**kwargs: Any) -> Any:
+    """Кто сделал изменение — для журнала аудита (тот же источник, что и updated_by)."""
+    return get_current_user()
 
 
 class User(AbstractUser):
@@ -31,6 +36,22 @@ class User(AbstractUser):
     updated_at = models.DateTimeField("изменён", auto_now=True)
     version = models.PositiveIntegerField("версия", default=1, editable=False)
 
+    # ПИН для подтверждения операций (ADR-014). Хранится только хеш.
+    pin_hash = models.CharField("ПИН (хеш)", max_length=128, blank=True, editable=False)
+    pin_failed_attempts = models.PositiveSmallIntegerField(default=0, editable=False)
+    pin_locked_until = models.DateTimeField(null=True, blank=True, editable=False)
+
+    history = HistoricalRecords(
+        get_user=_history_user,
+        excluded_fields=[
+            "password",
+            "last_login",
+            "pin_hash",
+            "pin_failed_attempts",
+            "pin_locked_until",
+        ],
+    )
+
     class Meta:
         verbose_name = "пользователь"
         verbose_name_plural = "пользователи"
@@ -38,6 +59,10 @@ class User(AbstractUser):
 
     def __str__(self) -> str:
         return self.short_name or self.username
+
+    @property
+    def has_pin(self) -> bool:
+        return bool(self.pin_hash)
 
     @property
     def full_name(self) -> str:
@@ -56,16 +81,21 @@ class User(AbstractUser):
         super().save(*args, **kwargs)
 
 
-_M = TypeVar("_M", bound="BaseModel")
+_M = TypeVar("_M", bound=models.Model)
 
 
 class SoftDeleteQuerySet(models.QuerySet[_M]):
-    """Удаление набора записей — тоже мягкое: записи только помечаются (ADR-003)."""
+    """Удаление набора записей — тоже мягкое: записи только помечаются (ADR-003).
+
+    Удаляем по одной через save(): так растёт версия, пишется «кто изменил»
+    и запись попадает в журнал аудита. Для объёмов клиники это не медленно.
+    """
 
     def delete(self) -> tuple[int, dict[str, int]]:
-        count = self.update(
-            is_deleted=True, version=models.F("version") + 1, updated_at=timezone.now()
-        )
+        count = 0
+        for record in self:
+            record.delete()
+            count += 1
         return count, {self.model._meta.label: count}
 
 
@@ -112,6 +142,8 @@ class BaseModel(models.Model):
     version = models.PositiveIntegerField("версия", default=1, editable=False)
     node_id = models.CharField("узел", max_length=16, default="", editable=False)
     is_deleted = models.BooleanField("удалено", default=False, db_index=True, editable=False)
+
+    history = HistoricalRecords(inherit=True, get_user=_history_user)
 
     objects = ActiveManager()
     all_objects = models.Manager()  # noqa: DJ012 — порядок важен: первый менеджер — по умолчанию

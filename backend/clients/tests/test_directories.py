@@ -2,17 +2,27 @@
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.db import IntegrityError
 from rest_framework.test import APIClient
 
 from clients.models import Breed, Species
+from core import services
+
+
+def client_with_role(username: str, actions: set[str]) -> APIClient:
+    role = Group.objects.create(name=f"Роль {username}")
+    services.set_module_permissions(role, "clients", actions)
+    user = get_user_model().objects.create_user(username=username, password="x")
+    user.groups.add(role)
+    client = APIClient()
+    client.force_authenticate(user)
+    return client
 
 
 @pytest.fixture
 def api(db):
-    client = APIClient()
-    client.force_authenticate(get_user_model().objects.create_user(username="u", password="x"))
-    return client
+    return client_with_role("registrar", {"view", "edit", "delete"})
 
 
 @pytest.fixture
@@ -51,6 +61,19 @@ def test_same_breed_name_allowed_in_different_species(cats) -> None:
 
 def test_api_requires_login(db) -> None:
     assert APIClient().get("/api/clients/species/").status_code == 403
+
+
+def test_api_without_role_is_forbidden(db) -> None:
+    client = client_with_role("guest", set())
+
+    assert client.get("/api/clients/species/").status_code == 403
+
+
+def test_view_only_role_can_read_but_not_change(db) -> None:
+    client = client_with_role("viewer", {"view"})
+
+    assert client.get("/api/clients/species/").status_code == 200
+    assert client.post("/api/clients/species/", {"name": "Ежи"}, format="json").status_code == 403
 
 
 def test_api_list_is_sorted_and_filters_by_activity_and_search(api, cats) -> None:

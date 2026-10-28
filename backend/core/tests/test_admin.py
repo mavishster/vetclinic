@@ -49,3 +49,21 @@ def test_user_can_be_created_with_full_name(admin_client) -> None:
     assert response.status_code == 302
     created = get_user_model().objects.get(username="petrova")
     assert created.full_name == "Петрова Мария Сергеевна"
+
+
+def test_history_page_opens(admin_client) -> None:
+    url = reverse("admin:core_clinic_history", args=[services.current_clinic().pk])
+
+    assert admin_client.get(url).status_code == 200
+
+
+def test_reset_pin_action(admin_client) -> None:
+    services.set_pin(admin_client.admin_user, "2580")
+
+    admin_client.post(
+        reverse("admin:core_user_changelist"),
+        {"action": "reset_pin", "_selected_action": [str(admin_client.admin_user.pk)]},
+    )
+
+    admin_client.admin_user.refresh_from_db()
+    assert not admin_client.admin_user.has_pin

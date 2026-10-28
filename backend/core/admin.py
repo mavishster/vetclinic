@@ -1,15 +1,20 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from simple_history.admin import SimpleHistoryAdmin
 
+from core import services
 from core.models import Clinic, User
 
 
 @admin.register(User)
-class UserAdmin(DjangoUserAdmin):
-    list_display = ("username", "last_name", "first_name", "middle_name", "is_active", "is_staff")
+class UserAdmin(SimpleHistoryAdmin, DjangoUserAdmin):
+    list_display = ("username", "last_name", "first_name", "middle_name", "is_active", "has_pin")
+    readonly_fields = ("has_pin",)
+    actions = ("reset_pin",)
     fieldsets = (
         (None, {"fields": ("username", "password")}),
         ("ФИО и контакты", {"fields": ("last_name", "first_name", "middle_name", "email")}),
+        ("ПИН для подтверждения операций", {"fields": ("has_pin",)}),
         (
             "Права",
             {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")},
@@ -34,13 +39,22 @@ class UserAdmin(DjangoUserAdmin):
         ),
     )
 
+    @admin.display(description="ПИН задан", boolean=True)
+    def has_pin(self, user: User) -> bool:
+        return user.has_pin
+
+    @admin.action(description="Сбросить ПИН выбранным")
+    def reset_pin(self, request, queryset):  # type: ignore[no-untyped-def]
+        for user in queryset:
+            services.reset_pin(user)
+
 
 @admin.register(Clinic)
-class ClinicAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class ClinicAdmin(SimpleHistoryAdmin):  # type: ignore[misc]
     list_display = ("name", "address", "phone")
 
 
-class DirectoryAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class DirectoryAdmin(SimpleHistoryAdmin):  # type: ignore[misc]
     """Общая админка справочников (DRY): поиск, фильтр, действия активации."""
 
     list_display = ("name", "is_active")

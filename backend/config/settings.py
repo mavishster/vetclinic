@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "simple_history",
     *PROJECT_APPS,
 ]
 
@@ -64,6 +65,10 @@ ROOT_URLCONF = "config.urls"
 
 # Учётная запись сотрудника (ADR-022).
 AUTH_USER_MODEL = "core.User"
+
+# ПИН-код для подтверждения операций (ADR-014): после N неверных попыток — блокировка.
+PIN_MAX_ATTEMPTS = 5
+PIN_LOCK_MINUTES = 15
 
 # Код узла: локальный сервер клиники, облако… Пишется в каждую запись и в номера документов
 # (ADR-002, ADR-012). Латиница и цифры, коротко.
@@ -123,7 +128,8 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
     ],
+    # Права по ролям для каждого API (ADR-013). Открытые исключения объявляются явно.
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
+        "core.api.permissions.ModelPermissions",
     ],
 }
