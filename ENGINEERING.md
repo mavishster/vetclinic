@@ -37,7 +37,7 @@
 
 - Деньги — `Decimal(12,2)`, количества — `Decimal(14,3)`; `float` для денег и количеств запрещён (ADR-011).
 - Время — всегда с часовым поясом.
-- Все модели наследуют `core.models.BaseModel`: UUID, служебные поля, мягкое удаление (ADR-002, ADR-003). Деньги и количества — `core.fields.MoneyField` и `QuantityField`.
+- Все модели наследуют `core.models.BaseModel` (данные клиники — `ClinicScopedModel`): UUID, служебные поля, мягкое удаление (ADR-002, ADR-003). Деньги и количества — `core.fields.MoneyField` и `QuantityField`.
 - Новый справочник: модель наследует `core.models.Directory`, API — `core.api.directories.DirectoryViewSet`, админка — `core.admin.DirectoryAdmin`. Обычно это несколько строк (пример — `clients`: виды и породы).
 - Новый документ: модель наследует `core.models.Document`, задаёт `doc_type` (для нумерации) и при необходимости `on_execute()` / `on_rollback()`. Выполнение и откат — только `core.services.execute_document()` / `rollback_document()`.
 - Новый журнал движений: модель наследует `core.models.LedgerEntry`, в `amount_fields` перечисляет суммы. Записи — `services.post_entry()`, сторно — `services.reverse_entries()`. Остаток — сумма записей.

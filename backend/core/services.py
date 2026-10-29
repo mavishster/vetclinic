@@ -22,7 +22,15 @@ from django.utils import timezone
 
 from core import events, numbering, printing
 from core.context import get_current_user
-from core.models import Clinic, Document, DocumentError, LedgerEntry, PrintTemplate, User
+from core.models import (
+    Clinic,
+    Directory,
+    Document,
+    DocumentError,
+    LedgerEntry,
+    PrintTemplate,
+    User,
+)
 
 
 class HealthStatus(TypedDict):
@@ -155,11 +163,17 @@ def permission_modules() -> list[PermissionModule]:
     result: list[PermissionModule] = []
     for app in settings.PROJECT_APPS:
         config = apps.get_app_config(app)
-        entities: list[PermissionEntity] = [
-            {"code": model._meta.label_lower, "title": _entity_title(model)}
+        models_with_rights = [
+            model
             for model in config.get_models()
             if model._meta.default_permissions
             and not model._meta.label_lower.split(".")[1].startswith("historical")
+        ]
+        # Сначала основные данные раздела (клиенты, документы), затем справочники.
+        models_with_rights.sort(key=lambda model: issubclass(model, Directory))
+        entities: list[PermissionEntity] = [
+            {"code": model._meta.label_lower, "title": _entity_title(model)}
+            for model in models_with_rights
         ]
         entities += [
             {"code": code, "title": _ENTITY_TITLES[code]} for code in _EXTRA_ENTITIES.get(app, [])

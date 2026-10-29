@@ -1,0 +1,128 @@
+<template>
+  <q-page padding>
+    <div v-if="!client" class="flex flex-center q-pa-xl">
+      <q-spinner v-if="loading" size="40px" color="primary" />
+      <div v-else class="text-grey-7">Клиент не найден.</div>
+    </div>
+
+    <template v-else>
+      <div class="row items-center q-gutter-sm q-mb-md">
+        <q-btn flat round dense icon="arrow_back" to="/clients" />
+        <h1 class="text-h5 q-my-none">{{ client.full_name }}</h1>
+        <q-badge v-for="badge in clientBadges(client)" :key="badge.label" :color="badge.color" :label="badge.label" />
+        <q-space />
+        <q-btn v-if="can('clients.change_client')" outline color="primary" icon="edit" label="Изменить"
+          @click="editorOpen = true" />
+        <q-btn v-if="can('clients.change_client')" flat :icon="client.status === 'inactive' ? 'restore' : 'block'"
+          :label="client.status === 'inactive' ? 'Активировать' : 'Деактивировать'" @click="toggleStatus" />
+        <q-btn v-if="can('clients.delete_client')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
+      </div>
+
+      <div class="row q-col-gutter-md">
+        <div class="col-12 col-md-5">
+          <q-card flat bordered>
+            <q-list dense>
+              <q-item v-for="phone in client.phones" :key="phone.number">
+                <q-item-section avatar><q-icon :name="phone.is_primary ? 'phone' : 'phone_in_talk'" color="primary" /></q-item-section>
+                <q-item-section>
+                  <q-item-label><a :href="`tel:${phone.number}`" class="text-primary">{{ phone.number }}</a></q-item-label>
+                  <q-item-label caption>{{ kindLabel(phone.kind) }}{{ phone.is_primary ? ' · основной' : '' }}</q-item-label>
+                </q-item-section>
+              </q-item>
+              <q-item v-if="!client.phones.length">
+                <q-item-section class="text-grey-7">Телефон не указан</q-item-section>
+              </q-item>
+              <q-separator spaced />
+              <q-item v-for="row in details" :key="row.label">
+                <q-item-section class="text-grey-7 col-5">{{ row.label }}</q-item-section>
+                <q-item-section>{{ row.value }}</q-item-section>
+              </q-item>
+            </q-list>
+            <q-card-section v-if="client.description" class="text-body2" style="white-space: pre-line">
+              {{ client.description }}
+            </q-card-section>
+          </q-card>
+        </div>
+
+        <div class="col-12 col-md-7">
+          <q-card flat bordered>
+            <q-card-section class="row items-center">
+              <div class="text-subtitle1 col">Питомцы</div>
+            </q-card-section>
+            <q-card-section class="text-grey-7 q-pt-none">
+              Питомцы появятся на следующем шаге. Затем здесь же будут договоры и файлы,
+              а на этапе 3 — медкарты, счета и оплаты.
+            </q-card-section>
+          </q-card>
+        </div>
+      </div>
+
+      <ClientEditDialog v-model="editorOpen" :client="client" @saved="(data) => (client = data)" />
+    </template>
+  </q-page>
+</template>
+
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { useQuasar } from 'quasar'
+import { apiDelete, apiGet, apiPatch } from '@/api'
+import { can } from '@/session'
+import ClientEditDialog from './ClientEditDialog.vue'
+import { clientBadges, PHONE_KINDS } from './statuses'
+
+const props = defineProps({ id: { type: String, required: true } })
+const $q = useQuasar()
+const router = useRouter()
+const client = ref(null)
+const loading = ref(true)
+const editorOpen = ref(false)
+
+const kindLabel = (kind) => PHONE_KINDS.find((k) => k.value === kind)?.label ?? kind
+const address = computed(() =>
+  [client.value.city_name, client.value.street_name, client.value.house, client.value.zip_code].filter(Boolean).join(', '),
+)
+const details = computed(() =>
+  [
+    { label: 'Адрес', value: address.value },
+    { label: 'Email', value: client.value.email },
+    { label: 'Скидка', value: Number(client.value.discount_percent) ? `${Number(client.value.discount_percent)} %` : '' },
+    { label: '№ по журналу', value: client.value.journal_number },
+    { label: 'Дисконтная карта', value: client.value.discount_card },
+    { label: 'Тип', value: client.value.client_type_name },
+    { label: 'Как нашли', value: client.value.source_name },
+    { label: 'Паспорт', value: client.value.passport },
+    { label: 'Рассылки', value: client.value.no_mailing ? 'отказался' : '' },
+  ].filter((row) => row.value),
+)
+
+async function load() {
+  loading.value = true
+  const { ok, data } = await apiGet(`clients/clients/${props.id}/`)
+  client.value = ok ? data : null
+  loading.value = false
+}
+
+async function toggleStatus() {
+  const status = client.value.status === 'inactive' ? 'active' : 'inactive'
+  const { ok, data } = await apiPatch(`clients/clients/${client.value.id}/`, { status })
+  if (ok) client.value = data
+  else $q.notify({ type: 'negative', message: 'Не удалось изменить статус' })
+}
+
+function remove() {
+  $q.dialog({
+    title: 'Удалить клиента?',
+    message: 'Удаляйте только ошибочно созданные карточки. Если клиент просто больше не ходит — деактивируйте его.',
+    cancel: { label: 'Отмена', flat: true },
+    ok: { label: 'Удалить', color: 'negative', unelevated: true },
+    persistent: true,
+  }).onOk(async () => {
+    const { ok } = await apiDelete(`clients/clients/${client.value.id}/`)
+    if (ok) router.push('/clients')
+    else $q.notify({ type: 'negative', message: 'Не удалось удалить клиента' })
+  })
+}
+
+onMounted(load)
+</script>

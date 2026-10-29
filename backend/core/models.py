@@ -194,6 +194,32 @@ class Clinic(BaseModel):
         return self.name
 
 
+def default_clinic_id() -> uuid.UUID | None:
+    """Клиника по умолчанию для новых записей (в первой версии клиника одна)."""
+    clinic = Clinic.objects.order_by("created_at").only("id").first()
+    return clinic.id if clinic else None
+
+
+class ClinicScopedModel(BaseModel):
+    """Запись, принадлежащая клинике (филиалу): клиенты, документы… (ADR-002).
+
+    В первой версии клиника одна и подставляется сама. Когда появится второй филиал,
+    по этому полю будут разделяться данные — без переделки таблиц.
+    """
+
+    clinic = models.ForeignKey(
+        Clinic,
+        verbose_name="клиника",
+        on_delete=models.PROTECT,
+        default=default_clinic_id,
+        related_name="+",
+        editable=False,
+    )
+
+    class Meta:
+        abstract = True
+
+
 class Directory(BaseModel):
     """Справочник: виды животных, породы, цели обращения, города… (DRY, PROJECT_PLAN 3.2).
 

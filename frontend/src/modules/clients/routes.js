@@ -1,22 +1,20 @@
 import DirectoryPage from '@/components/DirectoryPage.vue'
 
-// Справочники модуля «Клиенты и питомцы» — общий экран DirectoryPage с параметрами.
+// Справочник — общий экран DirectoryPage с параметрами (DRY).
+const directory = (path, title, permission, fields = []) => ({
+  path: `directories/${path}`,
+  component: DirectoryPage,
+  props: { title, endpoint: `clients/${path}/`, permission: `clients.${permission}`, fields },
+  meta: { perm: `clients.view_${permission}` },
+})
+
 export default [
-  {
-    path: 'directories/species',
-    component: DirectoryPage,
-    props: { title: 'Виды животных', endpoint: 'clients/species/', permission: 'clients.species' },
-    meta: { perm: 'clients.view_species' },
-  },
-  {
-    path: 'directories/breeds',
-    component: DirectoryPage,
-    props: {
-      title: 'Породы',
-      endpoint: 'clients/breeds/',
-      permission: 'clients.breed',
-      fields: [{ name: 'species', label: 'Вид', endpoint: 'clients/species/' }],
-    },
-    meta: { perm: 'clients.view_breed' },
-  },
+  { path: 'clients', component: () => import('./ClientsPage.vue'), meta: { perm: 'clients.view_client' } },
+  { path: 'clients/:id', component: () => import('./ClientPage.vue'), props: true, meta: { perm: 'clients.view_client' } },
+  directory('species', 'Виды животных', 'species'),
+  directory('breeds', 'Породы', 'breed', [{ name: 'species', label: 'Вид', endpoint: 'clients/species/' }]),
+  directory('cities', 'Города', 'city'),
+  directory('streets', 'Улицы', 'street', [{ name: 'city', label: 'Город', endpoint: 'clients/cities/' }]),
+  directory('client-types', 'Типы клиентов', 'clienttype'),
+  directory('client-sources', 'Как нашли клинику', 'clientsource'),
 ]

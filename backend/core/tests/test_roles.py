@@ -52,8 +52,8 @@ def test_entity_permissions_are_independent(role) -> None:
 
 
 def test_module_actions_are_common_to_all_entities(role) -> None:
+    services.set_module_permissions(role, "clients", {"view"})
     services.set_entity_permissions(role, "clients.species", {"view", "edit"})
-    services.set_entity_permissions(role, "clients.breed", {"view"})
 
     assert services.module_actions(role, "clients") == {"view"}
 
@@ -64,7 +64,8 @@ def test_matrix_shows_entities_and_hides_service_tables() -> None:
     core_entities = [e["code"] for e in modules["core"]["entities"]]
     assert modules["core"]["title"] == "Администрирование"
     assert core_entities == ["core.user", "core.clinic", "core.printtemplate", "auth.group"]
-    assert [e["title"] for e in modules["clients"]["entities"]] == ["Виды животных", "Породы"]
+    titles = [e["title"] for e in modules["clients"]["entities"]]
+    assert titles[:3] == ["Клиенты", "Виды животных", "Породы"]
 
 
 def test_unknown_entity_is_rejected(role) -> None:
