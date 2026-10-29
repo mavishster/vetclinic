@@ -178,3 +178,42 @@ def upcoming_for_client(client: Client) -> QuerySet[Appointment]:
     return Appointment.objects.filter(
         Q(client=client), status__in=ACTIVE, end__gte=timezone.now()
     ).select_related("pet", "doctor", "purpose")
+
+
+def purpose_of_kind(kind: str) -> VisitPurpose | None:
+    """Первая активная цель обращения данного вида — например, «вакцинация»."""
+    return VisitPurpose.objects.filter(kind=kind, is_active=True).order_by("name").first()
+
+
+def default_purpose() -> VisitPurpose | None:
+    """Цель по умолчанию — первая из обычных приёмов в порядке добавления («Первичный»)."""
+    general = VisitPurpose.objects.filter(is_active=True, kind=VisitPurpose.Kind.GENERAL)
+    return general.order_by("created_at").first()
+
+
+def mark_in_progress(appointment: Appointment) -> None:
+    """Врач открыл медкарту по записи — приём «у врача» (если ещё не начат)."""
+    if appointment.status in (S.PLANNED, S.WAITING, S.NO_SHOW):
+        change_status(appointment, S.IN_PROGRESS)
+
+
+def mark_completed(appointment: Appointment) -> None:
+    if appointment.status == S.IN_PROGRESS:
+        change_status(appointment, S.COMPLETED)
+
+
+def book_repeat(
+    client: Client, pet: Any, doctor: Any, start: datetime, purpose_kind: str, note: str = ""
+) -> Appointment:
+    """Запланировать повторный визит (например, на дату ревакцинации) — без предупреждений."""
+    purpose = purpose_of_kind(purpose_kind) or default_purpose()
+    appointment = Appointment(
+        client=client, pet=pet, doctor=doctor, purpose=purpose, start=start,
+        end=default_end(start, purpose), note=note, source=Appointment.Source.VACCINATION,
+    )  # fmt: skip
+    return save_appointment(appointment, force=True)
+
+
+def get_appointment(pk: Any) -> Appointment | None:
+    """Запись на приём по id — для других модулей (медкарта открывает приём по записи)."""
+    return Appointment.objects.select_related("pet", "purpose", "doctor").filter(pk=pk).first()

@@ -320,3 +320,15 @@ def combination_price(combination: Item) -> Decimal | None:
 def reset_combination_prices(combination: Item) -> None:
     """Сбросить свои цены позиций — дальше они идут по текущему прайсу."""
     combination.lines.update(price_override=None)
+
+
+def vaccines() -> QuerySet[Item]:
+    """Вакцины — товары из групп с отметкой «показывать в вакцинациях»."""
+    return Item.objects.filter(
+        kind=Kind.GOODS, is_active=True, group__show_in_vaccinations=True
+    ).order_by("name")
+
+
+def item_units(ids: list[Any]) -> QuerySet[ItemUnit]:
+    """Единицы товаров по id — например, отмеченные в тексте медкарты."""
+    return ItemUnit.objects.filter(pk__in=ids).select_related("item", "unit")

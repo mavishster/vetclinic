@@ -51,6 +51,8 @@
               :error="!!errors.name" :error-message="errors.name" />
             <template v-for="field in selectFields" :key="field.name">
               <q-checkbox v-if="field.type === 'checkbox'" v-model="editing[field.name]" :label="field.label" />
+              <q-input v-else-if="field.type === 'text'" v-model="editing[field.name]" outlined :label="field.label"
+                :hint="field.hint" :error="!!errors[field.name]" :error-message="errors[field.name]" />
               <q-input v-else-if="field.type === 'time' || field.type === 'color'" v-model="editing[field.name]"
                 :type="field.type" outlined stack-label :label="field.label" :hint="field.hint"
                 :error="!!errors[field.name]" :error-message="errors[field.name]" />
@@ -79,7 +81,7 @@
 //   endpoint — адрес API, permission — «модуль.модель» для проверки прав,
 //   fields — дополнительные поля: { name, label, type, endpoint | options, hint }
 //     type: 'select' (по умолчанию, варианты из endpoint), 'choice' (варианты options),
-//           'number', 'checkbox', 'time', 'color'.
+//           'number', 'checkbox', 'time', 'color', 'text'.
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
@@ -119,6 +121,7 @@ function cellValue(field, row) {
   if (field.type === 'checkbox') return value ? '✓' : ''
   if (field.type === 'number') return value === null || value === undefined ? '' : Number(value)
   if (field.type === 'time') return value ? value.slice(0, 5) : ''
+  if (field.type === 'text') return value || ''
   if (field.type === 'color') return value ? '■' : ''
   return optionName(field, value)
 }
@@ -167,6 +170,7 @@ function openEditor(row = null) {
   errors.value = {}
   const empty = (f) => {
     if (f.type === 'checkbox') return false
+    if (f.type === 'text') return ''
     if (f.type === 'color') return '#24566a'
     return filters[f.name] ?? (f.type === 'choice' ? f.options[0].id : null)
   }

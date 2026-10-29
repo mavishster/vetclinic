@@ -308,3 +308,15 @@ def has_active_contract(client: Client) -> bool:
 def with_contract_flag(queryset: QuerySet[Client]) -> QuerySet[Client]:
     """Добавить к клиентам признак has_contract — есть действующий договор."""
     return queryset.annotate(has_contract=Exists(active_contracts().filter(client=OuterRef("pk"))))
+
+
+def set_weight_on(pet: Pet, on: date, weight: Decimal) -> PetWeight:
+    """Вес на дату (с приёма): одно взвешивание в день — повторное сохранение его обновляет."""
+    if weight <= 0 or weight > 2000:
+        raise ClientError("Проверьте вес: он должен быть больше нуля и в килограммах.")
+    record = pet.weights.filter(date=on).first()
+    if record is None:
+        return PetWeight.objects.create(pet=pet, weight=weight, date=on)
+    record.weight = weight
+    record.save(update_fields=["weight"])
+    return record

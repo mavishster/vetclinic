@@ -22,6 +22,7 @@
 
       <div class="row q-col-gutter-md">
         <div class="col-12 col-md-6">
+          <PetVisits v-if="can('medical.view_visit')" :pet="pet" class="q-mb-md" />
           <q-card flat bordered>
             <q-list dense>
               <q-item clickable :to="`/clients/${pet.owner}`">
@@ -97,6 +98,8 @@ import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
+// Медкарта — блок модуля «Медкарта», встраивается в карточку питомца.
+import PetVisits from '@/modules/medical/PetVisits.vue'
 import ClientSelect from './ClientSelect.vue'
 import PetEditDialog from './PetEditDialog.vue'
 import { ageText, formatDate, sexLabel } from './pets'

@@ -46,6 +46,8 @@
         <q-btn v-for="action in ACTIONS[appointment.status]" :key="action.to" :icon="action.icon" :label="action.label"
           :color="action.to === 'cancelled' ? 'negative' : 'primary'" :outline="action.to !== primaryAction" unelevated
           no-caps align="left" @click="go(action.to)" />
+        <q-btn v-if="canOpenMedcard" color="positive" unelevated icon="medical_information" label="Открыть медкарту"
+          no-caps align="left" :loading="opening" @click="openMedcard" />
         <q-btn flat icon="edit" label="Изменить запись" no-caps align="left" @click="emit('edit', appointment)" />
       </q-card-actions>
     </q-card>
@@ -53,8 +55,10 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
+import { apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import { ACTIONS, changeStatus, STATUS, timeOf } from './appointments'
 
@@ -64,7 +68,22 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'changed', 'edit'])
 const $q = useQuasar()
+const router = useRouter()
 const primaryAction = computed(() => ACTIONS[props.appointment?.status]?.[0]?.to)
+const opening = ref(false)
+const canOpenMedcard = computed(
+  () => can('medical.add_visit') && props.appointment?.pet && !['cancelled', 'no_show'].includes(props.appointment.status),
+)
+
+// Медкарта по записи: открывается уже начатая или создаётся новая, приём становится «у врача».
+async function openMedcard() {
+  opening.value = true
+  const { ok, data } = await apiPost('medical/visits/from-appointment/', { appointment: props.appointment.id })
+  opening.value = false
+  if (!ok) return $q.notify({ type: 'negative', message: Object.values(fieldErrors(data))[0] || 'Не удалось открыть медкарту' })
+  emit('update:modelValue', false)
+  router.push(`/visits/${data.id}`)
+}
 
 async function go(to) {
   const updated = await changeStatus($q, props.appointment, to)
