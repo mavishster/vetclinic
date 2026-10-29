@@ -11,7 +11,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
 
-from core.models import ClinicScopedModel, Directory
+from core.models import Attachment, ClinicScopedModel, Directory
 
 # --- Справочники -------------------------------------------------------------------
 
@@ -283,3 +283,33 @@ class PetWeight(models.Model):
 
     def __str__(self) -> str:
         return f"{self.pet}: {self.weight} кг ({self.date})"
+
+
+# --- Договор -----------------------------------------------------------------------
+
+
+class ClientContract(ClinicScopedModel):
+    """Договор с клиентом. «Договор заключён» = есть действующий договор.
+
+    Скан договора — файл (core.Attachment) категории «Договор», он необязателен:
+    можно отметить, что договор подписан, не загружая скан.
+    """
+
+    client = models.ForeignKey(
+        Client, verbose_name="клиент", on_delete=models.PROTECT, related_name="contracts"
+    )
+    number = models.CharField("номер", max_length=50)
+    date = models.DateField("дата")
+    valid_until = models.DateField("действует до", null=True, blank=True)
+    attachment = models.ForeignKey(
+        Attachment, verbose_name="скан", on_delete=models.PROTECT, null=True, blank=True
+    )
+    comment = models.CharField("комментарий", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "договор"
+        verbose_name_plural = "договоры"
+        ordering = ["-date", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"Договор № {self.number} от {self.date:%d.%m.%Y}"

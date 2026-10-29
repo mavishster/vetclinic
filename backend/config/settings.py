@@ -122,6 +122,10 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 
+# Максимальный размер прикрепляемого файла (сканы, снимки, PDF).
+ATTACHMENT_MAX_MB = int(os.environ.get("ATTACHMENT_MAX_MB", "25"))
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+
 # Для собственных моделей ключи будут UUID (ADR-002, этап 1);
 # это значение — только для сторонних приложений.
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

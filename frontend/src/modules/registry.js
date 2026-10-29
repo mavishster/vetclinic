@@ -29,6 +29,7 @@ export default [
       { title: 'Города', icon: 'location_city', to: '/directories/cities', perm: 'clients.view_city' },
       { title: 'Улицы', icon: 'signpost', to: '/directories/streets', perm: 'clients.view_street' },
       { title: 'Типы клиентов', icon: 'label', to: '/directories/client-types', perm: 'clients.view_clienttype' },
+      { title: 'Категории файлов', icon: 'folder', to: '/directories/file-categories', perm: 'core.view_filecategory' },
       { title: 'Как нашли клинику', icon: 'campaign', to: '/directories/client-sources', perm: 'clients.view_clientsource' },
     ],
   },

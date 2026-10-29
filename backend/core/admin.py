@@ -6,7 +6,7 @@ from django.utils.html import format_html_join
 from simple_history.admin import SimpleHistoryAdmin
 
 from core import printing, services
-from core.models import Clinic, PrintTemplate, User
+from core.models import Attachment, Clinic, FileCategory, PrintTemplate, User
 
 
 @admin.register(User)
@@ -128,3 +128,13 @@ class PrintTemplateAdmin(DirectoryAdmin):
         template = queryset.first()
         pdf = services.render_print_sample(template)
         return HttpResponse(pdf, content_type="application/pdf")
+
+
+admin.site.register(FileCategory, DirectoryAdmin)
+
+
+@admin.register(Attachment)
+class AttachmentAdmin(SimpleHistoryAdmin):  # type: ignore[misc]
+    list_display = ("name", "category", "owner_type", "size", "created_at")
+    list_filter = ("category", "owner_type")
+    search_fields = ("name",)

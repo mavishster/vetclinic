@@ -10,6 +10,8 @@
         <q-btn flat round dense icon="arrow_back" to="/clients" />
         <h1 class="text-h5 q-my-none">{{ client.full_name }}</h1>
         <q-badge v-for="badge in clientBadges(client)" :key="badge.label" :color="badge.color" :label="badge.label" />
+        <q-badge v-if="client.has_contract" color="positive" outline label="договор заключён" />
+        <q-badge v-else color="warning" outline label="договора нет" />
         <q-space />
         <q-btn v-if="can('clients.change_client')" outline color="primary" icon="edit" label="Изменить"
           @click="editorOpen = true" />
@@ -45,7 +47,12 @@
         </div>
 
         <div class="col-12 col-md-7">
-          <ClientPets v-if="can('clients.view_pet')" :client="client" />
+          <div class="q-gutter-y-md">
+            <ClientPets v-if="can('clients.view_pet')" :client="client" />
+            <ClientContracts v-if="can('clients.view_clientcontract')" :client-id="client.id" @changed="reloadClient" />
+            <AttachmentsBlock v-if="can('core.view_attachment')" ref="files" owner-type="clients.client"
+              :owner-id="client.id" />
+          </div>
         </div>
       </div>
 
@@ -60,6 +67,8 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch } from '@/api'
 import { can } from '@/session'
+import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
+import ClientContracts from './ClientContracts.vue'
 import ClientEditDialog from './ClientEditDialog.vue'
 import ClientPets from './ClientPets.vue'
 import { clientBadges, PHONE_KINDS } from './statuses'
@@ -94,6 +103,15 @@ async function load() {
   const { ok, data } = await apiGet(`clients/clients/${props.id}/`)
   client.value = ok ? data : null
   loading.value = false
+}
+
+const files = ref(null)
+
+// После изменения договоров обновляем отметку «договор заключён» и список файлов (скан).
+async function reloadClient() {
+  const { ok, data } = await apiGet(`clients/clients/${props.id}/`)
+  if (ok) client.value = data
+  files.value?.load()
 }
 
 async function toggleStatus() {

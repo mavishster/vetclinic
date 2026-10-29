@@ -66,7 +66,7 @@ def test_matrix_lists_modules_with_entities(admin_api) -> None:
     assert codes[:2] == ["core", "clients"]
     assert "testapp" not in codes
     entities = [e["code"] for e in data["modules"][1]["entities"]]
-    assert entities[:3] == ["clients.client", "clients.pet", "clients.species"]
+    assert entities[:2] == ["clients.client", "clients.pet"]
     assert "clients.clientphone" not in entities
     assert [a["code"] for a in data["actions"]] == ["view", "edit", "delete"]
 

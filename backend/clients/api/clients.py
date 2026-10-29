@@ -27,6 +27,7 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     client_type_name = serializers.CharField(source="client_type.name", read_only=True, default="")
     source_name = serializers.CharField(source="source.name", read_only=True, default="")
     pet_names = serializers.SerializerMethodField()
+    has_contract = serializers.SerializerMethodField()
 
     class Meta:
         model = Client
@@ -36,8 +37,13 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "discount_percent", "journal_number", "discount_card",
             "client_type", "client_type_name", "source", "source_name",
             "no_mailing", "in_blacklist", "description", "status", "phones", "pet_names",
+            "has_contract",
             "created_at", "updated_at",
         ]  # fmt: skip
+
+    def get_has_contract(self, client: Client) -> bool:
+        flag = getattr(client, "has_contract", None)  # в списке — посчитан одним запросом
+        return services.has_active_contract(client) if flag is None else bool(flag)
 
     def get_pet_names(self, client: Client) -> list[str]:
         return [pet.name for pet in client.pets.all() if pet.status == Pet.Status.ACTIVE]
@@ -68,7 +74,7 @@ class ClientViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     """Клиенты.
 
     Фильтры: ?search=текст (ФИО, телефон, номер по журналу, дисконтная карта),
-    ?status=active,temporary, ?city=, ?client_type=, ?blacklist=true.
+    ?status=active,temporary, ?city=, ?client_type=, ?blacklist=true, ?contract=yes|no.
     """
 
     serializer_class = ClientSerializer
@@ -76,8 +82,8 @@ class ClientViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     queryset = Client.objects.all()
 
     def get_queryset(self) -> QuerySet[Client]:
-        queryset = Client.objects.select_related(
-            "city", "street", "client_type", "source"
+        queryset = services.with_contract_flag(
+            Client.objects.select_related("city", "street", "client_type", "source")
         ).prefetch_related("phones", "pets")
         params = self.request.query_params
         if search := params.get("search", "").strip():
@@ -89,6 +95,8 @@ class ClientViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
                 queryset = queryset.filter(**{field: value})
         if params.get("blacklist", "").lower() in {"1", "true"}:
             queryset = queryset.filter(in_blacklist=True)
+        if (contract := params.get("contract")) in {"yes", "no"}:
+            queryset = queryset.filter(has_contract=contract == "yes")
         return queryset
 
     @action(detail=False, methods=["get"])

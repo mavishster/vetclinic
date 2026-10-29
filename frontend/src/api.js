@@ -16,6 +16,18 @@ async function request(method, path, body) {
   return { ok: response.ok, status: response.status, data }
 }
 
+// Загрузка файла (multipart). FormData собирает вызывающий код.
+export async function apiUpload(path, formData) {
+  const response = await fetch(`/api/${path}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'X-CSRFToken': csrfToken() },
+    body: formData,
+  })
+  const data = await response.json().catch(() => null)
+  return { ok: response.ok, status: response.status, data }
+}
+
 export const apiGet = (path) => request('GET', path)
 export const apiPost = (path, body) => request('POST', path, body)
 export const apiPatch = (path, body) => request('PATCH', path, body)

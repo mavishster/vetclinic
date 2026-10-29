@@ -63,9 +63,12 @@ def test_matrix_shows_entities_and_hides_service_tables() -> None:
 
     core_entities = [e["code"] for e in modules["core"]["entities"]]
     assert modules["core"]["title"] == "Администрирование"
-    assert core_entities == ["core.user", "core.clinic", "core.printtemplate", "auth.group"]
+    assert core_entities[:2] == ["core.user", "core.clinic"]
+    assert {"core.printtemplate", "core.attachment", "auth.group"} <= set(core_entities)
+    assert "core.documentcounter" not in core_entities
     titles = [e["title"] for e in modules["clients"]["entities"]]
-    assert titles[:3] == ["Клиенты", "Питомцы", "Виды животных"]
+    assert titles[:2] == ["Клиенты", "Питомцы"]
+    assert "Виды животных" in titles
 
 
 def test_unknown_entity_is_rejected(role) -> None:

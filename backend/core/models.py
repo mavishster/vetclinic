@@ -470,3 +470,55 @@ class PrintTemplate(Directory):
             services.validate_print_template(self.kind, self.body)
         except PrintTemplateError as error:
             raise ValidationError({"body": str(error)}) from error
+
+
+# --- Файлы -------------------------------------------------------------------------
+
+
+class FileCategory(Directory):
+    """Категория файла: общий, договор, анализы, рентген, УЗИ…"""
+
+    class Meta(Directory.Meta):
+        verbose_name = "категория файлов"
+        verbose_name_plural = "категории файлов"
+
+
+def attachment_path(instance: "Attachment", filename: str) -> str:
+    """Файлы раскладываются по месяцам, а имя на диске — случайное (UUID записи).
+
+    Настоящее имя хранится в поле name: так не бывает конфликтов и проблем
+    с русскими буквами и пробелами в именах файлов.
+    """
+    suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    now = timezone.now()
+    return f"attachments/{now:%Y/%m}/{instance.id}.{suffix}"
+
+
+class Attachment(ClinicScopedModel):
+    """Файл, прикреплённый к записи: клиенту, питомцу, позже — приёму.
+
+    Владелец задаётся парой «тип записи + id», чтобы ядро не зависело от модулей.
+    Какие записи можно снабжать файлами, модули регистрируют сами (core.attachments).
+    Файлы отдаются только через API с проверкой прав — по прямой ссылке их не открыть.
+    """
+
+    owner_type = models.ForeignKey(
+        "contenttypes.ContentType", on_delete=models.PROTECT, related_name="+"
+    )
+    owner_id = models.UUIDField(db_index=True)
+    file = models.FileField("файл", upload_to=attachment_path, max_length=255)
+    name = models.CharField("название", max_length=255)
+    category = models.ForeignKey(
+        FileCategory, verbose_name="категория", on_delete=models.PROTECT, null=True, blank=True
+    )
+    size = models.PositiveBigIntegerField("размер, байт", default=0)
+    content_type = models.CharField("тип содержимого", max_length=100, blank=True)
+
+    class Meta:
+        verbose_name = "файл"
+        verbose_name_plural = "файлы"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["owner_type", "owner_id"])]
+
+    def __str__(self) -> str:
+        return self.name

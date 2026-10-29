@@ -16,6 +16,8 @@
         dense outlined clearable label="Город" class="col-6 col-md-2" @update:model-value="reload" />
       <q-select v-model="clientType" :options="types" option-value="id" option-label="name" emit-value map-options
         dense outlined clearable label="Тип" class="col-6 col-md-2" @update:model-value="reload" />
+      <q-select v-model="contract" :options="contractOptions" emit-value map-options dense outlined clearable
+        label="Договор" class="col-6 col-md-2" @update:model-value="reload" />
       <q-btn-toggle v-model="status" :options="statusOptions" no-caps unelevated toggle-color="primary"
         class="col-auto" @update:model-value="reload" />
       <q-checkbox v-model="blacklist" label="Чёрный список" dense class="col-auto" @update:model-value="reload" />
@@ -53,6 +55,11 @@ const city = ref(null)
 const clientType = ref(null)
 const status = ref('active,temporary')
 const blacklist = ref(false)
+const contract = ref(null)
+const contractOptions = [
+  { label: 'Договор есть', value: 'yes' },
+  { label: 'Договора нет', value: 'no' },
+]
 const cities = ref([])
 const types = ref([])
 const editorOpen = ref(false)
@@ -71,6 +78,7 @@ const columns = [
   { name: 'city', label: 'Город', field: 'city_name', align: 'left' },
   { name: 'type', label: 'Тип', field: 'client_type_name', align: 'left' },
   { name: 'journal', label: '№ по журналу', field: 'journal_number', align: 'left' },
+  { name: 'contract', label: 'Договор', field: (row) => (row.has_contract ? '✓' : ''), align: 'center' },
 ]
 
 async function onRequest({ pagination: next }) {
@@ -81,6 +89,7 @@ async function onRequest({ pagination: next }) {
   if (city.value) params.set('city', city.value)
   if (clientType.value) params.set('client_type', clientType.value)
   if (blacklist.value) params.set('blacklist', 'true')
+  if (contract.value) params.set('contract', contract.value)
   const { ok, data } = await apiGet(`clients/clients/?${params}`)
   rows.value = ok ? data.results : []
   pagination.value = { ...next, rowsNumber: ok ? data.count : 0 }

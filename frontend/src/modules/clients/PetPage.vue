@@ -62,6 +62,8 @@
               </q-item>
             </q-list>
           </q-card>
+          <AttachmentsBlock v-if="can('core.view_attachment')" owner-type="clients.pet" :owner-id="pet.id"
+            title="Файлы и снимки" class="q-mt-md" />
         </div>
       </div>
 
@@ -94,6 +96,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
+import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
 import ClientSelect from './ClientSelect.vue'
 import PetEditDialog from './PetEditDialog.vue'
 import { ageText, formatDate, sexLabel } from './pets'

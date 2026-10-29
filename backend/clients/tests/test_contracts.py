@@ -1,0 +1,119 @@
+from datetime import date, timedelta
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils import timezone
+from rest_framework.test import APIClient
+
+from clients import services
+from clients.models import Client, ClientContract
+from clients.services import ClientError
+from core import attachments
+
+
+@pytest.fixture(autouse=True)
+def media(settings, tmp_path):
+    settings.MEDIA_ROOT = tmp_path
+
+
+@pytest.fixture
+def client_(db):
+    return services.save_client(Client(last_name="Иванова"))
+
+
+@pytest.fixture
+def api(db):
+    api = APIClient()
+    api.force_authenticate(get_user_model().objects.create_superuser(username="a", password="x"))
+    return api
+
+
+def scan(owner):
+    return attachments.attach("clients.client", owner.pk, SimpleUploadedFile("д.pdf", b"x"))
+
+
+def test_number_is_issued_when_empty(client_) -> None:
+    contract = services.save_contract(
+        ClientContract(client=client_, number="", date=date(2026, 1, 5))
+    )
+
+    assert contract.number.endswith("-000001")
+
+
+def test_manual_number_and_validity_period(client_) -> None:
+    with pytest.raises(ClientError, match="раньше его даты"):
+        services.save_contract(
+            ClientContract(
+                client=client_, number="15/26", date=date(2026, 2, 1), valid_until=date(2026, 1, 1)
+            )
+        )
+
+
+def test_scan_must_belong_to_same_client(client_) -> None:
+    other = services.save_client(Client(last_name="Петров"))
+
+    with pytest.raises(ClientError, match="этому же клиенту"):
+        services.save_contract(
+            ClientContract(
+                client=client_, number="1", date=date(2026, 1, 1), attachment=scan(other)
+            )
+        )
+
+
+def test_contract_flag_counts_only_valid_contracts(client_) -> None:
+    expired = services.save_client(Client(last_name="Петров"))
+    today = timezone.localdate()
+    services.save_contract(ClientContract(client=client_, number="1", date=today))
+    services.save_contract(
+        ClientContract(
+            client=expired,
+            number="2",
+            date=today - timedelta(days=400),
+            valid_until=today - timedelta(days=35),
+        )
+    )
+
+    flags = dict(
+        services.with_contract_flag(Client.objects.all()).values_list("last_name", "has_contract")
+    )
+
+    assert flags == {"Иванова": True, "Петров": False}
+    assert services.has_active_contract(client_)
+
+
+def test_api_contract_with_scan_and_client_filter(api, client_) -> None:
+    file = scan(client_)
+    created = api.post(
+        "/api/clients/contracts/",
+        {"client": str(client_.pk), "date": "2026-01-10", "attachment": str(file.pk)},
+        format="json",
+    )
+    services.save_client(Client(last_name="Петров"))
+
+    with_contract = api.get("/api/clients/clients/?contract=yes").json()["results"]
+    without = api.get("/api/clients/clients/?contract=no").json()["results"]
+    card = api.get(f"/api/clients/clients/{client_.pk}/").json()
+
+    assert created.status_code == 201
+    assert created.json()["attachment_name"] == "д.pdf"
+    assert created.json()["is_active"] is True
+    assert [c["last_name"] for c in with_contract] == ["Иванова"]
+    assert [c["last_name"] for c in without] == ["Петров"]
+    assert card["has_contract"] is True
+
+
+def test_client_files_api(api, client_) -> None:
+    response = api.post(
+        "/api/core/attachments/",
+        {
+            "file": SimpleUploadedFile("паспорт.jpg", b"img", content_type="image/jpeg"),
+            "owner_type": "clients.client",
+            "owner_id": str(client_.pk),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 201
+    listed = api.get(f"/api/core/attachments/?owner_type=clients.client&owner_id={client_.pk}")
+    assert [f["name"] for f in listed.json()] == ["паспорт.jpg"]

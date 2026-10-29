@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 
-from clients.api import clients, pets, views
+from clients.api import clients, contracts, pets, views
 
 router = DefaultRouter()
 router.register("species", views.SpeciesViewSet, basename="species")
@@ -12,5 +12,6 @@ router.register("client-sources", views.ClientSourceViewSet, basename="client-so
 router.register("colors", views.ColorViewSet, basename="color")
 router.register("clients", clients.ClientViewSet, basename="client")
 router.register("pets", pets.PetViewSet, basename="pet")
+router.register("contracts", contracts.ContractViewSet, basename="contract")
 
 urlpatterns = router.urls

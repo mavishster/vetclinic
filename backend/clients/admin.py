@@ -6,6 +6,7 @@ from clients.models import (
     Breed,
     City,
     Client,
+    ClientContract,
     ClientPhone,
     ClientSource,
     ClientType,
@@ -62,3 +63,10 @@ class PetAdmin(SimpleHistoryAdmin):  # type: ignore[misc]
 
     def save_model(self, request, obj, form, change):  # type: ignore[no-untyped-def]
         services.save_pet(obj)  # те же правила, что в интерфейсе: проверки и история владельцев
+
+
+@admin.register(ClientContract)
+class ClientContractAdmin(SimpleHistoryAdmin):  # type: ignore[misc]
+    list_display = ("number", "client", "date", "valid_until")
+    search_fields = ("number", "client__last_name")
+    raw_id_fields = ("client", "attachment")

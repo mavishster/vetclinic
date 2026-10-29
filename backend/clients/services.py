@@ -13,11 +13,20 @@ from typing import Any, TypedDict
 
 from django.contrib.postgres.search import TrigramSimilarity
 from django.db import transaction
-from django.db.models import Q, QuerySet, Value
+from django.db.models import Exists, OuterRef, Q, QuerySet, Value
 from django.db.models.functions import Concat
 from django.utils import timezone
 
-from clients.models import Client, ClientPhone, Pet, PetOwnership, PetWeight, phone_search_key
+from clients.models import (
+    Client,
+    ClientContract,
+    ClientPhone,
+    Pet,
+    PetOwnership,
+    PetWeight,
+    phone_search_key,
+)
+from core import services as core_services
 
 # Насколько похожими должны быть ФИО, чтобы считаться возможным дублем (0…1).
 NAME_SIMILARITY = 0.5
@@ -267,3 +276,35 @@ def search_pets(queryset: QuerySet[Pet], text: str) -> QuerySet[Pet]:
 def current_owner(pet: Pet) -> Client:
     """Текущий владелец питомца — для других модулей (счета, медкарта)."""
     return pet.owner
+
+
+# --- Договоры ----------------------------------------------------------------------
+
+
+def save_contract(contract: ClientContract) -> ClientContract:
+    """Сохранить договор. Номер не указан — выдаётся автоматически («K1-000001»)."""
+    contract.number = contract.number.strip() or core_services.next_number("contract")
+    contract.date = contract.date or _today()
+    if contract.valid_until and contract.valid_until < contract.date:
+        raise ClientError("Срок действия договора раньше его даты.")
+    if contract.attachment and (
+        contract.attachment.owner_id != contract.client_id
+        or contract.attachment.owner_type.model != "client"
+    ):
+        raise ClientError("Скан договора должен быть прикреплён к этому же клиенту.")
+    contract.save()
+    return contract
+
+
+def active_contracts() -> QuerySet[ClientContract]:
+    today = _today()
+    return ClientContract.objects.filter(Q(valid_until__isnull=True) | Q(valid_until__gte=today))
+
+
+def has_active_contract(client: Client) -> bool:
+    return active_contracts().filter(client=client).exists()
+
+
+def with_contract_flag(queryset: QuerySet[Client]) -> QuerySet[Client]:
+    """Добавить к клиентам признак has_contract — есть действующий договор."""
+    return queryset.annotate(has_contract=Exists(active_contracts().filter(client=OuterRef("pk"))))
