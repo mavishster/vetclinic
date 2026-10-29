@@ -1,8 +1,8 @@
 <template>
   <q-page padding class="home">
-    <h1 class="text-h5 q-mt-none q-mb-md">Система управления клиникой</h1>
+    <h1 class="text-h5 q-mt-none q-mb-md">Здравствуйте, {{ firstName }}!</h1>
     <p class="text-body1 q-mb-lg">
-      Каркас проекта запущен. Модули появляются в меню по мере готовности.
+      Модули появляются в меню по мере готовности. Сейчас доступны справочники и настройка ролей.
     </p>
 
     <q-banner rounded :class="bannerClass">
@@ -18,8 +18,10 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { apiGet } from '@/api'
+import { session } from '@/session'
 
 const state = ref('loading') // loading | ok | error
+const firstName = computed(() => session.user?.full_name.split(' ')[1] || session.user?.username)
 
 const message = computed(
   () =>
@@ -49,4 +51,5 @@ onMounted(async () => {
 .home {
   max-width: 720px;
 }
+
 </style>

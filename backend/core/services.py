@@ -11,6 +11,7 @@ import itertools
 from datetime import timedelta
 from typing import Any, TypedDict
 
+from django.apps import apps
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import Group, Permission
@@ -294,3 +295,18 @@ def render_print_sample(template: PrintTemplate, as_pdf: bool = True) -> bytes |
     if as_pdf:
         return printing.render_pdf(template.body, context)
     return printing.render_html(template.body, context)
+
+
+def permission_modules() -> list[tuple[str, str]]:
+    """Модули, у которых есть права: (код, название) — строки матрицы «модуль × действие»."""
+    labels = set(
+        Permission.objects.exclude(content_type__model__startswith="historical").values_list(
+            "content_type__app_label", flat=True
+        )
+    )
+    titles = {"core": "Пользователи, клиника, печатные формы"}
+    return [
+        (app, titles.get(app, str(apps.get_app_config(app).verbose_name)))
+        for app in settings.PROJECT_APPS
+        if app in labels
+    ]

@@ -26,6 +26,7 @@ def test_me_returns_name_pin_flag_and_permissions(api) -> None:
 
     assert data["short_name"] == "Иванов И."
     assert data["has_pin"] is False
+    assert data["clinic"] == "Клиника"
     assert data["permissions"] == []
 
 

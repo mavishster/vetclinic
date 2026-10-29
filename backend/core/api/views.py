@@ -29,6 +29,7 @@ def me(request: Request) -> Response:
             "short_name": user.short_name,
             "is_superuser": user.is_superuser,
             "has_pin": user.has_pin,
+            "clinic": services.current_clinic().name,
             "permissions": sorted(user.get_all_permissions()),
         }
     )
