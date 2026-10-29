@@ -46,6 +46,14 @@ class Breed(Directory):
         ]
 
 
+class Color(Directory):
+    """Окрас животного."""
+
+    class Meta(Directory.Meta):
+        verbose_name = "окрас"
+        verbose_name_plural = "окрасы"
+
+
 class City(Directory):
     class Meta(Directory.Meta):
         verbose_name = "город"
@@ -194,3 +202,84 @@ class ClientPhone(models.Model):
     def save(self, *args: Any, **kwargs: Any) -> None:
         self.search_key = phone_search_key(self.number)
         super().save(*args, **kwargs)
+
+
+# --- Питомец -----------------------------------------------------------------------
+
+
+class Pet(ClinicScopedModel):
+    """Питомец (пациент). Медкарта привязана к питомцу и уходит с ним к новому владельцу.
+
+    owner — текущий владелец; история владельцев — PetOwnership.
+    Возраст не хранится: вычисляется из даты рождения (она может быть приблизительной).
+    """
+
+    class Sex(models.TextChoices):
+        MALE = "male", "самец"
+        FEMALE = "female", "самка"
+        UNKNOWN = "unknown", "не указан"
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "активный"
+        DEAD = "dead", "умер"
+
+    owner = models.ForeignKey(
+        Client, verbose_name="владелец", on_delete=models.PROTECT, related_name="pets"
+    )
+    name = models.CharField("кличка", max_length=100)
+    species = models.ForeignKey(Species, verbose_name="вид", on_delete=models.PROTECT)
+    breed = models.ForeignKey(Breed, verbose_name="порода", on_delete=models.PROTECT)
+    sex = models.CharField("пол", max_length=10, choices=Sex.choices, default=Sex.UNKNOWN)
+    sterilized = models.BooleanField("стерилизован / кастрирован", default=False)
+    color = models.ForeignKey(
+        Color, verbose_name="окрас", on_delete=models.PROTECT, null=True, blank=True
+    )
+    birth_date = models.DateField("дата рождения", null=True, blank=True)
+    birth_date_approximate = models.BooleanField("дата рождения приблизительная", default=False)
+    chip_number = models.CharField("№ чипа", max_length=50, blank=True, db_index=True)
+    lab_number = models.CharField("лабораторный №", max_length=50, blank=True)
+    notes = models.TextField("примечание", blank=True)
+    status = models.CharField(
+        "статус", max_length=10, choices=Status.choices, default=Status.ACTIVE, db_index=True
+    )
+    death_date = models.DateField("дата смерти", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "питомец"
+        verbose_name_plural = "питомцы"
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class PetOwnership(models.Model):
+    """Период владения: кто и когда был владельцем питомца. Текущий — без даты окончания."""
+
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name="ownerships")
+    client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="pet_ownerships")
+    date_from = models.DateField("с")
+    date_to = models.DateField("по", null=True, blank=True)
+
+    class Meta:
+        default_permissions = ()  # часть карточки питомца
+        ordering = ["-date_from", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.pet} — {self.client} ({self.date_from}…{self.date_to or ''})"
+
+
+class PetWeight(models.Model):
+    """Вес питомца на дату. Медкарта на этапе 3 тоже будет добавлять сюда вес с приёма."""
+
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name="weights")
+    date = models.DateField("дата")
+    weight = models.DecimalField("вес, кг", max_digits=7, decimal_places=3)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        default_permissions = ()  # часть карточки питомца
+        ordering = ["-date", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.pet}: {self.weight} кг ({self.date})"

@@ -1,4 +1,4 @@
-from clients.models import Breed, City, ClientSource, ClientType, Species, Street
+from clients.models import Breed, City, ClientSource, ClientType, Color, Species, Street
 from core.api.directories import DirectoryViewSet
 
 
@@ -28,3 +28,7 @@ class ClientTypeViewSet(DirectoryViewSet):
 
 class ClientSourceViewSet(DirectoryViewSet):
     model = ClientSource
+
+
+class ColorViewSet(DirectoryViewSet):
+    model = Color

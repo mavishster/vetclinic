@@ -45,15 +45,7 @@
         </div>
 
         <div class="col-12 col-md-7">
-          <q-card flat bordered>
-            <q-card-section class="row items-center">
-              <div class="text-subtitle1 col">Питомцы</div>
-            </q-card-section>
-            <q-card-section class="text-grey-7 q-pt-none">
-              Питомцы появятся на следующем шаге. Затем здесь же будут договоры и файлы,
-              а на этапе 3 — медкарты, счета и оплаты.
-            </q-card-section>
-          </q-card>
+          <ClientPets v-if="can('clients.view_pet')" :client="client" />
         </div>
       </div>
 
@@ -69,6 +61,7 @@ import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch } from '@/api'
 import { can } from '@/session'
 import ClientEditDialog from './ClientEditDialog.vue'
+import ClientPets from './ClientPets.vue'
 import { clientBadges, PHONE_KINDS } from './statuses'
 
 const props = defineProps({ id: { type: String, required: true } })

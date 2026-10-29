@@ -50,6 +50,7 @@ def test_name_can_be_reused_after_soft_delete(cats) -> None:
 
 @pytest.mark.django_db
 def test_same_breed_name_allowed_in_different_species(cats) -> None:
+    Breed.objects.all().delete()  # убираем начальные породы миграции
     dogs = Species.objects.get(name="Собаки")
     Breed.objects.create(name="Метис", species=cats)
 
@@ -119,6 +120,7 @@ def test_api_deactivate_and_soft_delete(api) -> None:
 
 
 def test_api_breeds_filter_by_species_and_unique_within_species(api, cats) -> None:
+    Breed.objects.all().delete()  # убираем начальные породы миграции
     dogs = Species.objects.get(name="Собаки")
     Breed.objects.create(name="Мейн-кун", species=cats)
     Breed.objects.create(name="Метис", species=dogs)

@@ -11,8 +11,11 @@ const directory = (path, title, permission, fields = []) => ({
 export default [
   { path: 'clients', component: () => import('./ClientsPage.vue'), meta: { perm: 'clients.view_client' } },
   { path: 'clients/:id', component: () => import('./ClientPage.vue'), props: true, meta: { perm: 'clients.view_client' } },
+  { path: 'pets', component: () => import('./PetsPage.vue'), meta: { perm: 'clients.view_pet' } },
+  { path: 'pets/:id', component: () => import('./PetPage.vue'), props: true, meta: { perm: 'clients.view_pet' } },
   directory('species', 'Виды животных', 'species'),
   directory('breeds', 'Породы', 'breed', [{ name: 'species', label: 'Вид', endpoint: 'clients/species/' }]),
+  directory('colors', 'Окрасы', 'color'),
   directory('cities', 'Города', 'city'),
   directory('streets', 'Улицы', 'street', [{ name: 'city', label: 'Город', endpoint: 'clients/cities/' }]),
   directory('client-types', 'Типы клиентов', 'clienttype'),

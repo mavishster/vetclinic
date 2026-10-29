@@ -8,7 +8,7 @@
 
     <div class="row q-col-gutter-sm q-mb-md items-center">
       <q-input v-model="search" dense outlined clearable debounce="300" autofocus
-        placeholder="ФИО, телефон, № по журналу, дисконтная карта" class="col-12 col-md-5"
+        placeholder="ФИО, кличка, телефон, № по журналу, дисконтная карта" class="col-12 col-md-5"
         @update:model-value="reload">
         <template #prepend><q-icon name="search" /></template>
       </q-input>
@@ -66,6 +66,7 @@ const statusOptions = [
 const primaryPhone = (row) => (row.phones.find((p) => p.is_primary) ?? row.phones[0])?.number ?? ''
 const columns = [
   { name: 'full_name', label: 'Клиент', field: 'full_name', align: 'left' },
+  { name: 'pets', label: 'Питомцы', field: (row) => row.pet_names.join(', '), align: 'left' },
   { name: 'phone', label: 'Телефон', field: primaryPhone, align: 'left' },
   { name: 'city', label: 'Город', field: 'city_name', align: 'left' },
   { name: 'type', label: 'Тип', field: 'client_type_name', align: 'left' },

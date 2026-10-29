@@ -8,7 +8,7 @@ export default [
     title: 'Работа',
     items: [
       { title: 'Клиенты', icon: 'people', to: '/clients', perm: 'clients.view_client' },
-      { title: 'Питомцы', icon: 'pets', stage: 2 },
+      { title: 'Питомцы', icon: 'pets', to: '/pets', perm: 'clients.view_pet' },
       { title: 'Календарь', icon: 'event', stage: 3 },
       { title: 'Медкарта', icon: 'medical_information', stage: 3 },
       { title: 'Счета', icon: 'receipt_long', stage: 3 },
@@ -25,6 +25,7 @@ export default [
     items: [
       { title: 'Виды животных', icon: 'category', to: '/directories/species', perm: 'clients.view_species' },
       { title: 'Породы', icon: 'list', to: '/directories/breeds', perm: 'clients.view_breed' },
+      { title: 'Окрасы', icon: 'palette', to: '/directories/colors', perm: 'clients.view_color' },
       { title: 'Города', icon: 'location_city', to: '/directories/cities', perm: 'clients.view_city' },
       { title: 'Улицы', icon: 'signpost', to: '/directories/streets', perm: 'clients.view_street' },
       { title: 'Типы клиентов', icon: 'label', to: '/directories/client-types', perm: 'clients.view_clienttype' },

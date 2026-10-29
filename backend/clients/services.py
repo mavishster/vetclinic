@@ -7,14 +7,17 @@
 """
 
 import re
+from datetime import date
+from decimal import Decimal
 from typing import Any, TypedDict
 
 from django.contrib.postgres.search import TrigramSimilarity
 from django.db import transaction
 from django.db.models import Q, QuerySet, Value
 from django.db.models.functions import Concat
+from django.utils import timezone
 
-from clients.models import Client, ClientPhone, phone_search_key
+from clients.models import Client, ClientPhone, Pet, PetOwnership, PetWeight, phone_search_key
 
 # Насколько похожими должны быть ФИО, чтобы считаться возможным дублем (0…1).
 NAME_SIMILARITY = 0.5
@@ -91,8 +94,8 @@ def set_status(client: Client, status: str) -> Client:
 
 
 def search_clients(queryset: QuerySet[Client], text: str) -> QuerySet[Client]:
-    """Быстрый поиск: каждое слово ищется в ФИО; цифры — ещё и в телефонах,
-    номере по журналу и дисконтной карте. «иван 345» найдёт Иванова с телефоном …345…"""
+    """Быстрый поиск: каждое слово ищется в ФИО и кличках питомцев; цифры — ещё и в
+    телефонах, номере по журналу и дисконтной карте. «иван 345» найдёт Иванова с телефоном …345…"""
     for word in text.split():
         condition = (
             Q(last_name__icontains=word)
@@ -100,6 +103,7 @@ def search_clients(queryset: QuerySet[Client], text: str) -> QuerySet[Client]:
             | Q(middle_name__icontains=word)
             | Q(journal_number__iexact=word)
             | Q(discount_card__iexact=word)
+            | Q(pets__name__icontains=word)
         )
         digits = re.sub(r"\D", "", word)
         if len(digits) >= 3:
@@ -169,3 +173,97 @@ def find_duplicates(
     # Сначала совпавшие по телефону — это почти наверняка тот же человек.
     found.sort(key=lambda d: ("phone" not in d["reasons"], d["full_name"]))
     return found[:limit]
+
+
+# --- Питомцы -----------------------------------------------------------------------
+
+
+def _today() -> date:
+    return timezone.localdate()
+
+
+@transaction.atomic
+def save_pet(pet: Pet) -> Pet:
+    """Сохранить карточку питомца. Новому питомцу открывается период владения."""
+    pet.name = pet.name.strip()
+    if not pet.name:
+        raise ClientError("Укажите кличку.")
+    if pet.breed.species_id != pet.species_id:
+        raise ClientError("Порода не относится к выбранному виду.")
+    if pet.birth_date and pet.birth_date > _today():
+        raise ClientError("Дата рождения не может быть в будущем.")
+    if pet.status == Pet.Status.DEAD:
+        if pet.death_date is None:
+            pet.death_date = _today()
+        if pet.birth_date and pet.death_date < pet.birth_date:
+            raise ClientError("Дата смерти раньше даты рождения.")
+    else:
+        pet.death_date = None
+    is_new = pet._state.adding
+    pet.save()
+    if is_new:
+        PetOwnership.objects.create(pet=pet, client=pet.owner, date_from=_today())
+    return pet
+
+
+@transaction.atomic
+def transfer_pet(pet: Pet, new_owner: Client) -> Pet:
+    """Передать питомца другому владельцу.
+
+    Медкарта уходит вместе с питомцем, а счета остаются у прежнего владельца.
+    У прежнего владельца питомец виден в «бывших».
+    """
+    if new_owner.pk == pet.owner_id:
+        raise ClientError("Питомец уже принадлежит этому клиенту.")
+    today = _today()
+    pet.ownerships.filter(date_to__isnull=True).update(date_to=today)
+    PetOwnership.objects.create(pet=pet, client=new_owner, date_from=today)
+    pet.owner = new_owner
+    pet.save(update_fields=["owner"])
+    return pet
+
+
+def mark_dead(pet: Pet, death_date: date | None = None) -> Pet:
+    """Отметить, что питомец умер: он исчезает из напоминаний и рассылок."""
+    pet.status = Pet.Status.DEAD
+    pet.death_date = death_date or _today()
+    return save_pet(pet)
+
+
+def add_weight(pet: Pet, weight: Decimal, on: date | None = None) -> PetWeight:
+    if weight <= 0 or weight > 2000:
+        raise ClientError("Проверьте вес: он должен быть больше нуля и в килограммах.")
+    on = on or _today()
+    if on > _today():
+        raise ClientError("Дата взвешивания не может быть в будущем.")
+    return PetWeight.objects.create(pet=pet, weight=weight, date=on)
+
+
+def current_weight(pet: Pet) -> PetWeight | None:
+    return pet.weights.first()
+
+
+def former_pets(client: Client) -> QuerySet[Pet]:
+    """Питомцы, которых клиент передал другим владельцам."""
+    return (
+        Pet.objects.filter(ownerships__client=client, ownerships__date_to__isnull=False)
+        .exclude(owner=client)
+        .distinct()
+    )
+
+
+def search_pets(queryset: QuerySet[Pet], text: str) -> QuerySet[Pet]:
+    """Поиск питомцев: кличка, № чипа, лабораторный №, фамилия владельца."""
+    for word in text.split():
+        queryset = queryset.filter(
+            Q(name__icontains=word)
+            | Q(chip_number__icontains=word)
+            | Q(lab_number__iexact=word)
+            | Q(owner__last_name__icontains=word)
+        )
+    return queryset.distinct()
+
+
+def current_owner(pet: Pet) -> Client:
+    """Текущий владелец питомца — для других модулей (счета, медкарта)."""
+    return pet.owner

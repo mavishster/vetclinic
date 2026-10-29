@@ -10,7 +10,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from clients import services
-from clients.models import Client, ClientPhone
+from clients.models import Client, ClientPhone, Pet
 
 
 class PhoneSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
@@ -26,6 +26,7 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     street_name = serializers.CharField(source="street.name", read_only=True, default="")
     client_type_name = serializers.CharField(source="client_type.name", read_only=True, default="")
     source_name = serializers.CharField(source="source.name", read_only=True, default="")
+    pet_names = serializers.SerializerMethodField()
 
     class Meta:
         model = Client
@@ -34,9 +35,12 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "city", "city_name", "street", "street_name", "house", "zip_code", "email",
             "discount_percent", "journal_number", "discount_card",
             "client_type", "client_type_name", "source", "source_name",
-            "no_mailing", "in_blacklist", "description", "status", "phones",
+            "no_mailing", "in_blacklist", "description", "status", "phones", "pet_names",
             "created_at", "updated_at",
         ]  # fmt: skip
+
+    def get_pet_names(self, client: Client) -> list[str]:
+        return [pet.name for pet in client.pets.all() if pet.status == Pet.Status.ACTIVE]
 
     def _save(self, client: Client, data: dict[str, Any]) -> Client:
         phones = data.pop("phones", None)
@@ -74,7 +78,7 @@ class ClientViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     def get_queryset(self) -> QuerySet[Client]:
         queryset = Client.objects.select_related(
             "city", "street", "client_type", "source"
-        ).prefetch_related("phones")
+        ).prefetch_related("phones", "pets")
         params = self.request.query_params
         if search := params.get("search", "").strip():
             queryset = services.search_clients(queryset, search)
