@@ -2,11 +2,12 @@ import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from './layouts/MainLayout.vue'
 import coreRoutes from './modules/core/routes'
 import clientsRoutes from './modules/clients/routes'
+import catalogRoutes from './modules/catalog/routes'
 import { can, loadMe, session } from './session'
 
 // Каждый модуль приносит свои маршруты из src/modules/<модуль>/routes.js
 // (PROJECT_PLAN, 4.3, правило 7). Новый модуль — одна строка здесь.
-const moduleRoutes = [...coreRoutes, ...clientsRoutes]
+const moduleRoutes = [...coreRoutes, ...clientsRoutes, ...catalogRoutes]
 
 const router = createRouter({
   history: createWebHistory(),

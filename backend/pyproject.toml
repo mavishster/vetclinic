@@ -10,6 +10,10 @@ extend-exclude = ["*/migrations/*"]
 # UP — современный синтаксис, DJ — правила Django, SIM — упрощения.
 select = ["E", "W", "F", "I", "B", "UP", "DJ", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# В тестах данные часто удобнее читать таблицей в одну строку.
+"*/tests/*" = ["E501"]
+
 [tool.mypy]
 # Типы обязательны в публичных входах модулей (ENGINEERING.md).
 files = ["*/services.py"]

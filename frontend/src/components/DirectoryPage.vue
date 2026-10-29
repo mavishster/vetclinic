@@ -10,7 +10,7 @@
         class="col-12 col-sm-5" @update:model-value="load">
         <template #prepend><q-icon name="search" /></template>
       </q-input>
-      <q-select v-for="field in selectFields" :key="field.name" v-model="filters[field.name]"
+      <q-select v-for="field in listFields" :key="field.name" v-model="filters[field.name]"
         :options="options[field.name]" option-value="id" option-label="name" emit-value map-options
         dense outlined clearable :label="field.label" class="col-12 col-sm-3"
         @update:model-value="load" />
@@ -49,9 +49,15 @@
           <q-card-section class="q-gutter-md">
             <q-input v-model="editing.name" label="Название" outlined autofocus
               :error="!!errors.name" :error-message="errors.name" />
-            <q-select v-for="field in selectFields" :key="field.name" v-model="editing[field.name]"
-              :options="options[field.name]" option-value="id" option-label="name" emit-value map-options
-              outlined :label="field.label" :error="!!errors[field.name]" :error-message="errors[field.name]" />
+            <template v-for="field in selectFields" :key="field.name">
+              <q-checkbox v-if="field.type === 'checkbox'" v-model="editing[field.name]" :label="field.label" />
+              <q-input v-else-if="field.type === 'number'" v-model="editing[field.name]" type="number" step="any"
+                outlined :label="field.label" :hint="field.hint" clearable
+                :error="!!errors[field.name]" :error-message="errors[field.name]" />
+              <q-select v-else v-model="editing[field.name]" :options="options[field.name]" option-value="id"
+                option-label="name" emit-value map-options outlined :label="field.label"
+                :error="!!errors[field.name]" :error-message="errors[field.name]" />
+            </template>
             <div v-if="errors.non_field_errors" class="text-negative">{{ errors.non_field_errors }}</div>
           </q-card-section>
           <q-card-actions align="right">
@@ -68,7 +74,9 @@
 // Общий экран справочника (DRY): список, поиск, фильтры, добавление, изменение,
 // деактивация, удаление. Справочник описывается несколькими параметрами:
 //   endpoint — адрес API, permission — «модуль.модель» для проверки прав,
-//   fields — дополнительные поля-списки, например вид у породы.
+//   fields — дополнительные поля: { name, label, type, endpoint | options, hint }
+//     type: 'select' (по умолчанию, варианты из endpoint), 'choice' (варианты options),
+//           'number', 'checkbox'.
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
@@ -78,7 +86,7 @@ const props = defineProps({
   title: { type: String, required: true },
   endpoint: { type: String, required: true }, // 'clients/species/'
   permission: { type: String, required: true }, // 'clients.species'
-  fields: { type: Array, default: () => [] }, // [{ name, label, endpoint }]
+  fields: { type: Array, default: () => [] }, // [{ name, label, type, endpoint, options, hint }]
 })
 
 const $q = useQuasar()
@@ -88,6 +96,8 @@ const canChange = computed(() => can(`${app}.change_${model}`))
 const canDelete = computed(() => can(`${app}.delete_${model}`))
 
 const selectFields = props.fields
+// Поля-списки (из справочника или фиксированные варианты) — по ним можно фильтровать.
+const listFields = props.fields.filter((f) => !f.type || f.type === 'select' || f.type === 'choice')
 const rows = ref([])
 const loading = ref(false)
 const search = ref('')
@@ -101,14 +111,20 @@ const activeOptions = [
 ]
 
 const optionName = (field, id) => options[field.name]?.find((o) => o.id === id)?.name ?? ''
+function cellValue(field, row) {
+  const value = row[field.name]
+  if (field.type === 'checkbox') return value ? '✓' : ''
+  if (field.type === 'number') return value === null || value === undefined ? '' : Number(value)
+  return optionName(field, value)
+}
 const columns = [
   { name: 'name', label: 'Название', field: 'name', align: 'left', sortable: true },
   ...selectFields.map((field) => ({
     name: field.name,
     label: field.label,
-    align: 'left',
+    align: field.type === 'checkbox' || field.type === 'number' ? 'center' : 'left',
     sortable: true,
-    field: (row) => optionName(field, row[field.name]),
+    field: (row) => cellValue(field, row),
   })),
   { name: 'actions', label: '', field: 'id', align: 'right' },
 ]
@@ -118,7 +134,7 @@ async function load() {
   const params = new URLSearchParams()
   if (search.value) params.set('search', search.value)
   if (active.value !== 'all') params.set('active', active.value)
-  for (const field of selectFields) if (filters[field.name]) params.set(field.name, filters[field.name])
+  for (const field of listFields) if (filters[field.name]) params.set(field.name, filters[field.name])
   const { ok, data } = await apiGet(`${props.endpoint}?${params}`)
   rows.value = ok ? data : []
   loading.value = false
@@ -126,7 +142,11 @@ async function load() {
 }
 
 async function loadOptions() {
-  for (const field of selectFields) {
+  for (const field of listFields) {
+    if (field.type === 'choice') {
+      options[field.name] = field.options
+      continue
+    }
     const { ok, data } = await apiGet(`${field.endpoint}?active=true`)
     options[field.name] = ok ? data : []
   }
@@ -139,14 +159,21 @@ const saving = ref(false)
 
 function openEditor(row = null) {
   errors.value = {}
-  editing.value = row ? { ...row } : Object.fromEntries(selectFields.map((f) => [f.name, filters[f.name] ?? null]))
+  const empty = (f) => {
+    if (f.type === 'checkbox') return false
+    return filters[f.name] ?? (f.type === 'choice' ? f.options[0].id : null)
+  }
+  editing.value = row ? { ...row } : Object.fromEntries(selectFields.map((f) => [f.name, empty(f)]))
   editorOpen.value = true
 }
 
 async function save() {
   saving.value = true
   const body = { name: editing.value.name }
-  for (const field of selectFields) body[field.name] = editing.value[field.name]
+  for (const field of selectFields) {
+    const value = editing.value[field.name]
+    body[field.name] = field.type === 'number' && value === '' ? null : value
+  }
   const { ok, data } = editing.value.id
     ? await apiPatch(`${props.endpoint}${editing.value.id}/`, body)
     : await apiPost(props.endpoint, body)
