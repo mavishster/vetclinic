@@ -9,6 +9,7 @@ export default [
     items: [
       { title: 'Клиенты', icon: 'people', to: '/clients', perm: 'clients.view_client' },
       { title: 'Питомцы', icon: 'pets', to: '/pets', perm: 'clients.view_pet' },
+      { title: 'График работы', icon: 'calendar_view_week', to: '/staff/schedule', perm: 'staff.view_workinterval' },
       { title: 'Календарь', icon: 'event', stage: 3 },
       { title: 'Медкарта', icon: 'medical_information', stage: 3 },
       { title: 'Счета', icon: 'receipt_long', stage: 3 },
@@ -31,6 +32,9 @@ export default [
       { title: 'Типы клиентов', icon: 'label', to: '/directories/client-types', perm: 'clients.view_clienttype' },
       { title: 'Группы товаров и услуг', icon: 'workspaces', to: '/directories/item-groups', perm: 'catalog.view_itemgroup' },
       { title: 'Единицы измерения', icon: 'straighten', to: '/directories/units', perm: 'catalog.view_unit' },
+      { title: 'Должности', icon: 'work', to: '/directories/positions', perm: 'staff.view_position' },
+      { title: 'Типы интервалов графика', icon: 'event_note', to: '/directories/interval-types', perm: 'staff.view_intervaltype' },
+      { title: 'Шаблоны времени', icon: 'schedule', to: '/directories/interval-templates', perm: 'staff.view_intervaltemplate' },
       { title: 'Категории файлов', icon: 'folder', to: '/directories/file-categories', perm: 'core.view_filecategory' },
       { title: 'Как нашли клинику', icon: 'campaign', to: '/directories/client-sources', perm: 'clients.view_clientsource' },
     ],
@@ -39,7 +43,7 @@ export default [
     title: 'Администрирование',
     items: [
       { title: 'Роли и права', icon: 'admin_panel_settings', to: '/roles', perm: 'auth.view_group' },
-      { title: 'Сотрудники', icon: 'badge', stage: 2 },
+      { title: 'Сотрудники', icon: 'badge', to: '/staff/employees', perm: 'staff.view_employee' },
     ],
   },
 ]

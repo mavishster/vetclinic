@@ -51,6 +51,9 @@
               :error="!!errors.name" :error-message="errors.name" />
             <template v-for="field in selectFields" :key="field.name">
               <q-checkbox v-if="field.type === 'checkbox'" v-model="editing[field.name]" :label="field.label" />
+              <q-input v-else-if="field.type === 'time' || field.type === 'color'" v-model="editing[field.name]"
+                :type="field.type" outlined stack-label :label="field.label" :hint="field.hint"
+                :error="!!errors[field.name]" :error-message="errors[field.name]" />
               <q-input v-else-if="field.type === 'number'" v-model="editing[field.name]" type="number" step="any"
                 outlined :label="field.label" :hint="field.hint" clearable
                 :error="!!errors[field.name]" :error-message="errors[field.name]" />
@@ -76,7 +79,7 @@
 //   endpoint — адрес API, permission — «модуль.модель» для проверки прав,
 //   fields — дополнительные поля: { name, label, type, endpoint | options, hint }
 //     type: 'select' (по умолчанию, варианты из endpoint), 'choice' (варианты options),
-//           'number', 'checkbox'.
+//           'number', 'checkbox', 'time', 'color'.
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
@@ -115,6 +118,8 @@ function cellValue(field, row) {
   const value = row[field.name]
   if (field.type === 'checkbox') return value ? '✓' : ''
   if (field.type === 'number') return value === null || value === undefined ? '' : Number(value)
+  if (field.type === 'time') return value ? value.slice(0, 5) : ''
+  if (field.type === 'color') return value ? '■' : ''
   return optionName(field, value)
 }
 const columns = [
@@ -122,7 +127,8 @@ const columns = [
   ...selectFields.map((field) => ({
     name: field.name,
     label: field.label,
-    align: field.type === 'checkbox' || field.type === 'number' ? 'center' : 'left',
+    align: ['checkbox', 'number', 'time', 'color'].includes(field.type) ? 'center' : 'left',
+    style: field.type === 'color' ? (row) => `color: ${row[field.name]}; font-size: 20px` : undefined,
     sortable: true,
     field: (row) => cellValue(field, row),
   })),
@@ -161,6 +167,7 @@ function openEditor(row = null) {
   errors.value = {}
   const empty = (f) => {
     if (f.type === 'checkbox') return false
+    if (f.type === 'color') return '#24566a'
     return filters[f.name] ?? (f.type === 'choice' ? f.options[0].id : null)
   }
   editing.value = row ? { ...row } : Object.fromEntries(selectFields.map((f) => [f.name, empty(f)]))

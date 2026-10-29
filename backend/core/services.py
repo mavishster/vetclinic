@@ -381,3 +381,46 @@ def render_print_sample(template: PrintTemplate, as_pdf: bool = True) -> bytes |
     if as_pdf:
         return printing.render_pdf(template.body, context)
     return printing.render_html(template.body, context)
+
+
+# --- Учётные записи сотрудников (ADR-022) ------------------------------------------
+
+
+class UserError(Exception):
+    """Ошибка в учётной записи. Текст — для пользователя."""
+
+
+def _check_password(password: str, user: User) -> None:
+    from django.contrib.auth.password_validation import validate_password
+    from django.core.exceptions import ValidationError
+
+    try:
+        validate_password(password, user)
+    except ValidationError as error:
+        raise UserError(" ".join(error.messages)) from error
+
+
+def save_user_account(
+    user: User, password: str | None = None, roles: list[Group] | None = None
+) -> User:
+    """Создать или изменить учётную запись сотрудника.
+
+    password — задать или сменить пароль (у новой учётной записи обязателен).
+    roles — заменить роли; права суперпользователя через этот путь не выдаются.
+    """
+    user.username = user.username.strip()
+    if not user.username:
+        raise UserError("Укажите логин.")
+    if User.objects.filter(username__iexact=user.username).exclude(pk=user.pk).exists():
+        raise UserError("Такой логин уже занят.")
+    if not user.last_name.strip():
+        raise UserError("Укажите фамилию.")
+    if user._state.adding and not password:
+        raise UserError("Задайте пароль.")
+    if password:
+        _check_password(password, user)
+        user.set_password(password)
+    user.save()
+    if roles is not None:
+        user.groups.set(roles)
+    return user
