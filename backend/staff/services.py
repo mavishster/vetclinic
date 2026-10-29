@@ -163,3 +163,15 @@ def on_shift_user_ids(at: datetime | None = None) -> set[Any]:
             start__lte=at, end__gt=at, interval_type__is_working=True
         ).values_list("user_id", flat=True)
     )
+
+
+def schedule_users() -> QuerySet[User]:
+    """Сотрудники, которые показываются в графике и календаре (работающие)."""
+    return User.objects.filter(
+        is_active=True, employee__in_schedule=True, employee__is_deleted=False
+    ).order_by("last_name", "first_name")
+
+
+def employee_color(user: Any) -> str:
+    employee = Employee.objects.filter(user=user).only("color").first()
+    return employee.color if employee else "#24566a"

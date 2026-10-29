@@ -48,6 +48,7 @@
 
         <div class="col-12 col-md-7">
           <div class="q-gutter-y-md">
+            <ClientAppointments v-if="can('scheduling.view_appointment')" :client="client" />
             <ClientPets v-if="can('clients.view_pet')" :client="client" />
             <ClientContracts v-if="can('clients.view_clientcontract')" :client-id="client.id" @changed="reloadClient" />
             <AttachmentsBlock v-if="can('core.view_attachment')" ref="files" owner-type="clients.client"
@@ -68,6 +69,8 @@ import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch } from '@/api'
 import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
+// Записи на приём — блок модуля «Календарь», встраивается в карточку клиента.
+import ClientAppointments from '@/modules/scheduling/ClientAppointments.vue'
 import ClientContracts from './ClientContracts.vue'
 import ClientEditDialog from './ClientEditDialog.vue'
 import ClientPets from './ClientPets.vue'
