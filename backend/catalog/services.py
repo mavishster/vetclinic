@@ -12,7 +12,7 @@ from typing import Any, TypedDict
 from django.db import transaction
 from django.db.models import Q, QuerySet
 
-from catalog.models import Item, ItemUnit, Kind
+from catalog.models import CombinationLine, Item, ItemUnit, Kind, Unit
 
 
 class CatalogError(Exception):
@@ -115,7 +115,8 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
     item.name = item.name.strip()
     if not item.name:
         raise CatalogError("Укажите название.")
-    if item.group.kind != item.kind:
+    expected_group_kind = Kind.SERVICE if item.kind == Kind.COMBO else item.kind
+    if item.group.kind != expected_group_kind:
         raise CatalogError("Группа не подходит: выберите группу для товаров или для услуг.")
     if item.manual_cost is not None and item.manual_cost < 0:
         raise CatalogError("Себестоимость не может быть отрицательной.")
@@ -228,3 +229,94 @@ def price_history(item: Item, limit: int = 100) -> list[PriceChange]:
             )
     changes.sort(key=lambda change: change["date"], reverse=True)
     return changes[:limit]
+
+
+# --- Комбинации (ADR-017) ----------------------------------------------------------
+
+
+class LineData(TypedDict, total=False):
+    item_unit: Any  # ItemUnit или его id
+    quantity: Decimal
+    price_override: Decimal | None
+
+
+class ExpandedLine(TypedDict):
+    item_unit: ItemUnit
+    quantity: Decimal
+    price: Decimal | None  # цена за единицу: своя или по прайсу
+    total: Decimal | None
+
+
+@transaction.atomic
+def save_combination(combination: Item, lines: list[LineData] | None = None) -> Item:
+    """Сохранить комбинацию и её состав (если передан).
+
+    В состав входят товары и услуги в единицах продажи; комбинации внутри
+    комбинаций не допускаются — так состав всегда понятен.
+    """
+    combination.kind = Kind.COMBO
+    if not combination.base_unit_id:
+        combination.base_unit = Unit.objects.get_or_create(name="шт.")[0]
+    save_item(combination)
+    if lines is None:
+        return combination
+    if not lines:
+        raise CatalogError("Добавьте в комбинацию хотя бы одну позицию.")
+    prepared = []
+    for position, data in enumerate(lines):
+        value = data.get("item_unit")
+        if value is None:
+            raise CatalogError("В позиции комбинации не выбран товар или услуга.")
+        item_unit = (
+            value
+            if isinstance(value, ItemUnit)
+            else ItemUnit.objects.select_related("item").get(pk=value)
+        )
+        quantity = Decimal(str(data.get("quantity", 1)))
+        override = data.get("price_override")
+        if item_unit.item.kind == Kind.COMBO:
+            raise CatalogError("Комбинацию нельзя вложить в другую комбинацию.")
+        if not item_unit.for_sale:
+            raise CatalogError(f"«{item_unit}» не продаётся в этой единице.")
+        if quantity <= 0:
+            raise CatalogError(f"«{item_unit}»: количество должно быть больше нуля.")
+        if override is not None and override < 0:
+            raise CatalogError(f"«{item_unit}»: цена не может быть отрицательной.")
+        prepared.append(
+            CombinationLine(
+                combination=combination,
+                item_unit=item_unit,
+                quantity=quantity,
+                price_override=override,
+                position=position,
+            )
+        )
+    combination.lines.all().delete()
+    CombinationLine.objects.bulk_create(prepared)
+    return combination
+
+
+def expand_combination(combination: Item) -> list[ExpandedLine]:
+    """Состав комбинации с ценами — для счёта: своя цена позиции или текущая по прайсу."""
+    lines = combination.lines.select_related("item_unit__item__group", "item_unit__unit")
+    expanded: list[ExpandedLine] = []
+    for line in lines:
+        price = line.price_override if line.price_override is not None else price_of(line.item_unit)
+        total = (price * line.quantity).quantize(Decimal("0.01")) if price is not None else None
+        expanded.append(
+            {"item_unit": line.item_unit, "quantity": line.quantity, "price": price, "total": total}
+        )
+    return expanded
+
+
+def combination_price(combination: Item) -> Decimal | None:
+    """Цена комбинации — сумма позиций. Неизвестна, если неизвестна цена хотя бы одной."""
+    totals = [line["total"] for line in expand_combination(combination)]
+    if any(total is None for total in totals):
+        return None
+    return sum((t for t in totals if t is not None), Decimal("0"))
+
+
+def reset_combination_prices(combination: Item) -> None:
+    """Сбросить свои цены позиций — дальше они идут по текущему прайсу."""
+    combination.lines.update(price_override=None)

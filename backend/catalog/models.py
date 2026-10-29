@@ -20,6 +20,7 @@ from core.models import BaseModel, Directory
 class Kind(models.TextChoices):
     GOODS = "goods", "товар"
     SERVICE = "service", "услуга"
+    COMBO = "combo", "комбинация"
 
 
 class Unit(Directory):
@@ -60,7 +61,13 @@ class ItemGroup(Directory):
 
 
 class Item(BaseModel):
-    """Товар или услуга."""
+    """Товар, услуга или комбинация (набор товаров и услуг, CombinationLine)."""
+
+    class PrintMode(models.TextChoices):
+        FULL = "full", "все позиции с ценами"
+        NAME = "name", "только название комбинации"
+        SERVICES = "services", "название и услуги с ценами"
+        COMPOSITION = "composition", "название и состав без цен"
 
     kind = models.CharField("вид", max_length=10, choices=Kind.choices, default=Kind.GOODS)
     name = models.CharField("название", max_length=255)
@@ -77,6 +84,12 @@ class Item(BaseModel):
     for_sale = models.BooleanField("продаётся", default=True)
     is_call = models.BooleanField("вызов на дом", default=False)
     is_active = models.BooleanField("активен", default=True, db_index=True)
+    # Для комбинаций: шаблонная просто добавляет позиции в счёт по отдельности,
+    # обычная — одной строкой со своим составом (ADR-017).
+    is_template = models.BooleanField("шаблонная комбинация", default=False)
+    print_mode = models.CharField(
+        "печать комбинации", max_length=12, choices=PrintMode.choices, default=PrintMode.FULL
+    )
     responsible = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         verbose_name="ответственные сотрудники",
@@ -140,3 +153,26 @@ class ItemUnit(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.item} ({self.unit})"
+
+
+class CombinationLine(models.Model):
+    """Позиция комбинации: товар или услуга в своей единице, количество, цена.
+
+    price_override пусто — позиция идёт по текущей цене прайса; задано — цена
+    зафиксирована для этой комбинации (ADR-017). «Сбросить цены» = очистить.
+    """
+
+    combination = models.ForeignKey(Item, on_delete=models.CASCADE, related_name="lines")
+    item_unit = models.ForeignKey(ItemUnit, verbose_name="позиция", on_delete=models.PROTECT)
+    quantity = QuantityField("количество", default=Decimal("1"))
+    price_override = MoneyField("своя цена", null=True, blank=True)
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        default_permissions = ()  # часть карточки комбинации
+        ordering = ["position", "id"]
+        verbose_name = "позиция комбинации"
+        verbose_name_plural = "позиции комбинации"
+
+    def __str__(self) -> str:
+        return f"{self.item_unit} × {self.quantity}"
