@@ -59,44 +59,66 @@ def test_inactive_user_cannot_log_in(user) -> None:
     assert response.status_code == 400
 
 
-def test_matrix_lists_modules_with_permissions(admin_api) -> None:
+def test_matrix_lists_modules_with_entities(admin_api) -> None:
     data = admin_api.get("/api/core/roles/matrix/").json()
 
     codes = [m["code"] for m in data["modules"]]
     assert codes[:2] == ["core", "clients"]
     assert "testapp" not in codes
+    entities = [e["code"] for e in data["modules"][1]["entities"]]
+    assert entities == ["clients.species", "clients.breed"]
     assert [a["code"] for a in data["actions"]] == ["view", "edit", "delete"]
 
 
 def test_create_role_with_matrix_and_users(admin_api, user) -> None:
     response = admin_api.post(
         "/api/core/roles/",
-        {"name": "Регистратор", "users": [str(user.pk)], "modules": {"clients": ["view", "edit"]}},
+        {
+            "name": "Регистратор",
+            "users": [str(user.pk)],
+            "access": {"clients.species": ["view", "edit"], "core.printtemplate": ["view"]},
+        },
         format="json",
     )
 
     assert response.status_code == 201
     role = Group.objects.get(name="Регистратор")
-    assert services.module_actions(role, "clients") == {"view", "edit"}
+    assert services.entity_actions(role, "clients.species") == {"view", "edit"}
     assert user.has_perm("clients.change_species")
-    assert response.json()["modules"]["clients"] == ["edit", "view"]
-    assert response.json()["modules"]["core"] == []
+    assert user.has_perm("core.view_printtemplate")
+    assert not user.has_perm("clients.view_breed")
+    permissions = response.json()["access"]
+    assert permissions["clients.species"] == ["edit", "view"]
+    assert permissions["clients.breed"] == []
 
 
-def test_update_role_matrix_replaces_actions(admin_api) -> None:
+def test_update_role_replaces_actions_of_listed_entities_only(admin_api) -> None:
     role = Group.objects.create(name="Врач")
     services.set_module_permissions(role, "clients", {"view", "edit", "delete"})
 
     admin_api.patch(
-        f"/api/core/roles/{role.pk}/", {"modules": {"clients": ["view"]}}, format="json"
+        f"/api/core/roles/{role.pk}/",
+        {"access": {"clients.species": ["view"]}},
+        format="json",
     )
 
-    assert services.module_actions(role, "clients") == {"view"}
+    assert services.entity_actions(role, "clients.species") == {"view"}
+    assert services.entity_actions(role, "clients.breed") == {"view", "edit", "delete"}
 
 
-def test_unknown_module_is_rejected(admin_api) -> None:
+def test_role_management_can_be_granted(admin_api, user) -> None:
+    role = Group.objects.create(name="Старший администратор")
+    services.set_entity_permissions(role, "auth.group", {"view", "edit"})
+    user.groups.add(role)
+    client = APIClient()
+    client.force_authenticate(user)
+
+    assert client.get("/api/core/roles/").status_code == 200
+
+
+def test_unknown_entity_is_rejected_by_api(admin_api) -> None:
     response = admin_api.post(
-        "/api/core/roles/", {"name": "X", "modules": {"rocket": ["view"]}}, format="json"
+        "/api/core/roles/", {"name": "X", "access": {"rocket.engine": ["view"]}}, format="json"
     )
 
     assert response.status_code == 400

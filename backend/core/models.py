@@ -241,6 +241,7 @@ class DocumentCounter(models.Model):
     last_number = models.PositiveIntegerField(default=0)
 
     class Meta:
+        default_permissions = ()  # служебная таблица: в таблице прав не показывается
         constraints = [
             models.UniqueConstraint(fields=["doc_type", "node_id"], name="core_counter_unique")
         ]

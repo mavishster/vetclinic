@@ -6,8 +6,9 @@
         @click="openEditor()" />
     </div>
     <p class="text-grey-8">
-      Роль — набор прав для группы сотрудников: врач, регистратор, кассир… Права назначаются
-      на раздел целиком. Сотрудник может состоять в нескольких ролях — права складываются.
+      Роль — набор прав для группы сотрудников: врач, регистратор, кассир… Права задаются
+      для каждого справочника отдельно или сразу для всего раздела. Сотрудник может состоять
+      в нескольких ролях — права складываются.
     </p>
 
     <q-list bordered separator class="rounded-borders">
@@ -35,34 +36,52 @@
             <q-input v-model="editing.name" label="Название роли" outlined autofocus :readonly="!canEdit"
               :error="!!errors.name" :error-message="errors.name" />
 
-            <div class="text-subtitle2">Права по разделам</div>
+            <div class="text-subtitle2">Права</div>
             <q-markup-table flat bordered dense wrap-cells>
               <thead>
                 <tr>
-                  <th class="text-left">Раздел</th>
+                  <th class="text-left">Раздел и справочник</th>
                   <th v-for="action in matrix.actions" :key="action.code" class="text-center">
                     {{ action.title }}
                   </th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="module in matrix.modules" :key="module.code">
-                  <td>{{ module.title }}</td>
-                  <td v-for="action in matrix.actions" :key="action.code" class="text-center">
-                    <q-checkbox :model-value="hasAction(module.code, action.code)" :disable="!canEdit"
-                      @update:model-value="(value) => setAction(module.code, action.code, value)" />
-                  </td>
-                </tr>
+                <template v-for="module in matrix.modules" :key="module.code">
+                  <tr class="module-row">
+                    <td class="cursor-pointer" @click="toggleExpanded(module.code)">
+                      <q-icon :name="expanded[module.code] ? 'expand_more' : 'chevron_right'" size="20px" />
+                      <strong>{{ module.title }}</strong>
+                      <span class="text-caption text-grey-7 q-ml-xs">· {{ module.entities.length }}</span>
+                    </td>
+                    <td v-for="action in matrix.actions" :key="action.code" class="text-center">
+                      <q-checkbox :model-value="moduleState(module, action.code)" toggle-indeterminate
+                        :disable="!canEdit" @update:model-value="() => toggleModule(module, action.code)">
+                        <q-tooltip>Для всех справочников раздела</q-tooltip>
+                      </q-checkbox>
+                    </td>
+                  </tr>
+                  <template v-if="expanded[module.code]">
+                    <tr v-for="entity in module.entities" :key="entity.code">
+                      <td class="entity-cell">{{ entity.title }}</td>
+                      <td v-for="action in matrix.actions" :key="action.code" class="text-center">
+                        <q-checkbox :model-value="hasAction(entity.code, action.code)" :disable="!canEdit"
+                          @update:model-value="(value) => setAction(entity.code, action.code, value)" />
+                      </td>
+                    </tr>
+                  </template>
+                </template>
               </tbody>
             </q-markup-table>
             <div class="text-caption text-grey-7">
-              Редактирование и удаление включают просмотр: без него нельзя изменить то, чего не видишь.
+              Галочка в строке раздела ставит право сразу для всех его справочников; раскройте раздел,
+              чтобы настроить каждый отдельно. Редактирование и удаление включают просмотр.
             </div>
 
             <q-select v-model="editing.users" :options="userOptions" option-value="id" option-label="label"
               emit-value map-options multiple use-chips outlined use-input input-debounce="0"
               label="Сотрудники в роли" :readonly="!canEdit" @filter="filterUsers" />
-            <div v-if="errors.modules" class="text-negative">{{ errors.modules }}</div>
+            <div v-if="errors.access" class="text-negative">{{ errors.access }}</div>
           </q-card-section>
 
           <q-card-actions align="right">
@@ -104,30 +123,43 @@ async function load() {
   loading.value = false
 }
 
-const titleOf = (code) => matrix.value.modules.find((m) => m.code === code)?.title ?? code
+// Краткое описание роли: разделы, к которым есть доступ (полностью или частично).
 function summary(role) {
-  const granted = Object.entries(role.modules).filter(([, actions]) => actions.length)
-  return granted.length ? granted.map(([code]) => titleOf(code)).join(', ') : 'Нет прав'
+  const parts = []
+  for (const module of matrix.value.modules) {
+    const withAccess = module.entities.filter((e) => role.access[e.code]?.length).length
+    if (withAccess === module.entities.length) parts.push(module.title)
+    else if (withAccess) parts.push(`${module.title} (частично)`)
+  }
+  return parts.length ? parts.join(', ') : 'Нет прав'
 }
 
 const editorOpen = ref(false)
-const editing = ref({ name: '', users: [], modules: {} })
+const editing = ref({ name: '', users: [], access: {} })
+const expanded = ref({})
 const errors = ref({})
 const saving = ref(false)
 const canEdit = computed(() => can(editing.value.id ? 'auth.change_group' : 'auth.add_group'))
 
+const allEntities = () => matrix.value.modules.flatMap((m) => m.entities.map((e) => e.code))
+
 function openEditor(role = null) {
   errors.value = {}
-  const modules = Object.fromEntries(matrix.value.modules.map((m) => [m.code, [...(role?.modules[m.code] ?? [])]]))
-  editing.value = role ? { ...role, users: [...role.users], modules } : { name: '', users: [], modules }
+  const access = Object.fromEntries(allEntities().map((code) => [code, [...(role?.access[code] ?? [])]]))
+  editing.value = role ? { ...role, users: [...role.users], access } : { name: '', users: [], access }
+  // Разделы с частичными правами раскрыты сразу — чтобы было видно, что именно разрешено.
+  expanded.value = Object.fromEntries(
+    matrix.value.modules.map((m) => [m.code, matrix.value.actions.some((a) => moduleState(m, a.code) === null)]),
+  )
   editorOpen.value = true
 }
 
-const hasAction = (module, action) => editing.value.modules[module]?.includes(action)
+const toggleExpanded = (code) => (expanded.value[code] = !expanded.value[code])
+const hasAction = (entity, action) => editing.value.access[entity]?.includes(action)
 
 // Права зависят друг от друга: изменение и удаление невозможны без просмотра.
-function setAction(module, action, value) {
-  const actions = new Set(editing.value.modules[module])
+function setAction(entity, action, value) {
+  const actions = new Set(editing.value.access[entity])
   if (value) {
     actions.add(action)
     if (action !== 'view') actions.add('view')
@@ -135,7 +167,19 @@ function setAction(module, action, value) {
     actions.delete(action)
     if (action === 'view') actions.clear()
   }
-  editing.value.modules[module] = [...actions]
+  editing.value.access[entity] = [...actions]
+}
+
+// Галочка раздела: все справочники — да, ни одного — нет, часть — «частично» (null).
+function moduleState(module, action) {
+  const count = module.entities.filter((e) => hasAction(e.code, action)).length
+  if (count === module.entities.length) return true
+  return count === 0 ? false : null
+}
+
+function toggleModule(module, action) {
+  const value = moduleState(module, action) !== true
+  for (const entity of module.entities) setAction(entity.code, action, value)
 }
 
 function filterUsers(text, update) {
@@ -147,7 +191,7 @@ function filterUsers(text, update) {
 
 async function save() {
   saving.value = true
-  const body = { name: editing.value.name, modules: editing.value.modules }
+  const body = { name: editing.value.name, access: editing.value.access }
   if (can('core.view_user')) body.users = editing.value.users
   const { ok, data } = editing.value.id
     ? await apiPatch(`core/roles/${editing.value.id}/`, body)
@@ -179,3 +223,12 @@ function remove() {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.module-row {
+  background: rgba(127, 127, 127, 0.06);
+}
+.entity-cell {
+  padding-left: 40px !important;
+}
+</style>

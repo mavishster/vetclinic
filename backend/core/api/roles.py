@@ -1,4 +1,4 @@
-"""Роли и права: таблица «модуль × действие» и состав роли (ADR-013)."""
+"""Роли и права: таблица «раздел → сущность × действие» и состав роли (ADR-013)."""
 
 from typing import Any
 
@@ -20,37 +20,39 @@ class RoleSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     users = serializers.PrimaryKeyRelatedField(
         source="user_set", many=True, queryset=get_user_model().objects.all(), required=False
     )
-    modules = serializers.DictField(
+    # «access», а не «permissions»: у группы Django уже есть поле permissions (сырые права).
+    access = serializers.DictField(
         child=serializers.ListField(child=serializers.ChoiceField(choices=ACTIONS)),
         required=False,
-        help_text='{"clients": ["view", "edit"], ...}',
+        help_text='{"clients.species": ["view", "edit"], "core.printtemplate": ["view"], ...}',
     )
 
     class Meta:
         model = Group
-        fields = ["id", "name", "users", "modules"]
+        fields = ["id", "name", "users", "access"]
 
     def to_representation(self, role: Group) -> dict[str, Any]:
         data = super().to_representation(role)
-        data["modules"] = {
-            code: sorted(services.module_actions(role, code))
-            for code, _ in services.permission_modules()
+        data["access"] = {
+            entity: sorted(services.entity_actions(role, entity))
+            for entity in sorted(services.permission_entities())
         }
         return data
 
-    def validate_modules(self, value: dict[str, list[str]]) -> dict[str, list[str]]:
-        known = {code for code, _ in services.permission_modules()}
-        unknown = set(value) - known
+    def validate_access(self, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        unknown = set(value) - services.permission_entities()
         if unknown:
-            raise serializers.ValidationError(f"Неизвестные модули: {', '.join(sorted(unknown))}")
+            raise serializers.ValidationError(
+                f"Неизвестные разделы или справочники: {', '.join(sorted(unknown))}"
+            )
         return value
 
     @transaction.atomic
     def save(self, **kwargs: Any) -> Group:
-        modules = self.validated_data.pop("modules", None)
+        access = self.validated_data.pop("access", None)
         role: Group = super().save(**kwargs)
-        for code, actions in (modules or {}).items():
-            services.set_module_permissions(role, code, set(actions))
+        for entity, actions in (access or {}).items():
+            services.set_entity_permissions(role, entity, set(actions))
         return role
 
 
@@ -60,10 +62,10 @@ class RoleViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
 
     @action(detail=False, methods=["get"])
     def matrix(self, request: Request) -> Response:
-        """Строки и столбцы таблицы прав: модули и действия."""
+        """Строки и столбцы таблицы прав: разделы с сущностями и действия."""
         return Response(
             {
-                "modules": [{"code": c, "title": t} for c, t in services.permission_modules()],
+                "modules": services.permission_modules(),
                 "actions": [
                     {"code": "view", "title": "Просмотр"},
                     {"code": "edit", "title": "Редактирование"},

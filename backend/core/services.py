@@ -115,52 +115,124 @@ def confirm_action(user: User, pin: str) -> None:
     raise PinError(f"Неверный ПИН. Осталось попыток: {left}.")
 
 
-# --- Роли и права по модулям (ADR-013) ---------------------------------------------
+# --- Роли и права: раздел → сущности → действия (ADR-013) --------------------------
 
-# Действие в матрице «роль × модуль × действие» → стандартные права Django.
+# Действие в таблице прав → стандартные права Django.
 MODULE_ACTIONS: dict[str, tuple[str, ...]] = {
     "view": ("view",),
     "edit": ("add", "change"),
     "delete": ("delete",),
 }
 
-
-def _module_permissions(app_label: str, action: str) -> list[Permission]:
-    prefixes = MODULE_ACTIONS[action]
-    return [
-        perm
-        for perm in Permission.objects.filter(content_type__app_label=app_label)
-        if perm.codename.split("_", 1)[0] in prefixes
-        # История изменений — служебные модели, права на них отдельно не раздаём.
-        and not perm.content_type.model.startswith("historical")
-    ]
+# Сущности вне модулей проекта, которые показываются в таблице прав внутри раздела.
+_EXTRA_ENTITIES = {"core": ["auth.group"]}
+_ENTITY_TITLES = {"auth.group": "Роли и права"}
+_MODULE_TITLES = {"core": "Администрирование"}
 
 
-def set_module_permissions(role: Group, app_label: str, actions: set[str]) -> None:
-    """Назначить роли действия в модуле целиком: {"view", "edit", "delete"}.
+class PermissionEntity(TypedDict):
+    code: str  # «приложение.модель», например «clients.species»
+    title: str
 
-    Права модуля, не попавшие в actions, у роли снимаются.
+
+class PermissionModule(TypedDict):
+    code: str
+    title: str
+    entities: list[PermissionEntity]
+
+
+def _entity_title(model: type[Any]) -> str:
+    title = str(model._meta.verbose_name_plural)
+    return title[:1].upper() + title[1:]
+
+
+def permission_modules() -> list[PermissionModule]:
+    """Строки таблицы прав: разделы и их сущности (справочники, документы…).
+
+    Показываются модели модулей проекта, у которых есть права. Служебные модели
+    без прав (default_permissions = ()) и журналы истории не показываются.
     """
+    result: list[PermissionModule] = []
+    for app in settings.PROJECT_APPS:
+        config = apps.get_app_config(app)
+        entities: list[PermissionEntity] = [
+            {"code": model._meta.label_lower, "title": _entity_title(model)}
+            for model in config.get_models()
+            if model._meta.default_permissions
+            and not model._meta.label_lower.split(".")[1].startswith("historical")
+        ]
+        entities += [
+            {"code": code, "title": _ENTITY_TITLES[code]} for code in _EXTRA_ENTITIES.get(app, [])
+        ]
+        if entities:
+            title = _MODULE_TITLES.get(app, str(config.verbose_name))
+            result.append({"code": app, "title": title, "entities": entities})
+    return result
+
+
+def permission_entities() -> set[str]:
+    return {entity["code"] for module in permission_modules() for entity in module["entities"]}
+
+
+def _entity_permissions(entity: str, action: str) -> list[Permission]:
+    app_label, model = entity.split(".")
+    codenames = [f"{prefix}_{model}" for prefix in MODULE_ACTIONS[action]]
+    return list(
+        Permission.objects.filter(content_type__app_label=app_label, codename__in=codenames)
+    )
+
+
+def _check(entity: str | None, actions: set[str]) -> None:
     unknown = actions - MODULE_ACTIONS.keys()
     if unknown:
         raise ValueError(f"Неизвестные действия: {', '.join(sorted(unknown))}")
+    if entity is not None and entity not in permission_entities():
+        raise ValueError(f"Неизвестный раздел или справочник: {entity}")
+
+
+def set_entity_permissions(role: Group, entity: str, actions: set[str]) -> None:
+    """Назначить роли действия над сущностью: {"view", "edit", "delete"}.
+
+    «Редактирование» = добавление + изменение. Не попавшие в actions права снимаются.
+    """
+    _check(entity, actions)
     for action in MODULE_ACTIONS:
-        perms = _module_permissions(app_label, action)
+        perms = _entity_permissions(entity, action)
         if action in actions:
             role.permissions.add(*perms)
         else:
             role.permissions.remove(*perms)
 
 
-def module_actions(role: Group, app_label: str) -> set[str]:
-    """Какие действия модуля есть у роли (действие есть, если есть все его права)."""
+def entity_actions(role: Group, entity: str) -> set[str]:
+    """Какие действия над сущностью есть у роли (действие есть, если есть все его права)."""
     granted = set(role.permissions.values_list("pk", flat=True))
-    result = set()
-    for action in MODULE_ACTIONS:
-        perms = _module_permissions(app_label, action)
-        if perms and all(perm.pk in granted for perm in perms):
-            result.add(action)
-    return result
+    return {
+        action
+        for action in MODULE_ACTIONS
+        if (perms := _entity_permissions(entity, action))
+        and all(perm.pk in granted for perm in perms)
+    }
+
+
+def _module_entities(module: str) -> list[str]:
+    for item in permission_modules():
+        if item["code"] == module:
+            return [entity["code"] for entity in item["entities"]]
+    raise ValueError(f"Неизвестный раздел или справочник: {module}")
+
+
+def set_module_permissions(role: Group, module: str, actions: set[str]) -> None:
+    """Назначить одинаковые действия всем сущностям раздела — «всё сразу»."""
+    _check(None, actions)
+    for entity in _module_entities(module):
+        set_entity_permissions(role, entity, actions)
+
+
+def module_actions(role: Group, module: str) -> set[str]:
+    """Действия, которые есть у роли для всех сущностей раздела."""
+    per_entity = [entity_actions(role, entity) for entity in _module_entities(module)]
+    return set.intersection(*per_entity) if per_entity else set()
 
 
 # --- Документы и журнал движений (ADR-004, ADR-005, ADR-012) ----------------------
@@ -295,18 +367,3 @@ def render_print_sample(template: PrintTemplate, as_pdf: bool = True) -> bytes |
     if as_pdf:
         return printing.render_pdf(template.body, context)
     return printing.render_html(template.body, context)
-
-
-def permission_modules() -> list[tuple[str, str]]:
-    """Модули, у которых есть права: (код, название) — строки матрицы «модуль × действие»."""
-    labels = set(
-        Permission.objects.exclude(content_type__model__startswith="historical").values_list(
-            "content_type__app_label", flat=True
-        )
-    )
-    titles = {"core": "Пользователи, клиника, печатные формы"}
-    return [
-        (app, titles.get(app, str(apps.get_app_config(app).verbose_name)))
-        for app in settings.PROJECT_APPS
-        if app in labels
-    ]
