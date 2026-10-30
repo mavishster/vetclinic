@@ -20,7 +20,7 @@ class UnitViewSet(DirectoryViewSet):
 
 class ItemGroupViewSet(DirectoryViewSet):
     model = ItemGroup
-    extra_fields = ("kind", "markup_percent", "show_in_vaccinations")
+    extra_fields = ("kind", "markup_percent", "prevention_kind")
     filter_fields = ("kind",)
 
 

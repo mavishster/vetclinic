@@ -10,7 +10,7 @@
         <q-item-section side class="text-weight-medium">{{ new Date(v.date).toLocaleDateString('ru-RU') }}</q-item-section>
         <q-item-section>
           <q-item-label>{{ v.purpose_name }}{{ v.diagnoses.length ? ` · ${v.diagnoses.map((d) => d.name).join(', ')}` : '' }}</q-item-label>
-          <q-item-label caption>{{ v.doctor_name }}{{ v.vaccinations.length ? ` · вакцинация: ${v.vaccinations.map((x) => x.vaccine_name).join(', ')}` : '' }}</q-item-label>
+          <q-item-label caption>{{ v.doctor_name }}{{ v.preventions.length ? ` · ${v.preventions.map((x) => x.item_name || x.type_name).join(', ')}` : '' }}</q-item-label>
         </q-item-section>
       </q-item>
       <q-item v-if="!visits.length"><q-item-section class="text-grey-7">Записей пока нет</q-item-section></q-item>

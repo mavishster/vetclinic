@@ -8,7 +8,7 @@
 
 import re
 from collections import Counter
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -19,7 +19,7 @@ from django.utils import timezone
 from catalog import services as catalog
 from clients import services as clients
 from core.html import clean
-from medical.models import Vaccination, Visit, VisitDiagnosis, VisitItem
+from medical.models import Prevention, PreventionType, Visit, VisitDiagnosis, VisitItem
 from scheduling import services as scheduling
 
 
@@ -122,55 +122,182 @@ def pet_visits(pet: Any) -> QuerySet[Visit]:
     return Visit.objects.filter(pet=pet).select_related("doctor", "purpose", "result")
 
 
-# --- Вакцинации --------------------------------------------------------------------
+# --- Профилактика: вакцинации, дегельминтизация, обработки, стерилизация… ----------
+
+K = PreventionType.Kind
+
+
+def preparations(prevention_type: PreventionType) -> list[Any]:
+    """Что предлагать для вида профилактики: товары и услуги с этим видом в каталоге."""
+    return list(catalog.preparations(prevention_type.kind))
+
+
+def _close_reminders(visit: Visit, prevention_type: PreventionType, item: Any) -> None:
+    """Новая процедура закрывает ждущие напоминания: у вакцинации — по той же вакцине,
+    у остальных повторяемых видов — по всему виду (любой препарат от глистов)."""
+    reminders = Prevention.objects.filter(
+        pet=visit.pet, type=prevention_type, reminder=Prevention.Reminder.ACTIVE
+    )
+    if prevention_type.kind == K.VACCINATION and item is not None:
+        reminders = reminders.filter(item=item)
+    reminders.update(reminder=Prevention.Reminder.CLOSED)
 
 
 @transaction.atomic
-def add_vaccination(
+def add_prevention(
     visit: Visit,
-    vaccine: Any,
+    prevention_type: PreventionType,
+    item: Any = None,
     quantity: Decimal = Decimal("1"),
-    kind: str = Vaccination.Kind.PRIMARY,
+    stage: str = "",
     next_date: date | None = None,
     batch_note: str = "",
+    note: str = "",
     repeat_at: time | None = None,
-) -> Vaccination:
-    """Записать вакцинацию.
+) -> Prevention:
+    """Записать профилактическую процедуру.
 
-    Действующие напоминания по этой же вакцине у питомца закрываются — клиенту
-    не придёт напоминание о том, что уже сделано. repeat_at — запланировать
-    визит на дату повтора в это время.
+    - повторяемая: следующая дата (по умолчанию — через «повтор через, дней» вида);
+      закрывает прежние напоминания; repeat_at — запланировать визит на дату повтора;
+    - стерилизация: питомцу ставится отметка «стерилизован»;
+    - чипирование: номер чипа из примечания записывается в карточку питомца.
     """
-    vaccination_date = timezone.localtime(visit.date).date()
+    procedure_date = timezone.localdate(visit.date)
     if quantity <= 0:
         raise MedicalError("Количество должно быть больше нуля.")
-    if next_date is not None and next_date <= vaccination_date:
-        raise MedicalError("Дата следующей вакцинации должна быть позже сегодняшней.")
-    Vaccination.objects.filter(
-        pet=visit.pet, vaccine=vaccine, reminder=Vaccination.Reminder.ACTIVE
-    ).update(reminder=Vaccination.Reminder.CLOSED)
-    vaccination = Vaccination.objects.create(
-        visit=visit, pet=visit.pet, vaccine=vaccine, quantity=quantity, date=vaccination_date,
-        kind=kind, next_date=next_date, batch_note=batch_note,
+    if prevention_type.kind == K.VACCINATION and item is None:
+        raise MedicalError("Выберите вакцину.")
+    if prevention_type.is_one_time:
+        next_date = None
+    elif next_date is None and prevention_type.repeat_days:
+        next_date = procedure_date + timedelta(days=prevention_type.repeat_days)
+    if next_date is not None and next_date <= procedure_date:
+        raise MedicalError("Дата следующей процедуры должна быть позже даты этой.")
+    if prevention_type.kind == K.CHIPPING and not note.strip():
+        raise MedicalError("Укажите номер чипа в примечании.")
+
+    _close_reminders(visit, prevention_type, item)
+    prevention = Prevention.objects.create(
+        visit=visit, pet=visit.pet, type=prevention_type, item=item, quantity=quantity,
+        date=procedure_date, stage=stage, next_date=next_date, batch_note=batch_note,
+        note=note.strip(),
+        reminder=Prevention.Reminder.CLOSED if next_date is None else Prevention.Reminder.ACTIVE,
     )  # fmt: skip
+    if prevention_type.kind == K.STERILIZATION:
+        clients.mark_sterilized(visit.pet)
+    elif prevention_type.kind == K.CHIPPING:
+        clients.set_chip_number(visit.pet, prevention.note)
     if next_date is not None and repeat_at is not None:
         zone = timezone.get_current_timezone()
         scheduling.book_repeat(
             visit.client, visit.pet, visit.doctor, datetime.combine(next_date, repeat_at, zone),
-            purpose_kind="vaccination", note=f"Ревакцинация: {vaccine}",
+            purpose_kind="vaccination" if prevention_type.kind == K.VACCINATION else "general",
+            note=f"Повтор: {prevention_type.name.lower()}{f' ({item})' if item else ''}",
         )  # fmt: skip
-    return vaccination
+    return prevention
 
 
-def pet_vaccinations(pet: Any) -> QuerySet[Vaccination]:
-    return Vaccination.objects.filter(pet=pet).select_related("vaccine", "visit")
+def pet_preventions(pet: Any) -> QuerySet[Prevention]:
+    return Prevention.objects.filter(pet=pet).select_related("type", "item", "visit")
 
 
-def due_vaccinations(until: date) -> QuerySet[Vaccination]:
+def due_preventions(until: date) -> QuerySet[Prevention]:
     """Ждущие повторы до даты — для напоминаний (модуль уведомлений, этап 7)."""
-    return Vaccination.objects.filter(
-        reminder=Vaccination.Reminder.ACTIVE, next_date__lte=until
-    ).select_related("pet", "vaccine")
+    return Prevention.objects.filter(
+        reminder=Prevention.Reminder.ACTIVE, next_date__lte=until
+    ).select_related("pet", "type", "item")
+
+
+def prevention_summary(pet: Any) -> list[dict[str, Any]]:
+    """Сводка для карточки питомца: по каждому виду последняя процедура и следующий срок.
+
+    У вакцинаций — по каждой вакцине отдельно (бешенство и комплексная — разные сроки).
+    Однократные виды показываются, даже если не проводились («не проводилась»).
+    """
+    today = timezone.localdate()
+    rows: list[dict[str, Any]] = []
+    for prevention_type in PreventionType.objects.filter(is_active=True).order_by("name"):
+        records = list(pet_preventions(pet).filter(type=prevention_type))
+        groups: dict[Any, Prevention] = {}
+        for record in records:  # новые сверху: первая — последняя по дате
+            key = record.item_id if prevention_type.kind == K.VACCINATION else None
+            groups.setdefault(key, record)
+        if not groups and prevention_type.kind in (K.STERILIZATION, K.CHIPPING, K.DEWORMING):
+            rows.append({"type": prevention_type.name, "kind": prevention_type.kind, "last": None})
+        for record in groups.values():
+            waiting = record.reminder == Prevention.Reminder.ACTIVE and record.next_date
+            rows.append(
+                {
+                    "type": prevention_type.name, "kind": prevention_type.kind,
+                    "last": {
+                        "id": str(record.pk), "date": record.date, "visit": str(record.visit_id),
+                        "item": record.item.name if record.item else "", "note": record.note,
+                    },
+                    "next_date": record.next_date if waiting else None,
+                    "overdue": bool(waiting and record.next_date and record.next_date < today),
+                }
+            )  # fmt: skip
+    return rows
+
+
+def prevention_report(
+    mode: str,
+    date_from: date,
+    date_to: date,
+    type_id: Any = None,
+    species_id: Any = None,
+) -> QuerySet[Prevention]:
+    """Отчёт по профилактике.
+
+    mode: done — проведено за период; due — срок повтора наступает в периоде;
+    overdue — срок прошёл (раньше сегодняшнего дня), а новой процедуры нет.
+    """
+    queryset = Prevention.objects.select_related(
+        "type", "item", "pet__species", "pet__owner", "visit__doctor"
+    ).filter(pet__status="active")
+    if mode == "done":
+        queryset = queryset.filter(date__gte=date_from, date__lte=date_to)
+    elif mode == "due":
+        queryset = queryset.filter(
+            reminder=Prevention.Reminder.ACTIVE, next_date__gte=date_from, next_date__lte=date_to
+        )
+    elif mode == "overdue":
+        queryset = queryset.filter(
+            reminder=Prevention.Reminder.ACTIVE, next_date__lt=timezone.localdate()
+        )
+    else:
+        raise MedicalError("Неизвестный вид отчёта.")
+    if type_id:
+        queryset = queryset.filter(type=type_id)
+    if species_id:
+        queryset = queryset.filter(pet__species=species_id)
+    return queryset.order_by("next_date" if mode != "done" else "-date")
+
+
+def prevention_suggestions(visit: Visit) -> list[dict[str, Any]]:
+    """Подсказки «записать процедуру»: в тексте отмечены препарат или услуга с видом
+    профилактики, а такой процедуры в записи ещё нет."""
+    done = set(visit.preventions.values_list("type__kind", "item_id"))
+    done_kinds = {kind for kind, _ in done}
+    types = {
+        t.kind: t for t in PreventionType.objects.filter(is_active=True).order_by("created_at")
+    }
+    suggestions: list[dict[str, Any]] = []
+    seen: set[tuple[str, Any]] = set()
+    for line in visit.items.select_related("item_unit__item__group"):
+        item = line.item_unit.item
+        kind = catalog.prevention_kind_of(item)
+        prevention_type = types.get(kind)
+        if prevention_type is None or (kind, item.pk) in seen:
+            continue
+        seen.add((kind, item.pk))
+        if (kind, item.pk) in done or (kind != K.VACCINATION and kind in done_kinds):
+            continue
+        suggestions.append(
+            {"type": str(prevention_type.pk), "type_name": prevention_type.name,
+             "kind": kind, "item": str(item.pk), "item_name": item.name}
+        )  # fmt: skip
+    return suggestions
 
 
 # --- Печать ------------------------------------------------------------------------
@@ -195,9 +322,14 @@ def print_context(visit: Visit) -> dict[str, Any]:
             "next_visit_date": visit.next_visit_date,
         },
         "vaccinations": [
-            {"vaccine": v.vaccine.name, "date": v.date, "next_date": v.next_date,
-             "batch": v.batch_note}
-            for v in visit.vaccinations.all()
+            {"vaccine": p.item.name if p.item else "", "date": p.date, "next_date": p.next_date,
+             "batch": p.batch_note}
+            for p in visit.preventions.filter(type__kind=K.VACCINATION).select_related("item")
+        ],
+        "preventions": [
+            {"type": p.type.name, "item": p.item.name if p.item else "", "date": p.date,
+             "next_date": p.next_date, "batch": p.batch_note, "note": p.note}
+            for p in visit.preventions.select_related("type", "item")
         ],
     }  # fmt: skip
 
@@ -214,4 +346,6 @@ def sample_print_context() -> dict[str, Any]:
                   "diagnoses": "Гастроэнтерит", "treatment": "<p>Осмотр. Назначено лечение.</p>",
                   "recommendations": "<p>Диета 5 дней.</p>", "next_visit_date": today},
         "vaccinations": [],
+        "preventions": [{"type": "Дегельминтизация", "item": "Мильбемакс", "date": today,
+                         "next_date": today, "batch": "", "note": ""}],
     }  # fmt: skip

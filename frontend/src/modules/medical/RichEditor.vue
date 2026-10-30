@@ -6,7 +6,8 @@
       Наберите <b>@</b> или <b>*</b>, чтобы отметить услугу или товар из прайса — потом они одной кнопкой попадут в счёт.
     </div>
 
-    <q-dialog v-model="pickerOpen" @hide="restoreCaret">
+    <!-- Без анимации: окно получает фокус сразу, и буквы, набранные после «@», не теряются. -->
+    <q-dialog v-model="pickerOpen" :transition-duration="0" @hide="restoreCaret">
       <q-card style="width: 520px; max-width: 95vw">
         <q-card-section class="q-pb-none">
           <q-input v-model="query" autofocus outlined dense placeholder="Услуга или товар…" debounce="250"

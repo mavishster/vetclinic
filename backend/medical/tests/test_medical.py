@@ -14,7 +14,7 @@ from clients.models import Breed, Client, Pet, Species
 from core import services as core
 from core.models import PrintTemplate
 from medical import services
-from medical.models import Diagnosis, Vaccination
+from medical.models import Diagnosis, Prevention, PreventionType
 from medical.services import MedicalError
 from scheduling import services as scheduling
 from scheduling.models import Appointment
@@ -128,41 +128,159 @@ def test_temperature_and_weight_checks(pet, doctor) -> None:
         services.save_visit(visit)
 
 
-def test_vaccination_closes_previous_reminder_and_books_repeat(pet, doctor, vaccine) -> None:
+def ptype(kind: str) -> PreventionType:
+    return PreventionType.objects.get(kind=kind)
+
+
+def test_vaccination_closes_previous_reminder_of_same_vaccine_and_books_repeat(
+    pet, doctor, vaccine
+) -> None:
     first_visit = services.start_visit(pet, doctor)
-    old = services.add_vaccination(
-        first_visit, vaccine, next_date=timezone.localdate() + timedelta(days=21)
+    old = services.add_prevention(
+        first_visit,
+        ptype("vaccination"),
+        vaccine,
+        next_date=timezone.localdate() + timedelta(days=21),
     )
     visit = services.start_visit(pet, doctor)
     next_year = timezone.localdate() + timedelta(days=365)
 
-    new = services.add_vaccination(
-        visit, vaccine, kind="secondary", next_date=next_year, repeat_at=time(10, 30)
+    new = services.add_prevention(
+        visit,
+        ptype("vaccination"),
+        vaccine,
+        stage="secondary",
+        next_date=next_year,
+        repeat_at=time(10, 30),
     )
 
     old.refresh_from_db()
-    assert old.reminder == Vaccination.Reminder.CLOSED
-    assert new.reminder == Vaccination.Reminder.ACTIVE
+    assert old.reminder == Prevention.Reminder.CLOSED
+    assert new.reminder == Prevention.Reminder.ACTIVE
     repeat = Appointment.objects.get(source="vaccination")
     assert timezone.localtime(repeat.start).date() == next_year
     assert repeat.purpose.kind == "vaccination"
-    assert list(services.due_vaccinations(next_year)) == [new]
+    assert list(services.due_preventions(next_year)) == [new]
 
 
-def test_vaccination_rules(pet, doctor, vaccine) -> None:
+def test_repeat_date_defaults_from_type_and_deworming_closes_any_product(pet, doctor) -> None:
+    milbemax = catalog.save_item(
+        Item(
+            kind=Kind.GOODS,
+            name="Мильбемакс",
+            group=ItemGroup.objects.get(name="Препараты"),
+            base_unit=Unit.objects.get(name="таб."),
+            prevention_kind="deworming",
+        ),
+        [{"unit": Unit.objects.get(name="таб."), "price": D("350")}],
+    )
+    visit = services.start_visit(pet, doctor)
+    first = services.add_prevention(visit, ptype("deworming"), milbemax)
+    second = services.add_prevention(
+        services.start_visit(pet, doctor), ptype("deworming"), None, note="другой препарат"
+    )
+
+    first.refresh_from_db()
+    assert first.next_date == timezone.localdate() + timedelta(days=90)
+    assert first.reminder == Prevention.Reminder.CLOSED
+    assert second.reminder == Prevention.Reminder.ACTIVE
+    assert [i.name for i in services.preparations(ptype("deworming"))] == ["Мильбемакс"]
+
+
+def test_sterilization_and_chipping_update_pet_card(pet, doctor) -> None:
+    visit = services.start_visit(pet, doctor)
+
+    sterilization = services.add_prevention(
+        visit, ptype("sterilization"), next_date=timezone.localdate() + timedelta(days=5)
+    )
+    with pytest.raises(MedicalError, match="номер чипа"):
+        services.add_prevention(visit, ptype("chipping"))
+    services.add_prevention(visit, ptype("chipping"), note=" 643094100999888 ")
+
+    pet.refresh_from_db()
+    assert pet.sterilized
+    assert pet.chip_number == "643094100999888"
+    assert sterilization.next_date is None  # однократная — без повтора
+    assert sterilization.reminder == Prevention.Reminder.CLOSED
+
+
+def test_prevention_rules(pet, doctor, vaccine) -> None:
     visit = services.start_visit(pet, doctor)
 
     with pytest.raises(MedicalError, match="позже"):
-        services.add_vaccination(visit, vaccine, next_date=timezone.localdate())
+        services.add_prevention(
+            visit, ptype("vaccination"), vaccine, next_date=timezone.localdate()
+        )
     with pytest.raises(MedicalError, match="больше нуля"):
-        services.add_vaccination(visit, vaccine, quantity=D("0"))
+        services.add_prevention(visit, ptype("vaccination"), vaccine, quantity=D("0"))
+    with pytest.raises(MedicalError, match="вакцину"):
+        services.add_prevention(visit, ptype("vaccination"))
+
+
+def test_summary_shows_last_per_vaccine_and_overdue(pet, doctor, vaccine) -> None:
+    visit = services.start_visit(pet, doctor)
+    services.add_prevention(
+        visit, ptype("vaccination"), vaccine, next_date=timezone.localdate() + timedelta(days=30)
+    )
+    Prevention.objects.update(next_date=timezone.localdate() - timedelta(days=1))  # срок прошёл
+
+    summary = {row["type"]: row for row in services.prevention_summary(pet)}
+
+    assert summary["Вакцинация"]["last"]["item"] == "Нобивак Rabies"
+    assert summary["Вакцинация"]["overdue"] is True
+    assert summary["Стерилизация / кастрация"]["last"] is None  # «не проводилась»
+
+
+def test_report_done_due_overdue(pet, doctor, vaccine) -> None:
+    today = timezone.localdate()
+    visit = services.start_visit(pet, doctor)
+    services.add_prevention(
+        visit, ptype("vaccination"), vaccine, next_date=today + timedelta(days=10)
+    )
+
+    done = services.prevention_report("done", today, today)
+    due = services.prevention_report(
+        "due", today, today + timedelta(days=30), type_id=ptype("vaccination").pk
+    )
+    overdue = services.prevention_report("overdue", today, today)
+
+    assert done.count() == 1 and due.count() == 1 and overdue.count() == 0
+    with pytest.raises(MedicalError):
+        services.prevention_report("всё", today, today)
+
+
+def test_suggestions_from_mentioned_items(pet, doctor, vaccine) -> None:
+    castration = catalog.save_item(
+        Item(
+            kind=Kind.SERVICE,
+            name="Кастрация кота",
+            group=ItemGroup.objects.get(name="Хирургия"),
+            base_unit=Unit.objects.get(name="усл."),
+            prevention_kind="sterilization",
+        ),
+        [{"unit": Unit.objects.get(name="усл."), "price": D("3500")}],
+    )
+    visit = services.start_visit(pet, doctor)
+    mention = '<span class="item-mention" data-item-unit="{}">x</span>'
+    visit.treatment_html = mention.format(castration.units.get().pk) + mention.format(
+        vaccine.units.get().pk
+    )
+    services.save_visit(visit)
+
+    names = {s["type_name"] for s in services.prevention_suggestions(visit)}
+    assert names == {"Стерилизация / кастрация", "Вакцинация"}
+
+    services.add_prevention(visit, ptype("vaccination"), vaccine)
+    assert {s["type_name"] for s in services.prevention_suggestions(visit)} == {
+        "Стерилизация / кастрация"
+    }
 
 
 def test_medcard_print(pet, doctor, vaccine) -> None:
     visit = services.start_visit(pet, doctor)
     visit.recommendations_html = "<p>Диета</p>"
     services.save_visit(visit)
-    services.add_vaccination(visit, vaccine, batch_note="A123 до 12.2027")
+    services.add_prevention(visit, ptype("vaccination"), vaccine, batch_note="A123 до 12.2027")
     template = PrintTemplate.objects.get(kind="medcard")
 
     html = core.printing.render_html(

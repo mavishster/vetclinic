@@ -24,6 +24,9 @@
               :label="isGoods ? `Себестоимость за ${baseUnitName || 'ед.'}` : 'Себестоимость'"
               :hint="isGoods ? 'Если склад не ведётся. При учёте — из приходных накладных' : 'Например, цена анализа во внешней лаборатории'"
               class="col-6 col-md-3" />
+            <q-select v-model="form.prevention_kind" :options="PREVENTION_KINDS" option-value="id" option-label="name"
+              emit-value map-options outlined dense label="Профилактика" class="col-12 col-md-4"
+              hint="Отметите в медкарте — система предложит записать процедуру" />
             <q-input v-model="form.description" label="Описание" type="textarea" autogrow outlined dense class="col-12"
               :hint="isGoods ? '' : 'Что входит в услугу — пригодится администраторам при записи'" />
           </div>
@@ -121,6 +124,7 @@ import { useQuasar } from 'quasar'
 import { apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import { money } from './money'
+import { PREVENTION_KINDS } from './routes'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -187,7 +191,7 @@ watch(
     const goods = props.kind === 'goods'
     form.value = {
       kind: props.kind, name: '', group: null, article: '', description: '', barcode: '', manual_cost: null,
-      for_sale: true, is_call: false, is_active: true, responsible: [],
+      for_sale: true, is_call: false, is_active: true, responsible: [], prevention_kind: '',
       base_unit: goods ? pieceUnit : serviceUnit,
       units: [newUnit(goods ? pieceUnit : serviceUnit)],
     }
@@ -212,7 +216,7 @@ async function save() {
     kind: form.value.kind, name: form.value.name, group: form.value.group, article: form.value.article,
     description: form.value.description, base_unit: form.value.base_unit, barcode: form.value.barcode || '',
     manual_cost: clean(form.value.manual_cost), for_sale: form.value.for_sale, is_call: form.value.is_call,
-    is_active: form.value.is_active,
+    is_active: form.value.is_active, prevention_kind: form.value.prevention_kind || '',
     units: form.value.units.map((u) => ({
       ...(u.id ? { id: u.id } : {}),
       unit: isGoods.value ? u.unit : form.value.base_unit,

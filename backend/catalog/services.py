@@ -322,11 +322,22 @@ def reset_combination_prices(combination: Item) -> None:
     combination.lines.update(price_override=None)
 
 
-def vaccines() -> QuerySet[Item]:
-    """Вакцины — товары из групп с отметкой «показывать в вакцинациях»."""
-    return Item.objects.filter(
-        kind=Kind.GOODS, is_active=True, group__show_in_vaccinations=True
-    ).order_by("name")
+def preparations(prevention_kind: str) -> QuerySet[Item]:
+    """Товары и услуги для вида профилактики: своя отметка позиции или отметка её группы."""
+    return (
+        Item.objects.filter(is_active=True)
+        .exclude(kind=Kind.COMBO)
+        .filter(
+            Q(prevention_kind=prevention_kind)
+            | Q(prevention_kind="", group__prevention_kind=prevention_kind)
+        )
+        .order_by("name")
+    )
+
+
+def prevention_kind_of(item: Item) -> str:
+    """Вид профилактики позиции: свой или группы ("" — не относится к профилактике)."""
+    return item.prevention_kind or item.group.prevention_kind
 
 
 def item_units(ids: list[Any]) -> QuerySet[ItemUnit]:

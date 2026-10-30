@@ -58,11 +58,17 @@
           <q-tabs v-model="tab" dense align="left" no-caps active-color="primary" indicator-color="primary">
             <q-tab name="treatment" label="Описание лечения" />
             <q-tab name="recommendations" label="Рекомендации и назначения" />
-            <q-tab name="vaccinations" :label="`Вакцинации${visit.vaccinations.length ? ` (${visit.vaccinations.length})` : ''}`" />
+            <q-tab name="prevention" :label="`Профилактика${visit.preventions.length ? ` (${visit.preventions.length})` : ''}`" />
             <q-tab name="history" label="История" />
             <q-tab name="files" label="Файлы" />
           </q-tabs>
           <q-separator />
+          <q-banner v-if="canEdit && visit.prevention_suggestions.length" dense class="bg-blue-1 text-dark q-mt-sm" rounded>
+            <template #avatar><q-icon name="health_and_safety" color="primary" /></template>
+            В записи отмечено то, что стоит внести в профилактику:
+            <q-btn v-for="s in visit.prevention_suggestions" :key="s.type + s.item" flat dense no-caps color="primary"
+              :label="`${s.type_name}: ${s.item_name}`" @click="suggest(s)" />
+          </q-banner>
           <q-tab-panels v-model="tab" keep-alive animated class="bg-transparent">
             <q-tab-panel name="treatment" class="q-px-none">
               <RichEditor v-model="form.treatment_html" placeholder="Жалобы, анамнез, осмотр, что сделано на приёме…" />
@@ -70,8 +76,8 @@
             <q-tab-panel name="recommendations" class="q-px-none">
               <RichEditor v-model="form.recommendations_html" placeholder="Рекомендации владельцу, назначения, питание…" />
             </q-tab-panel>
-            <q-tab-panel name="vaccinations" class="q-px-none">
-              <VaccinationsPanel :visit="visit" :can-edit="canEdit" @changed="(v) => (visit = v)" />
+            <q-tab-panel name="prevention" class="q-px-none">
+              <PreventionPanel :visit="visit" :can-edit="canEdit" :prefill="prefill" @changed="(v) => (visit = v)" />
             </q-tab-panel>
             <q-tab-panel name="history" class="q-px-none">
               <q-list separator bordered class="rounded-borders">
@@ -120,7 +126,7 @@ import { apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
 import RichEditor from './RichEditor.vue'
-import VaccinationsPanel from './VaccinationsPanel.vue'
+import PreventionPanel from './PreventionPanel.vue'
 
 const props = defineProps({ id: { type: String, required: true } })
 const $q = useQuasar()
@@ -134,6 +140,13 @@ const results = ref([])
 const diagnoses = ref([])
 const diagnosisOptions = ref([])
 const history = ref([])
+const prefill = ref(null)
+
+// Подсказка из отмеченных позиций: открыть «Профилактику» с заполненной формой.
+function suggest(suggestion) {
+  prefill.value = { ...suggestion }
+  tab.value = 'prevention'
+}
 const error = ref('')
 const saveState = ref('saved') // saved | dirty | saving | error
 const savedAt = ref(null)

@@ -10,7 +10,7 @@ from catalog import services as catalog
 from catalog.models import Item, ItemGroup, Kind, Unit
 from clients import services as clients
 from clients.models import Breed, Client, Pet, Species
-from medical.models import Diagnosis
+from medical.models import Diagnosis, PreventionType
 from scheduling import services as scheduling
 from scheduling.models import Appointment
 
@@ -76,22 +76,29 @@ def test_from_appointment_vaccinate_and_print(api, pet) -> None:
     visit = api.post(
         f"{URL}from-appointment/", {"appointment": str(appointment.pk)}, format="json"
     ).json()
-    vaccines = api.get("/api/medical/vaccines/").json()
-    vaccinated = api.post(
-        f"{URL}{visit['id']}/vaccinate/",
-        {"vaccine": str(vaccine.pk), "next_date": str(timezone.localdate() + timedelta(days=21)), "repeat_at": "11:00"},
+    vaccination = PreventionType.objects.get(kind="vaccination")
+    vaccines = api.get(f"/api/medical/preventions/preparations/?type={vaccination.pk}").json()
+    added = api.post(
+        f"{URL}{visit['id']}/prevent/",
+        {"type": str(vaccination.pk), "item": str(vaccine.pk), "next_date": str(timezone.localdate() + timedelta(days=21)), "repeat_at": "11:00"},
         format="json",
     )  # fmt: skip
-    history = api.get(f"/api/medical/vaccinations/?pet={pet.pk}").json()
-    removed = api.delete(f"{URL}{visit['id']}/vaccinations/{history[0]['id']}/")
+    history = api.get(f"/api/medical/preventions/?pet={pet.pk}").json()
+    summary = api.get(f"/api/medical/preventions/summary/?pet={pet.pk}").json()
+    report = api.get("/api/medical/preventions/report/?mode=done").json()
+    xlsx = api.get("/api/medical/preventions/report/?mode=done&export=xlsx")
     pdf = api.get(f"{URL}{visit['id']}/print/")
+    removed = api.delete(f"{URL}{visit['id']}/preventions/{history[0]['id']}/")
 
     assert visit["appointment_status"] == "in_progress"
     assert [v["name"] for v in vaccines] == ["Нобивак DHPPi"]
-    assert vaccinated.status_code == 201
-    assert vaccinated.json()["vaccinations"][0]["vaccine_name"] == "Нобивак DHPPi"
-    assert removed.json()["vaccinations"] == []
+    assert added.status_code == 201
+    assert added.json()["preventions"][0]["item_name"] == "Нобивак DHPPi"
+    assert any(row["last"] and row["last"]["item"] == "Нобивак DHPPi" for row in summary)
+    assert [r["pet_name"] for r in report] == ["Барсик"]
+    assert xlsx["Content-Type"].startswith("application/vnd.openxml")
     assert pdf["Content-Type"] == "application/pdf"
+    assert removed.json()["preventions"] == []
 
 
 def test_permissions(db, pet) -> None:

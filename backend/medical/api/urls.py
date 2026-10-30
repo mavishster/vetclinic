@@ -6,7 +6,7 @@ router = DefaultRouter()
 router.register("diagnoses", views.DiagnosisViewSet, basename="diagnosis")
 router.register("results", views.VisitResultViewSet, basename="visit-result")
 router.register("visits", views.VisitViewSet, basename="visit")
-router.register("vaccinations", views.PetVaccinationsViewSet, basename="vaccination")
-router.register("vaccines", views.VaccinesViewSet, basename="vaccine")
+router.register("prevention-types", views.PreventionTypeViewSet, basename="prevention-type")
+router.register("preventions", views.PreventionViewSet, basename="prevention")
 
 urlpatterns = router.urls

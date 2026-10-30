@@ -25,7 +25,8 @@ class MedicalConfig(AppConfig):
                 "visit.treatment": "Описание лечения (HTML — выводить с |safe)",
                 "visit.recommendations": "Рекомендации (HTML — с |safe)",
                 "visit.next_visit_date": "Дата повторного приёма",
-                "vaccinations": "Список вакцинаций: vaccine, date, next_date, batch",
+                "vaccinations": "Вакцинации приёма: vaccine, date, next_date, batch",
+                "preventions": "Вся профилактика приёма: type, item, date, next_date, batch, note",
             },
             sample=services.sample_print_context,
         )  # fmt: skip

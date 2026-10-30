@@ -320,3 +320,16 @@ def set_weight_on(pet: Pet, on: date, weight: Decimal) -> PetWeight:
     record.weight = weight
     record.save(update_fields=["weight"])
     return record
+
+
+def mark_sterilized(pet: Pet) -> None:
+    """Стерилизация / кастрация проведена — отметка в карточке питомца."""
+    if not pet.sterilized:
+        pet.sterilized = True
+        pet.save(update_fields=["sterilized"])
+
+
+def set_chip_number(pet: Pet, number: str) -> None:
+    """Чипирование — номер чипа в карточку питомца."""
+    pet.chip_number = number.strip()
+    pet.save(update_fields=["chip_number"])

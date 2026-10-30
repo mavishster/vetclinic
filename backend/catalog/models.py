@@ -23,6 +23,20 @@ class Kind(models.TextChoices):
     COMBO = "combo", "комбинация"
 
 
+class PreventionKind(models.TextChoices):
+    """Вид профилактики, к которому относится товар или услуга (для медкарты и отчётов).
+
+    Коды совпадают с видами профилактики медкарты: так препарат или услуга,
+    отмеченные в записи, подсказывают врачу записать процедуру.
+    """
+
+    VACCINATION = "vaccination", "вакцинация"
+    DEWORMING = "deworming", "дегельминтизация"
+    ECTOPARASITES = "ectoparasites", "обработка от эктопаразитов"
+    STERILIZATION = "sterilization", "стерилизация / кастрация"
+    CHIPPING = "chipping", "чипирование"
+
+
 class Unit(Directory):
     """Единица измерения: шт., таб., мл, упак., доза…"""
 
@@ -45,7 +59,10 @@ class ItemGroup(Directory):
         blank=True,
         validators=[MinValueValidator(0)],
     )
-    show_in_vaccinations = models.BooleanField("показывать в вакцинациях", default=False)
+    prevention_kind = models.CharField(
+        "профилактика", max_length=16, choices=PreventionKind.choices, blank=True,
+        help_text="Товары группы предлагаются в медкарте для этого вида профилактики",
+    )  # fmt: skip
 
     class Meta(Directory.Meta):
         verbose_name = "группа товаров и услуг"
@@ -84,6 +101,11 @@ class Item(BaseModel):
     for_sale = models.BooleanField("продаётся", default=True)
     is_call = models.BooleanField("вызов на дом", default=False)
     is_active = models.BooleanField("активен", default=True, db_index=True)
+    # Вид профилактики у самой позиции (если отличается от группы): «Кастрация кота» →
+    # стерилизация, «Чипирование» → чипирование.
+    prevention_kind = models.CharField(
+        "профилактика", max_length=16, choices=PreventionKind.choices, blank=True
+    )
     # Для комбинаций: шаблонная просто добавляет позиции в счёт по отдельности,
     # обычная — одной строкой со своим составом (ADR-017).
     is_template = models.BooleanField("шаблонная комбинация", default=False)

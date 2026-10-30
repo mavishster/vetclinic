@@ -9,7 +9,7 @@ admin.site.register(Unit, DirectoryAdmin)
 
 @admin.register(ItemGroup)
 class ItemGroupAdmin(DirectoryAdmin):
-    list_display = ("name", "kind", "markup_percent", "show_in_vaccinations", "is_active")
+    list_display = ("name", "kind", "markup_percent", "prevention_kind", "is_active")
     list_filter = ("kind", "is_active")
 
 

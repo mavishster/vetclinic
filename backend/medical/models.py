@@ -106,14 +106,45 @@ class VisitItem(models.Model):
         return f"{self.item_unit} × {self.quantity}"
 
 
-class Vaccination(BaseModel):
-    """Вакцинация. Редактируется только из записи медкарты, где создана.
+class PreventionType(Directory):
+    """Вид профилактики: вакцинация, дегельминтизация, обработка от эктопаразитов,
+    стерилизация / кастрация, чипирование… Клиника может добавить свои.
 
-    Напоминание о повторе — по next_date; новая вакцинация той же вакциной закрывает
-    действующие напоминания (чтобы не напомнить клиенту о том, что уже сделано).
+    kind — как система ведёт себя с видом (коды совпадают с видами профилактики
+    в каталоге): по нему подбираются препараты и делаются отметки в карточке питомца.
     """
 
     class Kind(models.TextChoices):
+        VACCINATION = "vaccination", "вакцинация"
+        DEWORMING = "deworming", "дегельминтизация"
+        ECTOPARASITES = "ectoparasites", "обработка от эктопаразитов"
+        STERILIZATION = "sterilization", "стерилизация / кастрация"
+        CHIPPING = "chipping", "чипирование"
+        OTHER = "other", "другое"
+
+    kind = models.CharField("поведение", max_length=16, choices=Kind.choices, default=Kind.OTHER)
+    repeat_days = models.PositiveIntegerField(
+        "повтор через, дней", null=True, blank=True, help_text="Пусто — процедура однократная"
+    )
+
+    class Meta(Directory.Meta):
+        verbose_name = "вид профилактики"
+        verbose_name_plural = "виды профилактики"
+
+    @property
+    def is_one_time(self) -> bool:
+        return self.repeat_days is None
+
+
+class Prevention(BaseModel):
+    """Профилактическая процедура: вакцинация, дегельминтизация, обработка, стерилизация…
+
+    Редактируется только из записи медкарты, где создана. Напоминание о повторе —
+    по next_date; новая процедура того же вида (у вакцинации — той же вакциной)
+    закрывает действующие напоминания.
+    """
+
+    class Stage(models.TextChoices):
         PRIMARY = "primary", "первичная"
         SECONDARY = "secondary", "повторная"
 
@@ -121,23 +152,26 @@ class Vaccination(BaseModel):
         ACTIVE = "active", "ждёт"
         CLOSED = "closed", "закрыто"
 
-    visit = models.ForeignKey(Visit, on_delete=models.CASCADE, related_name="vaccinations")
+    visit = models.ForeignKey(Visit, on_delete=models.CASCADE, related_name="preventions")
     pet = models.ForeignKey("clients.Pet", on_delete=models.PROTECT, related_name="+")
-    vaccine = models.ForeignKey(
-        "catalog.Item", verbose_name="вакцина", on_delete=models.PROTECT, related_name="+"
-    )
+    type = models.ForeignKey(PreventionType, verbose_name="вид", on_delete=models.PROTECT)
+    item = models.ForeignKey(
+        "catalog.Item", verbose_name="препарат или услуга", on_delete=models.PROTECT,
+        null=True, blank=True, related_name="+",
+    )  # fmt: skip
     quantity = QuantityField("количество", default=1)
     date = models.DateField("дата")
-    kind = models.CharField("тип", max_length=10, choices=Kind.choices, default=Kind.PRIMARY)
+    stage = models.CharField("этап", max_length=10, choices=Stage.choices, blank=True)
     next_date = models.DateField("следующая", null=True, blank=True)
     reminder = models.CharField(max_length=8, choices=Reminder.choices, default=Reminder.ACTIVE)
-    # Серия и срок годности — текстом, пока нет склада; потом — партия со склада (этап 3, шаг 3).
+    # Серия и срок годности — текстом, пока нет склада; потом — партия со склада.
     batch_note = models.CharField("серия, срок годности", max_length=100, blank=True)
+    note = models.CharField("примечание", max_length=255, blank=True)
 
     class Meta:
-        verbose_name = "вакцинация"
-        verbose_name_plural = "вакцинации"
+        verbose_name = "профилактическая процедура"
+        verbose_name_plural = "профилактика"
         ordering = ["-date", "-created_at"]
 
     def __str__(self) -> str:
-        return f"{self.vaccine} — {self.date:%d.%m.%Y}"
+        return f"{self.type}: {self.item or ''} — {self.date:%d.%m.%Y}"

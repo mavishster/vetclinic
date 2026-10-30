@@ -1,10 +1,12 @@
-"""API медкарты: записи приёма, диагнозы, вакцинации, печать."""
+"""API медкарты: записи приёма, диагнозы, профилактика, печать."""
 
+from datetime import date
 from typing import Any
 
 from django.db.models import QuerySet
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -12,13 +14,12 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from catalog import services as catalog
 from clients.models import Pet
 from core import services as core
 from core.api.directories import DirectoryViewSet
 from core.models import PrintTemplate
 from medical import services
-from medical.models import Diagnosis, Vaccination, Visit, VisitDiagnosis, VisitResult
+from medical.models import Diagnosis, Prevention, PreventionType, Visit, VisitDiagnosis, VisitResult
 from scheduling import services as scheduling
 
 
@@ -31,6 +32,11 @@ class VisitResultViewSet(DirectoryViewSet):
     model = VisitResult
 
 
+class PreventionTypeViewSet(DirectoryViewSet):
+    model = PreventionType
+    extra_fields = ("kind", "repeat_days")
+
+
 class VisitDiagnosisSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     name = serializers.CharField(source="diagnosis.name", read_only=True)
 
@@ -39,24 +45,28 @@ class VisitDiagnosisSerializer(serializers.ModelSerializer):  # type: ignore[typ
         fields = ["diagnosis", "kind", "name"]
 
 
-class VaccinationSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
-    vaccine_name = serializers.CharField(source="vaccine.name", read_only=True)
-    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+class PreventionSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+    type_name = serializers.CharField(source="type.name", read_only=True)
+    type_kind = serializers.CharField(source="type.kind", read_only=True)
+    item_name = serializers.CharField(source="item.name", read_only=True, default="")
+    stage_label = serializers.CharField(source="get_stage_display", read_only=True)
     repeat_at = serializers.TimeField(write_only=True, required=False, allow_null=True)
 
     class Meta:
-        model = Vaccination
+        model = Prevention
         fields = [
-            "id", "visit", "vaccine", "vaccine_name", "quantity", "date", "kind", "kind_label",
-            "next_date", "reminder", "batch_note", "repeat_at",
+            "id", "visit", "type", "type_name", "type_kind", "item", "item_name", "quantity",
+            "date", "stage", "stage_label", "next_date", "reminder", "batch_note", "note",
+            "repeat_at",
         ]  # fmt: skip
         read_only_fields = ["visit", "date", "reminder"]
 
 
 class VisitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     diagnoses = VisitDiagnosisSerializer(many=True, required=False)
-    vaccinations = VaccinationSerializer(many=True, read_only=True)
+    preventions = PreventionSerializer(many=True, read_only=True)
     items = serializers.SerializerMethodField()
+    prevention_suggestions = serializers.SerializerMethodField()
     pet_name = serializers.CharField(source="pet.name", read_only=True)
     client_name = serializers.CharField(source="client.full_name", read_only=True)
     doctor_name = serializers.CharField(source="doctor.short_name", read_only=True)
@@ -73,7 +83,8 @@ class VisitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "id", "pet", "pet_name", "client", "client_name", "doctor", "doctor_name", "date",
             "purpose", "purpose_name", "purpose_kind", "result", "result_name", "appointment",
             "appointment_status", "weight", "temperature", "treatment_html",
-            "recommendations_html", "next_visit_date", "diagnoses", "items", "vaccinations",
+            "recommendations_html", "next_visit_date", "diagnoses", "items", "preventions",
+            "prevention_suggestions",
             "created_at", "updated_at",
         ]  # fmt: skip
         read_only_fields = ["pet", "client", "appointment"]
@@ -89,6 +100,9 @@ class VisitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             }
             for i in visit.items.select_related("item_unit__item", "item_unit__unit")
         ]
+
+    def get_prevention_suggestions(self, visit: Visit) -> list[dict[str, Any]]:
+        return services.prevention_suggestions(visit)
 
     def update(self, instance: Visit, validated_data: dict[str, Any]) -> Visit:
         diagnoses = validated_data.pop("diagnoses", None)
@@ -119,7 +133,7 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     def get_queryset(self) -> QuerySet[Visit]:
         queryset = Visit.objects.select_related(
             "pet", "client", "doctor", "purpose", "result", "appointment"
-        ).prefetch_related("diagnoses__diagnosis", "vaccinations__vaccine")
+        ).prefetch_related("diagnoses__diagnosis", "preventions__type", "preventions__item")
         params = self.request.query_params
         for field in ("pet", "client", "doctor"):
             if value := params.get(field):
@@ -162,29 +176,29 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         return Response(self.get_serializer(visit).data)
 
     @action(detail=True, methods=["post"])
-    def vaccinate(self, request: Request, pk: str | None = None) -> Response:
-        """Добавить вакцинацию в запись. repeat_at — запланировать визит на дату повтора."""
+    def prevent(self, request: Request, pk: str | None = None) -> Response:
+        """Записать профилактику. repeat_at — запланировать визит на дату повтора."""
         visit = self.get_object()
-        data = VaccinationSerializer(data=request.data)
+        data = PreventionSerializer(data=request.data)
         data.is_valid(raise_exception=True)
         values = data.validated_data
         try:
-            services.add_vaccination(
-                visit, values["vaccine"], values.get("quantity", 1),
-                values.get("kind", Vaccination.Kind.PRIMARY), values.get("next_date"),
-                values.get("batch_note", ""), values.get("repeat_at"),
+            services.add_prevention(
+                visit, values["type"], values.get("item"), values.get("quantity", 1),
+                values.get("stage", ""), values.get("next_date"), values.get("batch_note", ""),
+                values.get("note", ""), values.get("repeat_at"),
             )  # fmt: skip
         except services.MedicalError as error:
             raise self._error(error) from error
         return Response(self.get_serializer(self.get_object()).data, status=201)
 
-    @action(detail=True, methods=["delete"], url_path=r"vaccinations/(?P<vaccination_id>[^/.]+)")
-    def remove_vaccination(
-        self, request: Request, pk: str | None = None, vaccination_id: str | None = None
+    @action(detail=True, methods=["delete"], url_path=r"preventions/(?P<prevention_id>[^/.]+)")
+    def remove_prevention(
+        self, request: Request, pk: str | None = None, prevention_id: str | None = None
     ) -> Response:
-        """Удалить вакцинацию — только из записи, где она создана."""
+        """Удалить процедуру — только из записи, где она создана."""
         visit = self.get_object()
-        get_object_or_404(Vaccination, pk=vaccination_id, visit=visit).delete()
+        get_object_or_404(Prevention, pk=prevention_id, visit=visit).delete()
         return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=True, methods=["get"])
@@ -203,23 +217,93 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         return HttpResponse(pdf, content_type="application/pdf")
 
 
-class PetVaccinationsViewSet(viewsets.ReadOnlyModelViewSet):  # type: ignore[type-arg]
-    """История вакцинаций питомца: ?pet=<id>."""
+def _date_param(request: Request, name: str, default: date) -> date:
+    value = request.query_params.get(name)
+    try:
+        return date.fromisoformat(value) if value else default
+    except ValueError:
+        raise ValidationError({name: ["Дата в формате ГГГГ-ММ-ДД."]}) from None
 
-    serializer_class = VaccinationSerializer
-    queryset = Vaccination.objects.all()
 
-    def get_queryset(self) -> QuerySet[Vaccination]:
+class PreventionViewSet(viewsets.ReadOnlyModelViewSet):  # type: ignore[type-arg]
+    """Профилактика. История питомца: ?pet=. Сводка: /summary/?pet=.
+    Отчёт: /report/?mode=done|due|overdue&from=&to=&type=&species= (+ &export=xlsx).
+    Что предлагать для вида: /preparations/?type=."""
+
+    serializer_class = PreventionSerializer
+    queryset = Prevention.objects.all()
+
+    def get_queryset(self) -> QuerySet[Prevention]:
+        queryset = Prevention.objects.select_related("type", "item")
+        if self.action != "list":
+            return queryset
         pet = self.request.query_params.get("pet")
         if not pet:
             raise ValidationError({"pet": ["Укажите питомца."]})
-        return Vaccination.objects.filter(pet=pet).select_related("vaccine")
+        return queryset.filter(pet=pet)
+
+    @action(detail=False, methods=["get"])
+    def summary(self, request: Request) -> Response:
+        pet = get_object_or_404(Pet, pk=request.query_params.get("pet"))
+        return Response(services.prevention_summary(pet))
+
+    @action(detail=False, methods=["get"])
+    def preparations(self, request: Request) -> Response:
+        prevention_type = get_object_or_404(PreventionType, pk=request.query_params.get("type"))
+        return Response(
+            [{"id": str(i.pk), "name": i.name} for i in services.preparations(prevention_type)]
+        )
+
+    @action(detail=False, methods=["get"])
+    def report(self, request: Request) -> HttpResponse:
+        today = timezone.localdate()
+        params = request.query_params
+        try:
+            rows = services.prevention_report(
+                params.get("mode", "done"),
+                _date_param(request, "from", today.replace(day=1)),
+                _date_param(request, "to", today),
+                params.get("type") or None,
+                params.get("species") or None,
+            )[:5000]
+        except services.MedicalError as error:
+            raise ValidationError({"mode": [str(error)]}) from error
+        data = [
+            {
+                "id": str(p.pk), "pet": str(p.pet_id), "visit": str(p.visit_id),
+                "pet_name": p.pet.name, "species": p.pet.species.name,
+                "client": p.pet.owner.full_name, "client_id": str(p.pet.owner_id),
+                "phone": next((ph.number for ph in p.pet.owner.phones.all()), ""),
+                "type": p.type.name, "item": p.item.name if p.item else "",
+                "date": p.date, "next_date": p.next_date, "doctor": p.visit.doctor.short_name,
+            }
+            for p in rows.prefetch_related("pet__owner__phones")
+        ]  # fmt: skip
+        if params.get("export") == "xlsx":
+            return _xlsx(data)
+        return Response(data)
 
 
-class VaccinesViewSet(viewsets.ReadOnlyModelViewSet):  # type: ignore[type-arg]
-    """Вакцины для выбора в медкарте (товары групп «показывать в вакцинациях»)."""
+def _xlsx(rows: list[dict[str, Any]]) -> HttpResponse:
+    from io import BytesIO
 
-    queryset = Vaccination.objects.none()  # права — как на вакцинации
+    from openpyxl import Workbook
 
-    def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
-        return Response([{"id": str(v.pk), "name": v.name} for v in catalog.vaccines()])
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Профилактика"
+    sheet.append(["Дата", "Следующая", "Вид", "Препарат / услуга", "Питомец", "Вид животного",
+                  "Владелец", "Телефон", "Врач"])  # fmt: skip
+    for r in rows:
+        sheet.append([r["date"], r["next_date"], r["type"], r["item"], r["pet_name"],
+                      r["species"], r["client"], r["phone"], r["doctor"]])  # fmt: skip
+    for column, width in zip("ABCDEFGHI", (12, 12, 26, 30, 16, 14, 32, 18, 16), strict=True):
+        sheet.column_dimensions[column].width = width
+    buffer = BytesIO()
+    workbook.save(buffer)
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="prevention.xlsx"'
+    return response

@@ -1,5 +1,15 @@
 import DirectoryPage from '@/components/DirectoryPage.vue'
 
+// Вид профилактики у группы: товары группы предлагаются в медкарте для этой процедуры.
+export const PREVENTION_KINDS = [
+  { id: '', name: '—' },
+  { id: 'vaccination', name: 'Вакцинация' },
+  { id: 'deworming', name: 'Дегельминтизация' },
+  { id: 'ectoparasites', name: 'Обработка от эктопаразитов' },
+  { id: 'sterilization', name: 'Стерилизация / кастрация' },
+  { id: 'chipping', name: 'Чипирование' },
+]
+
 export const KINDS = [
   { id: 'goods', name: 'Товары' },
   { id: 'service', name: 'Услуги' },
@@ -17,7 +27,7 @@ export default [
       fields: [
         { name: 'kind', label: 'Для чего', type: 'choice', options: KINDS },
         { name: 'markup_percent', label: 'Наценка, %', type: 'number', hint: 'Для товаров без своей наценки. Пусто — нет' },
-        { name: 'show_in_vaccinations', label: 'Показывать в вакцинациях', type: 'checkbox' },
+        { name: 'prevention_kind', label: 'Профилактика', type: 'choice', options: PREVENTION_KINDS },
       ],
     },
     meta: { perm: 'catalog.view_itemgroup' },
