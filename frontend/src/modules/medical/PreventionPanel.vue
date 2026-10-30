@@ -92,13 +92,6 @@ const preparations = ref([])
 const history = ref([])
 const error = ref('')
 const empty = () => ({ type: null, item: null, quantity: '1', stage: 'primary', next_date: '', batch: null, batch_note: '', note: '', schedule: false, repeat_at: '10:00' })
-const batches = ref([])
-
-// Партии выбранного препарата с остатком на складе.
-watch(() => form.value.item, async (item) => {
-  form.value.batch = editingId.value ? form.value.batch : null
-  batches.value = item ? ((await apiGet(`medical/preventions/batches/?item=${item}`)).data ?? []).map((b) => ({ ...b, label: `${b.label} · остаток ${Number(b.qty)}` })) : []
-})
 const form = ref(empty())
 const fmt = (iso) => new Date(iso).toLocaleDateString('ru-RU')
 
@@ -111,6 +104,14 @@ const itemLabel = computed(() => `${isVaccination.value ? 'Вакцина' : 'П
 const canSubmit = computed(() => form.value.type && (!itemRequired.value || form.value.item))
 const editingId = ref(null)
 const editingDate = ref(null)
+
+const batches = ref([])
+
+// Партии выбранного препарата с остатком на складе.
+watch(() => form.value.item, async (item) => {
+  form.value.batch = editingId.value ? form.value.batch : null
+  batches.value = item ? ((await apiGet(`medical/preventions/batches/?item=${item}`)).data ?? []).map((b) => ({ ...b, label: `${b.label} · остаток ${Number(b.qty)}` })) : []
+})
 
 async function onType(typeId, keepItem = false) {
   if (!keepItem) form.value.item = null
