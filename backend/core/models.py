@@ -528,13 +528,44 @@ class Attachment(ClinicScopedModel):
 
 
 class Counterparty(Directory):
-    """Контрагент: поставщик, лаборатория, арендодатель… Общий для склада и кассы."""
+    """Контрагент: поставщик, лаборатория, арендодатель… Общий для склада и кассы.
 
-    inn = models.CharField("ИНН", max_length=12, blank=True)
+    «Где показывать» — в каких документах контрагент предлагается для выбора,
+    чтобы в приходе не мешались, например, арендодатель и коммунальщики.
+    """
+
+    class PersonType(models.TextChoices):
+        LEGAL = "legal", "юридическое лицо"
+        INDIVIDUAL = "individual", "физическое лицо"
+
+    person_type = models.CharField(
+        "лицо", max_length=10, choices=PersonType.choices, default=PersonType.LEGAL
+    )
+    contact = models.CharField("контактное лицо", max_length=200, blank=True)
+    city = models.CharField("город", max_length=100, blank=True)
+    address = models.CharField("адрес", max_length=300, blank=True)
     phone = models.CharField("телефон", max_length=50, blank=True)
     email = models.EmailField("email", blank=True)
-    contact = models.CharField("контактное лицо", max_length=200, blank=True)
+    inn = models.CharField("ИНН", max_length=12, blank=True)
+    kpp = models.CharField("КПП", max_length=9, blank=True)
+    bik = models.CharField("БИК", max_length=9, blank=True)
+    correspondent_account = models.CharField("корр. счёт", max_length=20, blank=True)
+    settlement_account = models.CharField("расчётный счёт", max_length=20, blank=True)
+    bank_name = models.CharField("банк", max_length=200, blank=True)
+    note = models.TextField("примечание", blank=True)
+    for_receipts = models.BooleanField("в приходных накладных", default=True)
+    for_write_offs = models.BooleanField("в расходных накладных", default=True)
+    for_cash = models.BooleanField("в кассовых документах", default=True)
 
     class Meta(Directory.Meta):
         verbose_name = "контрагент"
         verbose_name_plural = "контрагенты"
+
+    def clean(self) -> None:
+        from django.core.exceptions import ValidationError
+
+        from core.services import counterparty_errors
+
+        errors = counterparty_errors(self)
+        if errors:
+            raise ValidationError(errors)

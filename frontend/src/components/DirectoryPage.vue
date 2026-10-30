@@ -43,7 +43,7 @@
     </q-table>
 
     <q-dialog v-model="editorOpen">
-      <q-card style="width: 420px; max-width: 95vw">
+      <q-card :style="{ width: selectFields.length > 6 ? '680px' : '420px', maxWidth: '95vw' }">
         <q-form @submit="save">
           <q-card-section class="text-h6">{{ editing.id ? 'Изменить' : 'Добавить' }}</q-card-section>
           <q-card-section class="q-gutter-md">
@@ -80,6 +80,7 @@
 // деактивация, удаление. Справочник описывается несколькими параметрами:
 //   endpoint — адрес API, permission — «модуль.модель» для проверки прав,
 //   fields — дополнительные поля: { name, label, type, endpoint | options, hint }
+//     column: false — только в форме, не в таблице (для карточек с многими полями).
 //     type: 'select' (по умолчанию, варианты из endpoint), 'choice' (варианты options),
 //           'number', 'checkbox', 'time', 'color', 'text'.
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -127,7 +128,7 @@ function cellValue(field, row) {
 }
 const columns = [
   { name: 'name', label: 'Название', field: 'name', align: 'left', sortable: true },
-  ...selectFields.map((field) => ({
+  ...selectFields.filter((field) => field.column !== false).map((field) => ({
     name: field.name,
     label: field.label,
     align: ['checkbox', 'number', 'time', 'color'].includes(field.type) ? 'center' : 'left',
@@ -169,7 +170,7 @@ const saving = ref(false)
 function openEditor(row = null) {
   errors.value = {}
   const empty = (f) => {
-    if (f.type === 'checkbox') return false
+    if (f.type === 'checkbox') return f.default ?? false
     if (f.type === 'text') return ''
     if (f.type === 'color') return '#24566a'
     return filters[f.name] ?? (f.type === 'choice' ? f.options[0].id : null)

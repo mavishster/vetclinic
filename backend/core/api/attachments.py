@@ -92,5 +92,18 @@ class FileCategoryViewSet(DirectoryViewSet):
 
 
 class CounterpartyViewSet(DirectoryViewSet):
+    """Контрагенты. ?use=receipt|write_off|cash — только те, кого показывать в этих документах."""
+
     model = Counterparty
-    extra_fields = ("inn", "phone", "email", "contact")
+    extra_fields = (
+        "person_type", "contact", "city", "address", "phone", "email", "inn", "kpp", "bik",
+        "correspondent_account", "settlement_account", "bank_name", "note",
+        "for_receipts", "for_write_offs", "for_cash",
+    )  # fmt: skip
+
+    def get_queryset(self):  # type: ignore[no-untyped-def]
+        queryset = super().get_queryset()
+        use = {"receipt": "for_receipts", "write_off": "for_write_offs", "cash": "for_cash"}
+        if field := use.get(self.request.query_params.get("use", "")):
+            queryset = queryset.filter(**{field: True})
+        return queryset

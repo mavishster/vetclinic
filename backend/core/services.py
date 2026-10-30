@@ -443,3 +443,26 @@ def usage_count(record: Any) -> int:
         manager = model._default_manager
         total += manager.filter(**{relation.field.name: record}).count()
     return total
+
+
+# --- Контрагенты -------------------------------------------------------------------
+
+# Реквизит → допустимое число цифр (пусто — не проверяем).
+_REQUISITES = {
+    "inn": ((10, 12), "ИНН — 10 цифр у организации или 12 у ИП и физлица."),
+    "kpp": ((9,), "КПП — 9 цифр."),
+    "bik": ((9,), "БИК — 9 цифр."),
+    "correspondent_account": ((20,), "Корр. счёт — 20 цифр."),
+    "settlement_account": ((20,), "Расчётный счёт — 20 цифр."),
+}
+
+
+def counterparty_errors(counterparty: Any) -> dict[str, str]:
+    """Проверка реквизитов контрагента: только цифры и правильная длина."""
+    errors: dict[str, str] = {}
+    for field, (lengths, message) in _REQUISITES.items():
+        value = (getattr(counterparty, field) or "").strip()
+        setattr(counterparty, field, value)
+        if value and (not value.isdigit() or len(value) not in lengths):
+            errors[field] = message
+    return errors

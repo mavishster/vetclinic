@@ -120,6 +120,13 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
         raise CatalogError("Группа не подходит: выберите группу для товаров или для услуг.")
     if item.manual_cost is not None and item.manual_cost < 0:
         raise CatalogError("Себестоимость не может быть отрицательной.")
+    if not item._state.adding and item.stock_tracked:
+        stored_unit = Item.objects.filter(pk=item.pk).values_list("base_unit_id", flat=True).first()
+        if stored_unit is not None and stored_unit != item.base_unit_id:
+            raise CatalogError(
+                "Единицу учёта нельзя менять после первого прихода: остатки уже ведутся в ней "
+                "и пересчитались бы неверно. Если ошиблись — заведите новую позицию."
+            )
     item.save()
     if units is None:
         return item

@@ -110,3 +110,13 @@ def test_used_species_cannot_be_deleted(api, db) -> None:
     )
 
     assert api.delete(f"/api/clients/species/{cats.pk}/").status_code == 400
+
+
+def test_base_unit_cannot_change_after_first_receipt(drug) -> None:
+    drug.base_unit = Unit.objects.get(name="фл.")
+    services.save_item(drug)  # пока учёта нет — можно
+
+    services.mark_stock_tracked(drug)
+    drug.base_unit = Unit.objects.get(name="шт.")
+    with pytest.raises(services.CatalogError, match="нельзя менять после первого прихода"):
+        services.save_item(drug)

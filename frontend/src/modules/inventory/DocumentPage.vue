@@ -255,7 +255,7 @@ function fill(data) {
 }
 
 onMounted(async () => {
-  const [w, c] = await Promise.all([apiGet('inventory/warehouses/?active=true'), apiGet('core/counterparties/?active=true')])
+  const [w, c] = await Promise.all([apiGet('inventory/warehouses/?active=true'), apiGet('core/counterparties/?active=true&use=receipt')])
   warehouses.value = w.data ?? []
   counterparties.value = c.data ?? []
   if (props.id === 'new') {

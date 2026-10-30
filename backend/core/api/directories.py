@@ -8,6 +8,7 @@
 
 from typing import Any, ClassVar
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import QuerySet
 from rest_framework import serializers, viewsets
 from rest_framework.exceptions import ValidationError
@@ -29,6 +30,15 @@ class DirectorySerializer(serializers.ModelSerializer):  # type: ignore[type-arg
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         model = self.Meta.model
+        # Своя проверка модели (clean), если есть: например, реквизиты контрагента.
+        if model.clean is not Directory.clean:
+            probe = self.instance or model()
+            for field, value in attrs.items():
+                setattr(probe, field, value)
+            try:
+                probe.clean()
+            except DjangoValidationError as error:
+                raise serializers.ValidationError(error.message_dict) from error
         name = attrs.get("name", getattr(self.instance, "name", ""))
         scope = {
             field: attrs.get(field, getattr(self.instance, field, None))
