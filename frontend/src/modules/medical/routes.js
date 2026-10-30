@@ -25,6 +25,7 @@ export default [
           { id: 'chipping', name: 'Чипирование' }, { id: 'other', name: 'Другое' },
         ] },
         { name: 'repeat_days', label: 'Повтор через, дней', type: 'number', hint: 'Пусто — процедура однократная' },
+        { name: 'item_required', label: 'Препарат обязателен', type: 'checkbox' },
       ],
     },
     meta: { perm: 'medical.view_preventiontype' },

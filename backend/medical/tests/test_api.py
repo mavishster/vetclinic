@@ -88,6 +88,12 @@ def test_from_appointment_vaccinate_and_print(api, pet) -> None:
     report = api.get("/api/medical/preventions/report/?mode=done").json()
     xlsx = api.get("/api/medical/preventions/report/?mode=done&export=xlsx")
     pdf = api.get(f"{URL}{visit['id']}/print/")
+    edited = api.patch(
+        f"{URL}{visit['id']}/preventions/{history[0]['id']}/", {"batch_note": "Z999"}, format="json"
+    )
+    bad = api.patch(
+        f"{URL}{visit['id']}/preventions/{history[0]['id']}/", {"item": None}, format="json"
+    )
     removed = api.delete(f"{URL}{visit['id']}/preventions/{history[0]['id']}/")
 
     assert visit["appointment_status"] == "in_progress"
@@ -98,6 +104,8 @@ def test_from_appointment_vaccinate_and_print(api, pet) -> None:
     assert [r["pet_name"] for r in report] == ["Барсик"]
     assert xlsx["Content-Type"].startswith("application/vnd.openxml")
     assert pdf["Content-Type"] == "application/pdf"
+    assert edited.json()["preventions"][0]["batch_note"] == "Z999"
+    assert "вакцину" in bad.json()["non_field_errors"][0]
     assert removed.json()["preventions"] == []
 
 

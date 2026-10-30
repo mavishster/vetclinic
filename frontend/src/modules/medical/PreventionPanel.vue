@@ -2,10 +2,13 @@
   <div>
     <q-form v-if="canEdit" class="q-gutter-y-sm q-mb-md" @submit="add">
       <div class="row q-col-gutter-sm">
+        <div v-if="editingId" class="col-12 text-subtitle2">
+          Исправление: {{ selectedType?.name }} от {{ fmt(editingDate) }}
+        </div>
         <q-select v-model="form.type" :options="types" option-value="id" option-label="name" emit-value map-options
-          outlined dense label="Процедура" class="col-12 col-sm-5" @update:model-value="onType" />
+          outlined dense label="Процедура" class="col-12 col-sm-5" :disable="!!editingId" @update:model-value="onType" />
         <q-select v-model="form.item" :options="preparations" option-value="id" option-label="name" emit-value map-options
-          outlined dense clearable :label="isVaccination ? 'Вакцина' : 'Препарат или услуга'" class="col-12 col-sm-5"
+          outlined dense clearable :label="itemLabel" class="col-12 col-sm-5"
           :hint="preparations.length ? '' : 'Отметьте в каталоге у группы или позиции вид профилактики'" />
         <q-input v-model="form.quantity" type="number" step="0.001" min="0" outlined dense label="Кол-во" class="col-12 col-sm-2" />
       </div>
@@ -22,7 +25,7 @@
         <q-input v-if="!oneTime" v-model="form.batch_note" outlined dense label="Серия, срок годности" class="col-12 col-sm-5" />
         <q-input v-model="form.note" outlined dense :label="isChipping ? 'Номер чипа *' : 'Примечание'" class="col-12 col-sm-7" />
       </div>
-      <div v-if="!oneTime" class="row items-center q-gutter-x-sm">
+      <div v-if="!oneTime && !editingId" class="row items-center q-gutter-x-sm">
         <q-checkbox v-model="form.schedule" label="Записать на повтор в" dense />
         <q-input v-model="form.repeat_at" type="time" outlined dense style="width: 120px" :disable="!form.schedule" />
       </div>
@@ -31,15 +34,19 @@
         <template v-else>Ждущие напоминания {{ isVaccination ? 'по этой же вакцине' : 'по этому виду' }} закроются — клиенту не придёт напоминание о сделанном.</template>
       </div>
       <div v-if="error" class="text-negative">{{ error }}</div>
-      <q-btn type="submit" color="primary" unelevated icon="add_task" label="Записать процедуру" :disable="!form.type" />
+      <div class="q-gutter-x-sm">
+        <q-btn type="submit" color="primary" unelevated :icon="editingId ? 'save' : 'add_task'"
+          :label="editingId ? 'Сохранить изменения' : 'Записать процедуру'" :disable="!canSubmit" />
+        <q-btn v-if="editingId" flat label="Отмена" @click="cancelEdit" />
+      </div>
     </q-form>
 
     <div class="text-subtitle2 q-mb-xs">Профилактика питомца</div>
-    <q-markup-table flat bordered dense>
+    <q-markup-table flat bordered dense wrap-cells>
       <thead><tr><th class="text-left">Дата</th><th class="text-left">Процедура</th><th class="text-left">Препарат / услуга</th><th>Следующая</th><th class="text-left">Серия, примечание</th><th /></tr></thead>
       <tbody>
-        <tr v-for="p in history" :key="p.id" :class="{ 'bg-green-1': p.visit === visit.id }">
-          <td>{{ fmt(p.date) }}</td>
+        <tr v-for="p in history" :key="p.id" :class="{ 'row-highlight-positive': p.visit === visit.id }">
+          <td>{{ fmt(p.date) }}<q-badge v-if="p.visit === visit.id" color="positive" label="этот приём" class="q-ml-xs" /></td>
           <td>{{ p.type_name }}{{ p.stage_label ? ` (${p.stage_label})` : '' }}</td>
           <td>{{ p.item_name }}</td>
           <td class="text-center">
@@ -47,14 +54,17 @@
             <q-badge v-if="p.next_date && p.reminder === 'closed'" color="grey-6" label="закрыто" />
           </td>
           <td>{{ [p.batch_note, p.note].filter(Boolean).join(' · ') }}</td>
-          <td class="text-right">
-            <q-btn v-if="canEdit && p.visit === visit.id" flat dense round size="sm" icon="delete" color="negative" @click="remove(p)" />
+          <td class="text-right text-no-wrap">
+            <template v-if="canEdit && p.visit === visit.id">
+              <q-btn flat dense round size="sm" icon="edit" @click="startEdit(p)"><q-tooltip>Исправить</q-tooltip></q-btn>
+              <q-btn flat dense round size="sm" icon="delete" color="negative" @click="remove(p)"><q-tooltip>Удалить</q-tooltip></q-btn>
+            </template>
           </td>
         </tr>
         <tr v-if="!history.length"><td colspan="6" class="text-grey-7">Процедур не было</td></tr>
       </tbody>
     </q-markup-table>
-    <div class="text-caption text-grey-7 q-mt-xs">Зелёным — процедуры этого приёма; удалить их можно только здесь.</div>
+    <div class="text-caption text-grey-7 q-mt-xs">Процедуры этого приёма отмечены «этот приём» — исправить или удалить их можно только здесь.</div>
   </div>
 </template>
 
@@ -63,7 +73,7 @@
 // стерилизация, чипирование — один механизм для всех (DRY).
 import { computed, onMounted, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
-import { apiDelete, apiGet, apiPost, fieldErrors } from '@/api'
+import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 
 const props = defineProps({
   visit: { type: Object, required: true },
@@ -86,6 +96,11 @@ const selectedType = computed(() => types.value.find((t) => t.id === form.value.
 const isVaccination = computed(() => selectedType.value?.kind === 'vaccination')
 const isChipping = computed(() => selectedType.value?.kind === 'chipping')
 const oneTime = computed(() => selectedType.value && !selectedType.value.repeat_days)
+const itemRequired = computed(() => Boolean(selectedType.value?.item_required))
+const itemLabel = computed(() => `${isVaccination.value ? 'Вакцина' : 'Препарат или услуга'}${itemRequired.value ? ' *' : ''}`)
+const canSubmit = computed(() => form.value.type && (!itemRequired.value || form.value.item))
+const editingId = ref(null)
+const editingDate = ref(null)
 
 async function onType(typeId, keepItem = false) {
   if (!keepItem) form.value.item = null
@@ -112,13 +127,36 @@ async function add() {
     batch_note: form.value.batch_note, note: form.value.note,
     repeat_at: form.value.schedule && !oneTime.value ? form.value.repeat_at : null,
   }
-  const { ok, data } = await apiPost(`medical/visits/${props.visit.id}/prevent/`, body)
-  if (!ok) return (error.value = Object.values(fieldErrors(data))[0] || 'Не удалось записать')
-  form.value = empty()
-  preparations.value = []
+  const { ok, data } = editingId.value
+    ? await apiPatch(`medical/visits/${props.visit.id}/preventions/${editingId.value}/`, body)
+    : await apiPost(`medical/visits/${props.visit.id}/prevent/`, body)
+  if (!ok) return (error.value = Object.values(fieldErrors(data))[0] || 'Не удалось сохранить')
+  const repeatBooked = body.repeat_at && !editingId.value
+  cancelEdit()
   emit('changed', data)
   loadHistory()
-  if (body.repeat_at) $q.notify({ type: 'positive', message: 'Записали на повтор в календарь' })
+  if (repeatBooked) $q.notify({ type: 'positive', message: 'Записали на повтор в календарь' })
+}
+
+// Исправление процедуры этого приёма: форма заполняется её данными, вид не меняется.
+async function startEdit(p) {
+  error.value = ''
+  editingId.value = p.id
+  editingDate.value = p.date
+  form.value = {
+    ...empty(), type: p.type, item: p.item, quantity: p.quantity, stage: p.stage || 'primary',
+    next_date: p.next_date || '', batch_note: p.batch_note, note: p.note,
+  }
+  await onType(p.type, true)
+  form.value.next_date = p.next_date || ''
+}
+
+function cancelEdit() {
+  editingId.value = null
+  editingDate.value = null
+  form.value = empty()
+  preparations.value = []
+  error.value = ''
 }
 
 function remove(p) {

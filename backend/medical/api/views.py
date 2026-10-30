@@ -34,7 +34,7 @@ class VisitResultViewSet(DirectoryViewSet):
 
 class PreventionTypeViewSet(DirectoryViewSet):
     model = PreventionType
-    extra_fields = ("kind", "repeat_days")
+    extra_fields = ("kind", "repeat_days", "item_required")
 
 
 class VisitDiagnosisSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
@@ -192,13 +192,28 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             raise self._error(error) from error
         return Response(self.get_serializer(self.get_object()).data, status=201)
 
-    @action(detail=True, methods=["delete"], url_path=r"preventions/(?P<prevention_id>[^/.]+)")
-    def remove_prevention(
+    @action(
+        detail=True, methods=["patch", "delete"], url_path=r"preventions/(?P<prevention_id>[^/.]+)"
+    )
+    def change_prevention(
         self, request: Request, pk: str | None = None, prevention_id: str | None = None
     ) -> Response:
-        """Удалить процедуру — только из записи, где она создана."""
+        """Исправить (PATCH) или удалить (DELETE) процедуру — только из записи, где она создана."""
         visit = self.get_object()
-        get_object_or_404(Prevention, pk=prevention_id, visit=visit).delete()
+        prevention = get_object_or_404(Prevention, pk=prevention_id, visit=visit)
+        if request.method == "DELETE":
+            prevention.delete()
+        else:
+            data = PreventionSerializer(prevention, data=request.data, partial=True)
+            data.is_valid(raise_exception=True)
+            changes = {
+                k: v for k, v in data.validated_data.items()
+                if k in {"item", "quantity", "stage", "next_date", "batch_note", "note"}
+            }  # fmt: skip
+            try:
+                services.update_prevention(prevention, **changes)
+            except services.MedicalError as error:
+                raise self._error(error) from error
         return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=True, methods=["get"])

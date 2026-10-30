@@ -176,15 +176,23 @@ def test_repeat_date_defaults_from_type_and_deworming_closes_any_product(pet, do
     )
     visit = services.start_visit(pet, doctor)
     first = services.add_prevention(visit, ptype("deworming"), milbemax)
-    second = services.add_prevention(
-        services.start_visit(pet, doctor), ptype("deworming"), None, note="другой препарат"
+    other = catalog.save_item(
+        Item(
+            kind=Kind.GOODS,
+            name="Празицид",
+            group=ItemGroup.objects.get(name="Препараты"),
+            base_unit=Unit.objects.get(name="таб."),
+            prevention_kind="deworming",
+        ),
+        [{"unit": Unit.objects.get(name="таб."), "price": D("200")}],
     )
+    second = services.add_prevention(services.start_visit(pet, doctor), ptype("deworming"), other)
 
     first.refresh_from_db()
     assert first.next_date == timezone.localdate() + timedelta(days=90)
     assert first.reminder == Prevention.Reminder.CLOSED
     assert second.reminder == Prevention.Reminder.ACTIVE
-    assert [i.name for i in services.preparations(ptype("deworming"))] == ["Мильбемакс"]
+    assert [i.name for i in services.preparations(ptype("deworming"))] == ["Мильбемакс", "Празицид"]
 
 
 def test_sterilization_and_chipping_update_pet_card(pet, doctor) -> None:
@@ -289,3 +297,38 @@ def test_medcard_print(pet, doctor, vaccine) -> None:
 
     assert "Барсик" in html and "Нобивак Rabies" in html and "<p>Диета</p>" in html
     assert core.render_print(template, services.print_context(visit)).startswith(b"%PDF")
+
+
+def test_preparation_required_for_deworming_but_not_for_sterilization(pet, doctor) -> None:
+    visit = services.start_visit(pet, doctor)
+
+    with pytest.raises(
+        MedicalError, match="Выберите препарат — для «Дегельминтизация» он обязателен"
+    ):
+        services.add_prevention(visit, ptype("deworming"))
+    assert services.add_prevention(visit, ptype("sterilization")).pk
+
+
+def test_update_prevention(pet, doctor, vaccine) -> None:
+    visit = services.start_visit(pet, doctor)
+    record = services.add_prevention(visit, ptype("vaccination"), vaccine)
+    later = timezone.localdate() + timedelta(days=200)
+
+    services.update_prevention(record, next_date=later, batch_note="B777", quantity=D("2"))
+    record.refresh_from_db()
+    assert (record.next_date, record.batch_note, record.quantity) == (later, "B777", D("2.000"))
+
+    with pytest.raises(MedicalError, match="вакцину"):
+        services.update_prevention(record, item=None)
+    with pytest.raises(MedicalError, match="не меняются"):
+        services.update_prevention(record, type=ptype("deworming"))
+
+
+def test_chip_number_correction_updates_pet(pet, doctor) -> None:
+    visit = services.start_visit(pet, doctor)
+    record = services.add_prevention(visit, ptype("chipping"), note="111")
+
+    services.update_prevention(record, note="643094100555444")
+
+    pet.refresh_from_db()
+    assert pet.chip_number == "643094100555444"

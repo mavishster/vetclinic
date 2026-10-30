@@ -18,7 +18,7 @@
         </q-card-section>
         <q-list dense class="q-pa-sm" style="max-height: 360px; overflow: auto">
           <q-item v-for="(option, i) in results" :key="option.id" clickable :active="i === active"
-            active-class="bg-blue-1" @click="choose(option)">
+            active-class="row-highlight-primary" @click="choose(option)">
             <q-item-section>{{ option.label }}</q-item-section>
             <q-item-section side>{{ option.price ? money(option.price) : '' }}</q-item-section>
           </q-item>

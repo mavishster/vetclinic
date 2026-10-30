@@ -143,6 +143,25 @@ def _close_reminders(visit: Visit, prevention_type: PreventionType, item: Any) -
     reminders.update(reminder=Prevention.Reminder.CLOSED)
 
 
+def _validate(
+    prevention_type: PreventionType,
+    item: Any,
+    quantity: Decimal,
+    procedure_date: date,
+    next_date: date | None,
+    note: str,
+) -> None:
+    if quantity <= 0:
+        raise MedicalError("Количество должно быть больше нуля.")
+    if prevention_type.item_required and item is None:
+        what = "вакцину" if prevention_type.kind == K.VACCINATION else "препарат"
+        raise MedicalError(f"Выберите {what} — для «{prevention_type.name}» он обязателен.")
+    if next_date is not None and next_date <= procedure_date:
+        raise MedicalError("Дата следующей процедуры должна быть позже даты этой.")
+    if prevention_type.kind == K.CHIPPING and not note.strip():
+        raise MedicalError("Укажите номер чипа в примечании.")
+
+
 @transaction.atomic
 def add_prevention(
     visit: Visit,
@@ -163,18 +182,11 @@ def add_prevention(
     - чипирование: номер чипа из примечания записывается в карточку питомца.
     """
     procedure_date = timezone.localdate(visit.date)
-    if quantity <= 0:
-        raise MedicalError("Количество должно быть больше нуля.")
-    if prevention_type.kind == K.VACCINATION and item is None:
-        raise MedicalError("Выберите вакцину.")
     if prevention_type.is_one_time:
         next_date = None
     elif next_date is None and prevention_type.repeat_days:
         next_date = procedure_date + timedelta(days=prevention_type.repeat_days)
-    if next_date is not None and next_date <= procedure_date:
-        raise MedicalError("Дата следующей процедуры должна быть позже даты этой.")
-    if prevention_type.kind == K.CHIPPING and not note.strip():
-        raise MedicalError("Укажите номер чипа в примечании.")
+    _validate(prevention_type, item, quantity, procedure_date, next_date, note)
 
     _close_reminders(visit, prevention_type, item)
     prevention = Prevention.objects.create(
@@ -194,6 +206,34 @@ def add_prevention(
             purpose_kind="vaccination" if prevention_type.kind == K.VACCINATION else "general",
             note=f"Повтор: {prevention_type.name.lower()}{f' ({item})' if item else ''}",
         )  # fmt: skip
+    return prevention
+
+
+@transaction.atomic
+def update_prevention(prevention: Prevention, **changes: Any) -> Prevention:
+    """Исправить процедуру: препарат, количество, этап, следующую дату, серию, примечание.
+
+    Вид процедуры не меняется — для этого удалите процедуру и запишите заново.
+    Закрытое более новой процедурой напоминание при исправлении не открывается.
+    """
+    allowed = {"item", "quantity", "stage", "next_date", "batch_note", "note"}
+    unknown = set(changes) - allowed
+    if unknown:
+        raise MedicalError(f"Эти поля процедуры не меняются: {', '.join(sorted(unknown))}.")
+    for field, value in changes.items():
+        setattr(prevention, field, value)
+    prevention.note = prevention.note.strip()
+    if prevention.type.is_one_time:
+        prevention.next_date = None
+    _validate(
+        prevention.type, prevention.item, prevention.quantity, prevention.date,
+        prevention.next_date, prevention.note,
+    )  # fmt: skip
+    if prevention.next_date is None:
+        prevention.reminder = Prevention.Reminder.CLOSED
+    prevention.save()
+    if prevention.type.kind == K.CHIPPING and "note" in changes:
+        clients.set_chip_number(prevention.pet, prevention.note)
     return prevention
 
 

@@ -7,3 +7,15 @@
 .q-btn {
   text-transform: none;
 }
+
+/* Подсветка строк, читаемая и в светлой, и в тёмной теме: полупрозрачный цвет поверх фона,
+   текст остаётся цветом темы. Не используйте bg-*-1 без text-dark — в тёмной теме не видно. */
+.row-highlight-positive {
+  background: rgba(60, 122, 78, 0.18);
+}
+.row-highlight-negative {
+  background: rgba(178, 58, 58, 0.16);
+}
+.row-highlight-primary {
+  background: rgba(36, 86, 106, 0.18);
+}

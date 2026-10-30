@@ -16,7 +16,7 @@
           </q-card-section>
           <q-list separator>
             <q-item v-for="item in group.items" :key="item.id" clickable @click="openView(item)"
-              :class="{ 'bg-red-1': item.is_overdue }">
+              :class="{ 'row-highlight-negative': item.is_overdue }">
               <q-item-section side class="text-weight-medium">{{ timeOf(item.start) }}</q-item-section>
               <q-item-section>
                 <q-item-label>{{ item.client_name }}

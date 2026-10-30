@@ -126,6 +126,10 @@ class PreventionType(Directory):
     repeat_days = models.PositiveIntegerField(
         "повтор через, дней", null=True, blank=True, help_text="Пусто — процедура однократная"
     )
+    item_required = models.BooleanField(
+        "препарат обязателен", default=False,
+        help_text="Без препарата процедуру не записать — важно для отчётов",
+    )  # fmt: skip
 
     class Meta(Directory.Meta):
         verbose_name = "вид профилактики"
