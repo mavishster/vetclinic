@@ -26,10 +26,13 @@
                 @new-value="createUnit" />
               <q-input v-model="form.barcode" label="Штрихкод" outlined dense class="col-6 col-md-3" />
             </template>
-            <q-input v-model="form.manual_cost" type="number" step="0.01" min="0" outlined dense clearable
-              :label="isGoods ? `Себестоимость за ${baseUnitName || 'ед.'}` : 'Себестоимость'"
-              :hint="isGoods ? 'Если склад не ведётся. При учёте — из приходных накладных' : 'Например, цена анализа во внешней лаборатории'"
-              class="col-6 col-md-3" />
+            <div class="col-6 col-md-3 row no-wrap q-gutter-x-xs">
+              <q-input v-model="costInUnit" type="number" step="0.01" min="0" outlined dense clearable class="col"
+                :label="isGoods ? 'Себестоимость' : 'Себестоимость'"
+                :hint="costHint" />
+              <q-select v-if="isGoods && costUnits.length > 1" v-model="costUnitId" :options="costUnits" option-value="unit"
+                option-label="name" emit-value map-options outlined dense style="min-width: 90px" label="за" />
+            </div>
             <q-select v-model="form.prevention_kind" :options="PREVENTION_KINDS" option-value="id" option-label="name"
               emit-value map-options outlined dense label="Профилактика" class="col-12 col-md-4"
               hint="Отметите в медкарте — система предложит записать процедуру" />
@@ -200,6 +203,35 @@ function unitSummary(unit) {
   return { wrong: false, text: ratio === 1 && unit.unit === form.value.base_unit ? `1 ${base} — единица учёта` : `1 ${name} = ${ratio} ${base}${perBase}` }
 }
 
+// Себестоимость хранится за единицу учёта (флакон), а вводить её можно за любую
+// единицу товара — например, за упаковку, как в документах поставщика.
+const costUnitId = ref(null)
+const costUnits = computed(() => {
+  const base = { unit: form.value.base_unit, name: baseUnitName.value, ratio: 1 }
+  const others = (form.value.units || [])
+    .filter((u) => u.unit && u.unit !== form.value.base_unit && Number(u.ratio) > 0)
+    .map((u) => ({ unit: u.unit, name: units.value.find((x) => x.id === u.unit)?.name, ratio: Number(u.ratio) }))
+  return base.name ? [base, ...others] : others
+})
+const costRatio = computed(() => costUnits.value.find((u) => u.unit === costUnitId.value)?.ratio || 1)
+const costInUnit = computed({
+  get: () => {
+    if (form.value.manual_cost === null || form.value.manual_cost === undefined || form.value.manual_cost === '') return null
+    return Number((Number(form.value.manual_cost) * costRatio.value).toFixed(2))
+  },
+  set: (value) => {
+    form.value.manual_cost = value === null || value === '' ? null : (Number(value) / costRatio.value).toFixed(2)
+  },
+})
+watch(costUnits, (list) => {
+  if (!list.some((u) => u.unit === costUnitId.value)) costUnitId.value = form.value.base_unit
+})
+const costHint = computed(() => {
+  if (!isGoods.value) return 'Например, цена анализа во внешней лаборатории'
+  const perBase = form.value.manual_cost ? ` = ${money(form.value.manual_cost)} за ${baseUnitName.value}` : ''
+  return costRatio.value !== 1 ? `Если склад не ведётся${perBase}` : 'Если склад не ведётся. При учёте — из приходных накладных'
+})
+
 const newUnit = (unitId, ratio = '1') => ({
   unit: unitId, ratio, pricing: 'fixed', price: null, markup_percent: null, price_min: null, price_max: null,
   rounding: '0.01', barcode: '', for_sale: true, for_purchase: false,
@@ -224,6 +256,8 @@ watch(
     users.value = (people.data ?? []).map((p) => ({ id: p.id, label: p.full_name || p.username }))
     if (props.item) {
       form.value = { ...props.item, units: props.item.units.map((x) => ({ ...x })) }
+      const purchase = form.value.units.find((u) => u.for_purchase && Number(u.ratio) > 1)
+      costUnitId.value = purchase ? purchase.unit : form.value.base_unit
       return
     }
     const serviceUnit = units.value.find((x) => x.name === 'усл.')?.id ?? null
@@ -235,6 +269,7 @@ watch(
       base_unit: goods ? pieceUnit : serviceUnit,
       units: [newUnit(goods ? pieceUnit : serviceUnit)],
     }
+    costUnitId.value = form.value.base_unit
   },
 )
 
