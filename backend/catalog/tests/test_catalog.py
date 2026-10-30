@@ -106,7 +106,8 @@ def test_markup_uses_manual_cost_and_rounding_or_unknown() -> None:
         ([{"unit": "упак.", "ratio": D("1"), "price": D("5"), "price_min": D("9"), "price_max": D("8")}],
          "минимальная цена больше"),
         ([{"unit": "упак.", "ratio": D("1"), "price": D("1")}, {"unit": "упак.", "ratio": D("2"),
-          "price": D("2")}], "дважды"),
+          "price": D("2")}], "«упак.» указана в двух строках"),
+        ([{"unit": "таб.", "ratio": D("5"), "price": D("1")}], "всегда равна 1 таб."),
         ([{"unit": "упак.", "ratio": D("1"), "price": D("1"), "for_sale": False}], "хотя бы одну"),
     ],
 )  # fmt: skip

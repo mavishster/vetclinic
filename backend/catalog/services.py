@@ -14,6 +14,8 @@ from django.db.models import Q, QuerySet
 
 from catalog.models import CombinationLine, Item, ItemUnit, Kind, Unit
 
+D = Decimal
+
 
 class CatalogError(Exception):
     """Ошибка в данных каталога. Текст — для пользователя."""
@@ -133,8 +135,17 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
     if item.for_sale and not any(u.get("for_sale", True) for u in units):
         raise CatalogError("Добавьте хотя бы одну единицу для продажи.")
     unit_ids = [_unit_id(u) for u in units]
+    for data in units if item.kind == Kind.GOODS else []:  # у услуги коэффициент всегда 1
+        if str(_unit_id(data)) == str(item.base_unit_id) and D(str(data.get("ratio", 1))) != 1:
+            base = item.base_unit.name
+            raise CatalogError(
+                f"Единица учёта «{base}» всегда равна 1 {base}. Для упаковки выберите "
+                f"другую единицу — например, «упак.» — и укажите, сколько в ней {base}."
+            )
     if len(set(map(str, unit_ids))) != len(unit_ids):
-        raise CatalogError("Одна и та же единица указана дважды.")
+        repeated = next(u for u in unit_ids if list(map(str, unit_ids)).count(str(u)) > 1)
+        name = Unit.objects.filter(pk=repeated).values_list("name", flat=True).first()
+        raise CatalogError(f"Единица «{name}» указана в двух строках — оставьте одну.")
 
     existing = {str(u.pk): u for u in item.units.all()}
     kept: set[str] = set()

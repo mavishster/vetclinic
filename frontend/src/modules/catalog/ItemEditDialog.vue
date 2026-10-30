@@ -80,6 +80,10 @@
               <div v-if="unit.current_price && unit.pricing === 'markup'" class="col-auto text-grey-8">
                 сейчас: <b>{{ money(unit.current_price) }}</b>
               </div>
+              <div v-if="isGoods && unitSummary(unit)" class="col-auto text-caption"
+                :class="unitSummary(unit).wrong ? 'text-negative' : 'text-grey-7'">
+                {{ unitSummary(unit).text }}
+              </div>
               <q-space />
               <q-btn v-if="isGoods" flat dense round icon="delete" color="grey-7" @click="form.units.splice(index, 1)">
                 <q-tooltip>Убрать единицу</q-tooltip>
@@ -182,6 +186,19 @@ const groupMarkupHint = computed(() => {
   const markup = allGroups.value.find((g) => g.id === form.value.group)?.markup_percent
   return markup ? `как у группы: ${Number(markup)}` : 'у группы нет наценки'
 })
+
+// Расшифровка строки: «1 упак. = 5 фл. · 700 ₽ за фл.» — сразу видно, что получается.
+function unitSummary(unit) {
+  const name = units.value.find((u) => u.id === unit.unit)?.name
+  const base = baseUnitName.value
+  const ratio = Number(unit.ratio)
+  if (!name || !base || !ratio) return null
+  if (unit.unit === form.value.base_unit && ratio !== 1) {
+    return { wrong: true, text: `«${base}» — единица учёта, в ней всегда 1 ${base}. Для упаковки выберите «упак.»` }
+  }
+  const perBase = unit.pricing === 'fixed' && Number(unit.price) && ratio !== 1 ? ` · ${money(Number(unit.price) / ratio)} за ${base}` : ''
+  return { wrong: false, text: ratio === 1 && unit.unit === form.value.base_unit ? `1 ${base} — единица учёта` : `1 ${name} = ${ratio} ${base}${perBase}` }
+}
 
 const newUnit = (unitId, ratio = '1') => ({
   unit: unitId, ratio, pricing: 'fixed', price: null, markup_percent: null, price_min: null, price_max: null,
