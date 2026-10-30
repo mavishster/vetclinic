@@ -10,7 +10,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, TypedDict
 
 from django.db import transaction
-from django.db.models import Q, QuerySet
+from django.db.models import F, Q, QuerySet
 
 from catalog.models import CombinationLine, Item, ItemUnit, Kind, Unit
 
@@ -398,3 +398,9 @@ def find_by_barcode(code: str) -> ItemUnit | None:
     return item.units.select_related("item", "unit").filter(unit=item.base_unit).first() or (
         item.units.select_related("item", "unit").first()
     )
+
+
+def base_item_unit(item: Any) -> ItemUnit | None:
+    """Единица товара, совпадающая с единицей учёта (коэффициент 1), иначе — первая."""
+    units = ItemUnit.objects.select_related("item", "unit").filter(item=item)
+    return units.filter(unit_id=F("item__base_unit_id")).first() or units.order_by("ratio").first()

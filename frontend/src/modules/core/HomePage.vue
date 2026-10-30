@@ -1,9 +1,19 @@
 <template>
   <q-page padding class="home">
     <h1 class="text-h5 q-mt-none q-mb-md">Здравствуйте, {{ firstName }}!</h1>
-    <p class="text-body1 q-mb-lg">
-      Модули появляются в меню по мере готовности. Сейчас доступны справочники и настройка ролей.
-    </p>
+    <div v-if="stock" class="row q-col-gutter-md q-mb-lg">
+      <div v-for="card in stockCards" :key="card.title" class="col-12 col-sm-4">
+        <q-card flat bordered class="cursor-pointer" @click="$router.push(card.to)">
+          <q-card-section class="row items-center no-wrap">
+            <q-icon :name="card.icon" :color="card.count ? card.color : 'grey-5'" size="36px" class="q-mr-md" />
+            <div>
+              <div class="text-h5">{{ card.count }}</div>
+              <div class="text-caption text-grey-7">{{ card.title }}</div>
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+    </div>
 
     <q-banner rounded :class="bannerClass">
       <template #avatar>
@@ -18,9 +28,17 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { apiGet } from '@/api'
-import { session } from '@/session'
+import { can, session } from '@/session'
 
 const state = ref('loading') // loading | ok | error
+const stock = ref(null)
+
+// Склад требует внимания: просрочка, сроки на исходе, ниже минимума.
+const stockCards = computed(() => [
+  { title: 'партий с истёкшим сроком', count: stock.value.expired, icon: 'dangerous', color: 'negative', to: '/inventory/stock?expiring=1' },
+  { title: 'партий истекает за 90 дней', count: stock.value.expiring, icon: 'schedule', color: 'warning', to: '/inventory/stock?expiring=1' },
+  { title: 'товаров ниже минимума', count: stock.value.low, icon: 'production_quantity_limits', color: 'primary', to: '/inventory/stock?tab=low' },
+])
 const firstName = computed(() => session.user?.full_name.split(' ')[1] || session.user?.username)
 
 const message = computed(
@@ -42,6 +60,9 @@ const bannerClass = computed(
 )
 
 onMounted(async () => {
+  if (can('inventory.view_stockmovement')) {
+    apiGet('inventory/stock/summary/').then(({ ok, data }) => { if (ok) stock.value = data })
+  }
   const { ok, data } = await apiGet('core/health/')
   state.value = ok && data?.database ? 'ok' : 'error'
 })

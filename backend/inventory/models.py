@@ -42,7 +42,8 @@ class Manufacturer(Directory):
 
 
 class StockDocument(Document):
-    """Складской документ: приход, расход (списание), перемещение.
+    """Складской документ: приход, расход (списание), перемещение, инвентаризация,
+    возврат поставщику.
 
     Один вид модели на все складские документы (DRY): у них общий жизненный цикл —
     черновик → выполнен → откат (ADR-005), различается только то, что делает выполнение.
@@ -52,6 +53,8 @@ class StockDocument(Document):
         RECEIPT = "receipt", "приход"
         WRITE_OFF = "write_off", "расход"
         TRANSFER = "transfer", "перемещение"
+        INVENTORY = "inventory", "инвентаризация"
+        RETURN = "return", "возврат поставщику"
 
     kind = models.CharField("вид", max_length=10, choices=Kind.choices)
     warehouse = models.ForeignKey(
@@ -115,6 +118,9 @@ class StockLine(models.Model):
     )
     quantity = QuantityField("количество")
     qty_base = QuantityField("в единицах учёта", editable=False, default=0)
+    # Инвентаризация: сколько было по учёту на момент заполнения (в единицах учёта);
+    # quantity / qty_base — сколько насчитали.
+    qty_expected = QuantityField("по учёту", null=True, blank=True)
     # Приход: закупочная цена за единицу строки, НДС, серия, срок, производитель.
     price = MoneyField("цена за единицу", null=True, blank=True)
     vat_percent = models.DecimalField(
@@ -198,3 +204,34 @@ class StockMovement(LedgerEntry):
 
     def __str__(self) -> str:
         return f"{self.item}: {self.qty_base:+}"
+
+
+class MinStock(BaseModel):
+    """Минимальный остаток товара: ниже — пора заказывать. Склад пуст — по всем складам."""
+
+    item = models.ForeignKey(
+        "catalog.Item", verbose_name="товар", on_delete=models.PROTECT, related_name="+"
+    )
+    warehouse = models.ForeignKey(
+        Warehouse,
+        verbose_name="склад",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    min_qty = QuantityField("минимум, в единицах учёта")
+
+    class Meta:
+        verbose_name = "минимальный остаток"
+        verbose_name_plural = "минимальные остатки"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["item", "warehouse"],
+                condition=models.Q(is_deleted=False),
+                name="inventory_minstock_unique",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.item}: {self.min_qty}"

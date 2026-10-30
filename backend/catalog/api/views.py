@@ -5,12 +5,14 @@ from typing import Any
 from django.db.models import QuerySet
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from catalog import services
 from catalog.models import CombinationLine, Item, ItemGroup, ItemUnit, Kind, Unit
+from core import services as core
 from core.api.directories import DirectoryViewSet
 
 
@@ -166,6 +168,21 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         item = self.get_object()
         services.reset_combination_prices(item)
         return Response(self.get_serializer(item).data)
+
+    def destroy(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Удалить можно только то, чем не пользовались (склад, медкарта, комбинации…);
+        иначе — сделать неактивным: позиция пропадёт из выбора, а история сохранится."""
+        item = self.get_object()
+        used = core.usage_count(item) + sum(core.usage_count(unit) for unit in item.units.all())
+        if used:
+            raise ValidationError(
+                {"non_field_errors": [
+                    f"«{item}» уже используется (записей: {used}) — удалить нельзя. "
+                    "Снимите галочку «Активен»: позиция перестанет предлагаться для выбора."
+                ]}
+            )  # fmt: skip
+        item.delete()
+        return Response(status=204)
 
     @action(detail=True, methods=["get"])
     def combinations(self, request: Request, pk: str | None = None) -> Response:

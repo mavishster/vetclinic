@@ -4,6 +4,12 @@
       <h1 class="text-h5 q-my-none col-grow">Остатки</h1>
       <div class="text-subtitle1">На сумму: <b>{{ money(totals.cost) }}</b></div>
     </div>
+    <q-tabs v-model="tab" dense align="left" no-caps active-color="primary" indicator-color="primary" class="q-mb-md">
+      <q-tab name="stock" label="Остатки" />
+      <q-tab name="low" label="Нужно заказать" />
+    </q-tabs>
+    <LowStock v-if="tab === 'low'" :warehouses="warehouses" />
+    <template v-else>
     <div class="row q-col-gutter-sm q-mb-md items-center">
       <q-input v-model="search" dense outlined clearable debounce="300" placeholder="Товар или артикул" class="col-12 col-md-4"
         @update:model-value="load"><template #prepend><q-icon name="search" /></template></q-input>
@@ -17,6 +23,7 @@
         <q-td :props="props" :class="expiryClass(props.row.expiry_date)">{{ fmt(props.row.expiry_date) }}</q-td>
       </template>
     </q-table>
+    </template>
   </q-page>
 </template>
 
@@ -25,13 +32,17 @@
 import { onMounted, ref } from 'vue'
 import { apiGet } from '@/api'
 import { money } from '@/modules/catalog/money'
+import { useRoute } from 'vue-router'
+import LowStock from './LowStock.vue'
 
+const route = useRoute()
+const tab = ref(route.query.tab === 'low' ? 'low' : 'stock')
 const rows = ref([])
 const totals = ref({ cost: 0 })
 const loading = ref(false)
 const search = ref('')
 const warehouse = ref(null)
-const expiring = ref(false)
+const expiring = ref(route.query.expiring === '1')
 const warehouses = ref([])
 const fmt = (iso) => (iso ? new Date(iso).toLocaleDateString('ru-RU') : '—')
 const qty = (value) => Number(value).toLocaleString('ru-RU', { maximumFractionDigits: 3 })

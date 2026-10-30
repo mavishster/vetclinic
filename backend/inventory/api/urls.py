@@ -7,5 +7,6 @@ router.register("warehouses", views.WarehouseViewSet, basename="warehouse")
 router.register("manufacturers", views.ManufacturerViewSet, basename="manufacturer")
 router.register("documents", views.DocumentViewSet, basename="stock-document")
 router.register("stock", views.StockViewSet, basename="stock")
+router.register("min-stock", views.MinStockViewSet, basename="min-stock")
 
 urlpatterns = router.urls

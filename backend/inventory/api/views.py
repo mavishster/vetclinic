@@ -17,7 +17,14 @@ from core import services as core
 from core.api.directories import DirectoryViewSet
 from core.models import DocumentError
 from inventory import services
-from inventory.models import Manufacturer, StockDocument, StockLine, StockMovement, Warehouse
+from inventory.models import (
+    Manufacturer,
+    MinStock,
+    StockDocument,
+    StockLine,
+    StockMovement,
+    Warehouse,
+)
 
 
 def _text(value: Any) -> str | None:
@@ -53,6 +60,7 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "base_unit",
             "quantity",
             "qty_base",
+            "qty_expected",
             "price",
             "vat_percent",
             "series",
@@ -187,6 +195,13 @@ class DocumentViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         return Response(status=204)
 
     @action(detail=True, methods=["post"])
+    def fill(self, request: Request, pk: str | None = None) -> Response:
+        """Инвентаризация: заполнить учётными остатками склада (?group= — одна группа)."""
+        return self._run(
+            lambda doc: services.fill_inventory(doc, request.data.get("group") or None)
+        )
+
+    @action(detail=True, methods=["post"])
     def execute(self, request: Request, pk: str | None = None) -> Response:
         return self._run(core.execute_document)
 
@@ -223,6 +238,19 @@ class StockViewSet(viewsets.ViewSet):
                 _text(row["cost"].quantize(Decimal("0.01"))),
             )  # type: ignore[typeddict-item]
         return Response({"rows": rows, "totals": totals})
+
+    @action(detail=False, methods=["get"])
+    def low(self, request: Request) -> Response:
+        """Товары ниже минимального остатка — «нужно заказать»."""
+        rows = services.low_stock()
+        for row in rows:
+            row["min_qty"], row["qty"] = _text(row["min_qty"]), _text(row["qty"])  # type: ignore[typeddict-item]
+        return Response(rows)
+
+    @action(detail=False, methods=["get"])
+    def summary(self, request: Request) -> Response:
+        """Сводка для главной: просрочено, истекает за 90 дней, ниже минимума."""
+        return Response(services.summary())
 
     @action(detail=False, methods=["get"])
     def batches(self, request: Request) -> Response:
@@ -278,3 +306,33 @@ class StockViewSet(viewsets.ViewSet):
                 for u in units
             ]
         )
+
+
+class MinStockSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+    item_name = serializers.CharField(source="item.name", read_only=True)
+    unit = serializers.CharField(source="item.base_unit.name", read_only=True)
+    warehouse_name = serializers.CharField(
+        source="warehouse.name", read_only=True, default="все склады"
+    )
+
+    class Meta:
+        model = MinStock
+        fields = ["id", "item", "item_name", "unit", "warehouse", "warehouse_name", "min_qty"]
+
+    def create(self, validated_data: dict[str, Any]) -> MinStock:
+        try:
+            rule = services.set_min_stock(
+                validated_data["item"], validated_data["min_qty"], validated_data.get("warehouse")
+            )
+        except services.StockError as error:
+            raise ValidationError({"min_qty": [str(error)]}) from error
+        if rule is None:
+            raise ValidationError({"min_qty": ["Укажите минимум больше нуля."]})
+        return rule
+
+
+class MinStockViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
+    """Минимальные остатки. POST с тем же товаром и складом — обновляет минимум."""
+
+    serializer_class = MinStockSerializer
+    queryset = MinStock.objects.select_related("item__base_unit", "warehouse")

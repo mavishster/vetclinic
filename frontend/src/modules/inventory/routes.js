@@ -4,6 +4,8 @@ export const DOC_KINDS = {
   receipt: { label: 'Приход', icon: 'move_to_inbox', color: 'positive' },
   write_off: { label: 'Расход', icon: 'outbox', color: 'negative' },
   transfer: { label: 'Перемещение', icon: 'swap_horiz', color: 'primary' },
+  inventory: { label: 'Инвентаризация', icon: 'fact_check', color: 'warning' },
+  return: { label: 'Возврат поставщику', icon: 'assignment_return', color: 'deep-orange' },
 }
 
 export default [
