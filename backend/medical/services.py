@@ -19,6 +19,7 @@ from django.utils import timezone
 from catalog import services as catalog
 from clients import services as clients
 from core.html import clean
+from inventory import services as inventory
 from medical.models import Prevention, PreventionType, Visit, VisitDiagnosis, VisitItem
 from scheduling import services as scheduling
 from staff import services as staff
@@ -163,6 +164,21 @@ def _close_reminders(visit: Visit, prevention_type: PreventionType, item: Any) -
     reminders.update(reminder=Prevention.Reminder.CLOSED)
 
 
+def _batch_note(item: Any, batch: Any) -> str:
+    """Серия и срок из партии склада. Партия должна быть этого же препарата."""
+    if batch is None:
+        return ""
+    if item is None or batch.item_id != getattr(item, "pk", item):
+        raise MedicalError("Партия относится к другому препарату.")
+    expiry = f", годен до {batch.expiry_date:%d.%m.%Y}" if batch.expiry_date else ""
+    return f"{batch.series or 'без серии'}{expiry}"
+
+
+def batches_for(item: Any) -> list[Any]:
+    """Партии препарата с остатком на складе — для выбора серии в профилактике."""
+    return inventory.batches_for(item)
+
+
 def _validate(
     prevention_type: PreventionType,
     item: Any,
@@ -193,6 +209,7 @@ def add_prevention(
     batch_note: str = "",
     note: str = "",
     repeat_at: time | None = None,
+    batch: Any = None,
 ) -> Prevention:
     """Записать профилактическую процедуру.
 
@@ -207,11 +224,12 @@ def add_prevention(
     elif next_date is None and prevention_type.repeat_days:
         next_date = procedure_date + timedelta(days=prevention_type.repeat_days)
     _validate(prevention_type, item, quantity, procedure_date, next_date, note)
+    batch_note = _batch_note(item, batch) or batch_note
 
     _close_reminders(visit, prevention_type, item)
     prevention = Prevention.objects.create(
         visit=visit, pet=visit.pet, type=prevention_type, item=item, quantity=quantity,
-        date=procedure_date, stage=stage, next_date=next_date, batch_note=batch_note,
+        date=procedure_date, stage=stage, next_date=next_date, batch=batch, batch_note=batch_note,
         note=note.strip(),
         reminder=Prevention.Reminder.CLOSED if next_date is None else Prevention.Reminder.ACTIVE,
     )  # fmt: skip
@@ -236,7 +254,7 @@ def update_prevention(prevention: Prevention, **changes: Any) -> Prevention:
     Вид процедуры не меняется — для этого удалите процедуру и запишите заново.
     Закрытое более новой процедурой напоминание при исправлении не открывается.
     """
-    allowed = {"item", "quantity", "stage", "next_date", "batch_note", "note"}
+    allowed = {"item", "quantity", "stage", "next_date", "batch", "batch_note", "note"}
     unknown = set(changes) - allowed
     if unknown:
         raise MedicalError(f"Эти поля процедуры не меняются: {', '.join(sorted(unknown))}.")
@@ -249,6 +267,10 @@ def update_prevention(prevention: Prevention, **changes: Any) -> Prevention:
         prevention.type, prevention.item, prevention.quantity, prevention.date,
         prevention.next_date, prevention.note,
     )  # fmt: skip
+    if "batch" in changes or "item" in changes:
+        prevention.batch_note = (
+            _batch_note(prevention.item, prevention.batch) or prevention.batch_note
+        )
     if prevention.next_date is None:
         prevention.reminder = Prevention.Reminder.CLOSED
     prevention.save()

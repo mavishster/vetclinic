@@ -361,3 +361,42 @@ def test_delete_visit_removes_its_preventions_from_reports(pet, doctor, vaccine)
     assert not services.pet_visits(pet).filter(pk=visit.pk).exists()
     assert services.prevention_report("done", today, today).count() == 0
     assert services.due_preventions(today + timedelta(days=400)).count() == 0
+
+
+def test_batch_fills_series_and_expiry(pet, doctor, vaccine) -> None:
+    from datetime import date
+
+    from core import services as core_services
+    from inventory import services as inventory
+    from inventory.models import StockDocument, Warehouse
+
+    receipt = inventory.save_document(
+        StockDocument(kind="receipt", warehouse=Warehouse.objects.get(name="Основной склад")),
+        [
+            {
+                "item_unit": vaccine.units.get(),
+                "quantity": D("5"),
+                "price": D("400"),
+                "series": "NB-77",
+                "expiry_date": date(2027, 12, 31),
+            }
+        ],
+    )
+    core_services.execute_document(receipt)
+    batch = services.batches_for(vaccine)[0].batch
+    visit = services.start_visit(pet, doctor)
+
+    record = services.add_prevention(visit, ptype("vaccination"), vaccine, batch=batch)
+
+    assert record.batch_note == "NB-77, годен до 31.12.2027"
+    other = catalog.save_item(
+        Item(
+            kind=Kind.GOODS,
+            name="Другая вакцина",
+            group=ItemGroup.objects.get(name="Вакцины"),
+            base_unit=Unit.objects.get(name="доза"),
+        ),
+        [{"unit": Unit.objects.get(name="доза"), "price": D("500")}],
+    )
+    with pytest.raises(MedicalError, match="другому препарату"):
+        services.add_prevention(visit, ptype("vaccination"), other, batch=batch)

@@ -6,7 +6,7 @@ from django.utils.html import format_html_join
 from simple_history.admin import SimpleHistoryAdmin
 
 from core import printing, services
-from core.models import Attachment, Clinic, FileCategory, PrintTemplate, User
+from core.models import Attachment, Clinic, Counterparty, FileCategory, PrintTemplate, User
 
 
 @admin.register(User)
@@ -59,6 +59,12 @@ class ClinicAdmin(SimpleHistoryAdmin):  # type: ignore[misc]
 
 class DirectoryAdmin(SimpleHistoryAdmin):  # type: ignore[misc]
     """Общая админка справочников (DRY): поиск, фильтр, действия активации."""
+
+    def has_delete_permission(self, request, obj=None):  # type: ignore[no-untyped-def]
+        # Используемую запись удалить нельзя — только деактивировать (как в API).
+        if obj is not None and services.usage_count(obj):
+            return False
+        return super().has_delete_permission(request, obj)
 
     list_display = ("name", "is_active")
     list_filter = ("is_active",)
@@ -138,3 +144,9 @@ class AttachmentAdmin(SimpleHistoryAdmin):  # type: ignore[misc]
     list_display = ("name", "category", "owner_type", "size", "created_at")
     list_filter = ("category", "owner_type")
     search_fields = ("name",)
+
+
+@admin.register(Counterparty)
+class CounterpartyAdmin(DirectoryAdmin):
+    list_display = ("name", "inn", "phone", "is_active")
+    search_fields = ("name", "inn")

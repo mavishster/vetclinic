@@ -14,6 +14,11 @@ from catalog.models import CombinationLine, Item, ItemGroup, ItemUnit, Kind, Uni
 from core.api.directories import DirectoryViewSet
 
 
+def _text(value: Any) -> str | None:
+    """Деньги и количества в ответе — строкой, как во всём API (без потерь точности)."""
+    return None if value is None else str(value)
+
+
 class UnitViewSet(DirectoryViewSet):
     model = Unit
 
@@ -77,7 +82,8 @@ class ItemSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         model = Item
         fields = [
             "id", "kind", "name", "description", "group", "group_name", "article",
-            "base_unit", "base_unit_name", "barcode", "manual_cost", "for_sale", "is_call",
+            "base_unit", "base_unit_name", "barcode", "manual_cost", "for_sale", "combo_only",
+            "stock_tracked", "prevention_kind", "is_call",
             "is_active", "responsible", "units", "is_template", "print_mode", "lines",
             "combo_price", "created_at", "updated_at",
         ]  # fmt: skip
@@ -126,6 +132,7 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     """Товары и услуги.
 
     Фильтры: ?kind=goods|service|combo (можно через запятую), ?group=, ?active=true|false,
+    ?tracked=yes|no (складской учёт), ?not_for_sale=true,
     ?search=текст (название по словам, точно — артикул и штрихкод).
     """
 
@@ -145,6 +152,10 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             queryset = queryset.filter(group=group)
         if (active := params.get("active")) is not None:
             queryset = queryset.filter(is_active=active.lower() in {"1", "true"})
+        if (tracked := params.get("tracked")) in {"yes", "no"}:
+            queryset = queryset.filter(kind=Kind.GOODS, stock_tracked=tracked == "yes")
+        if params.get("not_for_sale", "").lower() in {"1", "true"}:
+            queryset = queryset.filter(for_sale=False)
         if search := params.get("search", "").strip():
             queryset = services.search_items(queryset, search)
         return queryset
@@ -155,6 +166,28 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         item = self.get_object()
         services.reset_combination_prices(item)
         return Response(self.get_serializer(item).data)
+
+    @action(detail=True, methods=["get"])
+    def combinations(self, request: Request, pk: str | None = None) -> Response:
+        """В каких комбинациях есть позиция."""
+        return Response(
+            [
+                {"id": str(c.pk), "name": c.name}
+                for c in services.combinations_with(self.get_object())
+            ]
+        )
+
+    @action(detail=True, methods=["get"], url_path="removed-units")
+    def removed_units(self, request: Request, pk: str | None = None) -> Response:
+        """Убранные единицы позиции — посмотреть, какие были и по какой цене."""
+        return Response(
+            [
+                {"unit_name": u.unit.name, "ratio": str(u.ratio), "pricing": u.pricing,
+                 "price": _text(u.price), "markup_percent": _text(u.markup_percent),
+                 "removed_at": u.updated_at}
+                for u in services.removed_units(self.get_object())
+            ]
+        )  # fmt: skip
 
     @action(detail=True, methods=["get"], url_path="price-history")
     def price_history(self, request: Request, pk: str | None = None) -> Response:

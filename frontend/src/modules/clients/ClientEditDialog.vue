@@ -103,7 +103,7 @@
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
-import { apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
+import { apiGet, apiPatch, apiPost, fieldErrors, existingByName } from '@/api'
 import { PHONE_KINDS, STATUS } from './statuses'
 
 const props = defineProps({
@@ -155,6 +155,8 @@ const filterStreets = (text, update) => update(() => (streets.value = byName(all
 
 // Новый город или улицу можно добавить прямо из формы — как в VetManager.
 async function addCity(name, done) {
+  const existing = existingByName(allCities.value, name)
+  if (existing) return done(existing.id, 'add-unique')
   const { ok, data } = await apiPost('clients/cities/', { name })
   if (!ok) return $q.notify({ type: 'negative', message: fieldErrors(data).name || 'Не удалось добавить город' })
   allCities.value = cities.value = [...allCities.value, data].sort((a, b) => a.name.localeCompare(b.name))
@@ -162,6 +164,8 @@ async function addCity(name, done) {
 }
 
 async function addStreet(name, done) {
+  const existing = existingByName(allStreets.value, name)
+  if (existing) return done(existing.id, 'add-unique')
   const { ok, data } = await apiPost('clients/streets/', { name, city: form.value.city })
   if (!ok) return $q.notify({ type: 'negative', message: fieldErrors(data).name || 'Не удалось добавить улицу' })
   allStreets.value = streets.value = [...allStreets.value, data].sort((a, b) => a.name.localeCompare(b.name))

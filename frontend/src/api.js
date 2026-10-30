@@ -41,3 +41,10 @@ export function fieldErrors(data) {
   }
   return errors
 }
+
+// Добавление записи справочника «на лету»: если такая уже есть (без учёта регистра),
+// берём её, а не пытаемся создать дубль.
+export function existingByName(list, name) {
+  const needle = name.trim().toLowerCase()
+  return list.find((item) => item.name.trim().toLowerCase() === needle)
+}

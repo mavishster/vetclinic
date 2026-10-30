@@ -22,7 +22,10 @@
         </div>
       </div>
       <div class="row q-col-gutter-sm items-center">
-        <q-input v-if="!oneTime" v-model="form.batch_note" outlined dense label="Серия, срок годности" class="col-12 col-sm-5" />
+        <q-select v-if="!oneTime && batches.length" v-model="form.batch" :options="batches" option-value="batch" option-label="label"
+          emit-value map-options outlined dense clearable label="Партия со склада" class="col-12 col-sm-5"
+          hint="Серия и срок подставятся сами" />
+        <q-input v-else-if="!oneTime" v-model="form.batch_note" outlined dense label="Серия, срок годности" class="col-12 col-sm-5" />
         <q-input v-model="form.note" outlined dense :label="isChipping ? 'Номер чипа *' : 'Примечание'" class="col-12 col-sm-7" />
       </div>
       <div v-if="!oneTime && !editingId" class="row items-center q-gutter-x-sm">
@@ -88,7 +91,14 @@ const types = ref([])
 const preparations = ref([])
 const history = ref([])
 const error = ref('')
-const empty = () => ({ type: null, item: null, quantity: '1', stage: 'primary', next_date: '', batch_note: '', note: '', schedule: false, repeat_at: '10:00' })
+const empty = () => ({ type: null, item: null, quantity: '1', stage: 'primary', next_date: '', batch: null, batch_note: '', note: '', schedule: false, repeat_at: '10:00' })
+const batches = ref([])
+
+// Партии выбранного препарата с остатком на складе.
+watch(() => form.value.item, async (item) => {
+  form.value.batch = editingId.value ? form.value.batch : null
+  batches.value = item ? ((await apiGet(`medical/preventions/batches/?item=${item}`)).data ?? []).map((b) => ({ ...b, label: `${b.label} · остаток ${Number(b.qty)}` })) : []
+})
 const form = ref(empty())
 const fmt = (iso) => new Date(iso).toLocaleDateString('ru-RU')
 
@@ -124,7 +134,7 @@ async function add() {
   const body = {
     type: form.value.type, item: form.value.item, quantity: form.value.quantity || '1',
     stage: isVaccination.value ? form.value.stage : '', next_date: form.value.next_date || null,
-    batch_note: form.value.batch_note, note: form.value.note,
+    batch: form.value.batch || null, batch_note: form.value.batch_note, note: form.value.note,
     repeat_at: form.value.schedule && !oneTime.value ? form.value.repeat_at : null,
   }
   const { ok, data } = editingId.value
@@ -145,7 +155,7 @@ async function startEdit(p) {
   editingDate.value = p.date
   form.value = {
     ...empty(), type: p.type, item: p.item, quantity: p.quantity, stage: p.stage || 'primary',
-    next_date: p.next_date || '', batch_note: p.batch_note, note: p.note,
+    next_date: p.next_date || '', batch: p.batch, batch_note: p.batch_note, note: p.note,
   }
   await onType(p.type, true)
   form.value.next_date = p.next_date || ''

@@ -56,7 +56,7 @@ class PreventionSerializer(serializers.ModelSerializer):  # type: ignore[type-ar
         model = Prevention
         fields = [
             "id", "visit", "type", "type_name", "type_kind", "item", "item_name", "quantity",
-            "date", "stage", "stage_label", "next_date", "reminder", "batch_note", "note",
+            "date", "stage", "stage_label", "next_date", "reminder", "batch", "batch_note", "note",
             "repeat_at",
         ]  # fmt: skip
         read_only_fields = ["visit", "date", "reminder"]
@@ -197,7 +197,7 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             services.add_prevention(
                 visit, values["type"], values.get("item"), values.get("quantity", 1),
                 values.get("stage", ""), values.get("next_date"), values.get("batch_note", ""),
-                values.get("note", ""), values.get("repeat_at"),
+                values.get("note", ""), values.get("repeat_at"), values.get("batch"),
             )  # fmt: skip
         except services.MedicalError as error:
             raise self._error(error) from error
@@ -219,7 +219,7 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             data.is_valid(raise_exception=True)
             changes = {
                 k: v for k, v in data.validated_data.items()
-                if k in {"item", "quantity", "stage", "next_date", "batch_note", "note"}
+                if k in {"item", "quantity", "stage", "next_date", "batch", "batch_note", "note"}
             }  # fmt: skip
             try:
                 services.update_prevention(prevention, **changes)
@@ -272,6 +272,16 @@ class PreventionViewSet(viewsets.ReadOnlyModelViewSet):  # type: ignore[type-arg
     def summary(self, request: Request) -> Response:
         pet = get_object_or_404(Pet, pk=request.query_params.get("pet"))
         return Response(services.prevention_summary(pet))
+
+    @action(detail=False, methods=["get"])
+    def batches(self, request: Request) -> Response:
+        """Партии препарата с остатком: ?item=<id>."""
+        return Response(
+            [
+                {"batch": str(s.batch.pk), "label": str(s.batch), "qty": str(s.qty)}
+                for s in services.batches_for(request.query_params.get("item"))
+            ]
+        )
 
     @action(detail=False, methods=["get"])
     def preparations(self, request: Request) -> Response:

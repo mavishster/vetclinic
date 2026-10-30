@@ -68,7 +68,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
-import { apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
+import { apiGet, apiPatch, apiPost, fieldErrors, existingByName } from '@/api'
 import ClientSelect from './ClientSelect.vue'
 import { birthDateFromAge, SEX } from './pets'
 
@@ -116,6 +116,8 @@ async function onSpecies(speciesId) {
 }
 
 async function addBreed(name, done) {
+  const existing = existingByName(allBreeds.value, name)
+  if (existing) return done(existing.id, 'add-unique')
   const { ok, data } = await apiPost('clients/breeds/', { name, species: form.value.species })
   if (!ok) return $q.notify({ type: 'negative', message: fieldErrors(data).name || 'Не удалось добавить породу' })
   allBreeds.value = breeds.value = [...allBreeds.value, data]
@@ -123,6 +125,8 @@ async function addBreed(name, done) {
 }
 
 async function addColor(name, done) {
+  const existing = existingByName(allColors.value, name)
+  if (existing) return done(existing.id, 'add-unique')
   const { ok, data } = await apiPost('clients/colors/', { name })
   if (!ok) return $q.notify({ type: 'negative', message: fieldErrors(data).name || 'Не удалось добавить окрас' })
   allColors.value = colors.value = [...allColors.value, data]

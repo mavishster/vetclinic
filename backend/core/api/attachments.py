@@ -13,7 +13,7 @@ from rest_framework.response import Response
 
 from core import attachments
 from core.api.directories import DirectoryViewSet
-from core.models import Attachment, FileCategory
+from core.models import Attachment, Counterparty, FileCategory
 
 
 class AttachmentSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
@@ -89,3 +89,8 @@ class AttachmentViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
 
 class FileCategoryViewSet(DirectoryViewSet):
     model = FileCategory
+
+
+class CounterpartyViewSet(DirectoryViewSet):
+    model = Counterparty
+    extra_fields = ("inn", "phone", "email", "contact")

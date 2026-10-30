@@ -4,7 +4,11 @@
       <q-form @submit="save">
         <q-card-section class="row items-center">
           <div class="text-h6 col">{{ title }}</div>
-          <q-btn v-if="form.id" flat no-caps icon="history" label="История цен" @click="openHistory" />
+          <template v-if="form.id">
+            <q-btn flat no-caps icon="layers" label="В комбинациях" @click="openCombos" />
+            <q-btn v-if="isGoods" flat no-caps icon="unpublished" label="Убранные единицы" @click="openRemoved" />
+            <q-btn flat no-caps icon="history" label="История цен" @click="openHistory" />
+          </template>
           <q-btn flat round dense icon="close" v-close-popup />
         </q-card-section>
 
@@ -12,12 +16,14 @@
           <div class="row q-col-gutter-sm">
             <q-input v-model="form.name" label="Название *" outlined dense autofocus class="col-12 col-md-8" />
             <q-select v-model="form.group" :options="groups" option-value="id" option-label="name" emit-value
-              map-options outlined dense label="Группа *" class="col-12 col-md-4" />
+              map-options outlined dense use-input input-debounce="0" new-value-mode="add-unique" label="Группа *"
+              class="col-12 col-md-4" hint="Нет в списке — впишите и нажмите Enter" @new-value="addGroup" />
             <q-input v-model="form.article" label="Артикул" outlined dense class="col-6 col-md-3" />
             <template v-if="isGoods">
               <q-select v-model="form.base_unit" :options="units" option-value="id" option-label="name" emit-value
-                map-options outlined dense label="Единица учёта *" class="col-6 col-md-3"
-                hint="В ней хранится остаток на складе" />
+                map-options outlined dense use-input input-debounce="0" new-value-mode="add-unique"
+                label="Единица учёта *" class="col-6 col-md-3" hint="В ней хранится остаток на складе"
+                @new-value="createUnit" />
               <q-input v-model="form.barcode" label="Штрихкод" outlined dense class="col-6 col-md-3" />
             </template>
             <q-input v-model="form.manual_cost" type="number" step="0.01" min="0" outlined dense clearable
@@ -32,6 +38,9 @@
           </div>
           <div class="row q-gutter-md q-mt-xs">
             <q-checkbox v-model="form.for_sale" label="Продаётся" dense />
+            <q-checkbox v-model="form.combo_only" label="Только для комбинаций" dense>
+              <q-tooltip>Отдельно в счёт не добавляется — только в составе комбинаций</q-tooltip>
+            </q-checkbox>
             <q-checkbox v-if="!isGoods" v-model="form.is_call" label="Вызов на дом" dense />
             <q-checkbox v-if="form.id" v-model="form.is_active" label="Активен" dense />
           </div>
@@ -42,7 +51,8 @@
           <div v-for="(unit, index) in form.units" :key="index" class="unit-row q-pa-sm q-mb-sm">
             <div class="row q-col-gutter-sm items-start">
               <q-select v-if="isGoods" v-model="unit.unit" :options="units" option-value="id" option-label="name"
-                emit-value map-options outlined dense label="Единица" class="col-6 col-sm-2" />
+                emit-value map-options outlined dense use-input input-debounce="0" new-value-mode="add-unique"
+                label="Единица" class="col-6 col-sm-2" @new-value="createUnit" />
               <q-input v-if="isGoods" v-model="unit.ratio" type="number" step="0.001" min="0" outlined dense
                 :label="`${baseUnitName || 'баз. ед.'} в одной`" class="col-6 col-sm-2" />
               <div v-if="isGoods" class="col-12 col-sm-2">
@@ -101,6 +111,17 @@
     </q-card>
   </q-dialog>
 
+  <q-dialog v-model="infoOpen">
+    <q-card style="width: 520px; max-width: 95vw">
+      <q-card-section class="text-h6">{{ info.title }}</q-card-section>
+      <q-list dense separator>
+        <q-item v-for="(row, i) in info.rows" :key="i"><q-item-section>{{ row }}</q-item-section></q-item>
+        <q-item v-if="!info.rows.length"><q-item-section class="text-grey-7">{{ info.empty }}</q-item-section></q-item>
+      </q-list>
+      <q-card-actions align="right"><q-btn flat label="Закрыть" v-close-popup /></q-card-actions>
+    </q-card>
+  </q-dialog>
+
   <q-dialog v-model="historyOpen">
     <q-card style="width: 520px; max-width: 95vw">
       <q-card-section class="text-h6">История цен</q-card-section>
@@ -121,7 +142,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
-import { apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
+import { apiGet, apiPatch, apiPost, fieldErrors, existingByName } from '@/api'
 import { can } from '@/session'
 import { money } from './money'
 import { PREVENTION_KINDS } from './routes'
@@ -148,6 +169,8 @@ const units = ref([])
 const users = ref([])
 const history = ref([])
 const historyOpen = ref(false)
+const infoOpen = ref(false)
+const info = ref({ title: '', rows: [], empty: '' })
 const canSeeUsers = can('core.view_user')
 
 const isGoods = computed(() => form.value.kind === 'goods')
@@ -191,7 +214,7 @@ watch(
     const goods = props.kind === 'goods'
     form.value = {
       kind: props.kind, name: '', group: null, article: '', description: '', barcode: '', manual_cost: null,
-      for_sale: true, is_call: false, is_active: true, responsible: [], prevention_kind: '',
+      for_sale: true, combo_only: false, is_call: false, is_active: true, responsible: [], prevention_kind: '',
       base_unit: goods ? pieceUnit : serviceUnit,
       units: [newUnit(goods ? pieceUnit : serviceUnit)],
     }
@@ -216,7 +239,7 @@ async function save() {
     kind: form.value.kind, name: form.value.name, group: form.value.group, article: form.value.article,
     description: form.value.description, base_unit: form.value.base_unit, barcode: form.value.barcode || '',
     manual_cost: clean(form.value.manual_cost), for_sale: form.value.for_sale, is_call: form.value.is_call,
-    is_active: form.value.is_active, prevention_kind: form.value.prevention_kind || '',
+    is_active: form.value.is_active, prevention_kind: form.value.prevention_kind || '', combo_only: form.value.combo_only,
     units: form.value.units.map((u) => ({
       ...(u.id ? { id: u.id } : {}),
       unit: isGoods.value ? u.unit : form.value.base_unit,
@@ -238,6 +261,41 @@ async function save() {
   emit('update:modelValue', false)
   emit('saved', data)
   $q.notify({ type: 'positive', message: 'Сохранено' })
+}
+
+// Новую группу и единицу можно добавить прямо из карточки — как «+» в VetManager.
+async function addGroup(name, done) {
+  const existing = existingByName(groups.value, name)
+  if (existing) return done(existing.id, 'add-unique')
+  const { ok, data } = await apiPost('catalog/groups/', { name, kind: form.value.kind === 'service' ? 'service' : 'goods' })
+  if (!ok) return $q.notify({ type: 'negative', message: fieldErrors(data).name || 'Не удалось добавить группу' })
+  allGroups.value = [...allGroups.value, data]
+  done(data.id, 'add-unique')
+}
+
+async function createUnit(name, done) {
+  const existing = existingByName(units.value, name)
+  if (existing) return done(existing.id, 'add-unique')
+  const { ok, data } = await apiPost('catalog/units/', { name })
+  if (!ok) return $q.notify({ type: 'negative', message: fieldErrors(data).name || 'Не удалось добавить единицу' })
+  units.value = [...units.value, data]
+  done(data.id, 'add-unique')
+}
+
+async function openCombos() {
+  const rows = (await apiGet(`catalog/items/${form.value.id}/combinations/`)).data ?? []
+  info.value = { title: 'Входит в комбинации', rows: rows.map((r) => r.name), empty: 'Ни в одной комбинации нет' }
+  infoOpen.value = true
+}
+
+async function openRemoved() {
+  const rows = (await apiGet(`catalog/items/${form.value.id}/removed-units/`)).data ?? []
+  info.value = {
+    title: 'Убранные единицы',
+    rows: rows.map((r) => `${r.unit_name} (${Number(r.ratio)}) — ${r.pricing === 'fixed' ? money(r.price) : `наценка ${r.markup_percent ?? 'как у группы'}`} · убрана ${new Date(r.removed_at).toLocaleDateString('ru-RU')}`),
+    empty: 'Убранных единиц нет',
+  }
+  infoOpen.value = true
 }
 
 async function openHistory() {

@@ -522,3 +522,19 @@ class Attachment(ClinicScopedModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+# --- Контрагенты -------------------------------------------------------------------
+
+
+class Counterparty(Directory):
+    """Контрагент: поставщик, лаборатория, арендодатель… Общий для склада и кассы."""
+
+    inn = models.CharField("ИНН", max_length=12, blank=True)
+    phone = models.CharField("телефон", max_length=50, blank=True)
+    email = models.EmailField("email", blank=True)
+    contact = models.CharField("контактное лицо", max_length=200, blank=True)
+
+    class Meta(Directory.Meta):
+        verbose_name = "контрагент"
+        verbose_name_plural = "контрагенты"

@@ -21,6 +21,9 @@
         @update:model-value="onKind" />
       <q-select v-model="group" :options="groupOptions" option-value="id" option-label="name" emit-value map-options
         dense outlined clearable label="Группа" class="col-6 col-md-3" @update:model-value="reload" />
+      <q-select v-model="tracked" :options="TRACKED" emit-value map-options dense outlined clearable label="Складской учёт"
+        class="col-6 col-md-2" @update:model-value="reload" />
+      <q-checkbox v-model="notForSale" label="Не для продажи" dense class="col-auto" @update:model-value="reload" />
       <q-checkbox v-model="showInactive" label="Показать неактивные" dense class="col-auto" @update:model-value="reload" />
     </div>
 
@@ -69,6 +72,9 @@ const search = ref('')
 const kind = ref('')
 const group = ref(null)
 const showInactive = ref(false)
+const tracked = ref(null)
+const notForSale = ref(false)
+const TRACKED = [{ label: 'Товары с учётом', value: 'yes' }, { label: 'Товары без учёта', value: 'no' }]
 const groups = ref([])
 const pagination = ref({ page: 1, rowsPerPage: 50, rowsNumber: 0 })
 const editorOpen = ref(false)
@@ -96,6 +102,8 @@ async function onRequest({ pagination: next }) {
   if (kind.value) params.set('kind', kind.value)
   if (group.value) params.set('group', group.value)
   if (!showInactive.value) params.set('active', 'true')
+  if (tracked.value) params.set('tracked', tracked.value)
+  if (notForSale.value) params.set('not_for_sale', 'true')
   const { ok, data } = await apiGet(`catalog/items/?${params}`)
   rows.value = ok ? data.results : []
   pagination.value = { ...next, rowsNumber: ok ? data.count : 0 }

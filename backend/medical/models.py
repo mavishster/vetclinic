@@ -168,7 +168,11 @@ class Prevention(BaseModel):
     stage = models.CharField("этап", max_length=10, choices=Stage.choices, blank=True)
     next_date = models.DateField("следующая", null=True, blank=True)
     reminder = models.CharField(max_length=8, choices=Reminder.choices, default=Reminder.ACTIVE)
-    # Серия и срок годности — текстом, пока нет склада; потом — партия со склада.
+    # Партия со склада: серия и срок подставляются сами. Без склада — текстом в batch_note.
+    batch = models.ForeignKey(
+        "inventory.Batch", verbose_name="партия", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="+",
+    )  # fmt: skip
     batch_note = models.CharField("серия, срок годности", max_length=100, blank=True)
     note = models.CharField("примечание", max_length=255, blank=True)
 

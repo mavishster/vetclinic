@@ -10,6 +10,7 @@ router.register("roles", roles.RoleViewSet, basename="role")
 router.register("users", roles.UserViewSet, basename="user")
 router.register("attachments", attachments.AttachmentViewSet, basename="attachment")
 router.register("file-categories", attachments.FileCategoryViewSet, basename="file-category")
+router.register("counterparties", attachments.CounterpartyViewSet, basename="counterparty")
 
 urlpatterns = [
     path("health/", views.health, name="core-health"),

@@ -10,7 +10,11 @@ from typing import Any, ClassVar
 
 from django.db.models import QuerySet
 from rest_framework import serializers, viewsets
+from rest_framework.exceptions import ValidationError
+from rest_framework.request import Request
+from rest_framework.response import Response
 
+from core import services
 from core.models import Directory
 
 
@@ -56,6 +60,20 @@ class DirectoryViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             {"model": self.model, "fields": ["id", "name", "is_active", *self.extra_fields]},
         )
         return type(f"{self.model.__name__}Serializer", (self.serializer_base,), {"Meta": meta})
+
+    def destroy(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Удалить можно только то, чем не пользуются; иначе — деактивировать."""
+        record = self.get_object()
+        used = services.usage_count(record)
+        if used:
+            raise ValidationError(
+                {"non_field_errors": [
+                    f"«{record}» используется в записях: {used}. Удалить нельзя — деактивируйте, "
+                    "и запись перестанет предлагаться для выбора."
+                ]}
+            )  # fmt: skip
+        record.delete()
+        return Response(status=204)
 
     def get_queryset(self) -> QuerySet[Directory]:
         queryset = self.model.objects.all()

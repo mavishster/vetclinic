@@ -343,3 +343,40 @@ def prevention_kind_of(item: Item) -> str:
 def item_units(ids: list[Any]) -> QuerySet[ItemUnit]:
     """Единицы товаров по id — например, отмеченные в тексте медкарты."""
     return ItemUnit.objects.filter(pk__in=ids).select_related("item", "unit")
+
+
+def mark_stock_tracked(item: Item) -> None:
+    """Склад начал вести учёт товара (первый выполненный приход)."""
+    if not item.stock_tracked:
+        item.stock_tracked = True
+        item.save(update_fields=["stock_tracked"])
+
+
+def combinations_with(item: Item) -> QuerySet[Item]:
+    """Комбинации, в составе которых есть позиция — проверить, прежде чем менять или убирать её."""
+    return Item.objects.filter(kind=Kind.COMBO, lines__item_unit__item=item).distinct()
+
+
+def removed_units(item: Item) -> QuerySet[ItemUnit]:
+    """Убранные единицы товара — посмотреть, какие были и по какой цене."""
+    return ItemUnit.all_objects.filter(item=item, is_deleted=True).select_related("unit")
+
+
+def get_item_unit(pk: Any) -> ItemUnit | None:
+    return ItemUnit.objects.select_related("item__group", "unit").filter(pk=pk).first()
+
+
+def find_by_barcode(code: str) -> ItemUnit | None:
+    """Позиция по штрихкоду: сначала штрихкод единицы (упаковки), потом — товара."""
+    code = code.strip()
+    if not code:
+        return None
+    unit = ItemUnit.objects.select_related("item", "unit").filter(barcode=code).first()
+    if unit is not None:
+        return unit
+    item = Item.objects.filter(barcode=code).first()
+    if item is None:
+        return None
+    return item.units.select_related("item", "unit").filter(unit=item.base_unit).first() or (
+        item.units.select_related("item", "unit").first()
+    )

@@ -424,3 +424,22 @@ def save_user_account(
     if roles is not None:
         user.groups.set(roles)
     return user
+
+
+# --- Использование записей ---------------------------------------------------------
+
+
+def usage_count(record: Any) -> int:
+    """Сколько действующих записей ссылаются на эту (журналы истории не считаются).
+
+    Нужен, чтобы не удалить справочник, которым пользуются: группу с товарами,
+    породу у питомцев, город у клиентов.
+    """
+    total = 0
+    for relation in record._meta.related_objects:
+        model = relation.related_model
+        if model._meta.model_name.startswith("historical") or not relation.field.concrete:
+            continue
+        manager = model._default_manager
+        total += manager.filter(**{relation.field.name: record}).count()
+    return total

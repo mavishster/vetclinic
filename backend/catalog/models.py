@@ -99,6 +99,12 @@ class Item(BaseModel):
     # У товаров со складом себестоимость берётся из партий (этап 3).
     manual_cost = MoneyField("себестоимость (вручную)", null=True, blank=True)
     for_sale = models.BooleanField("продаётся", default=True)
+    combo_only = models.BooleanField(
+        "только для комбинаций", default=False,
+        help_text="Отдельно в счёт не добавляется — только в составе комбинаций",
+    )  # fmt: skip
+    # Склад отмечает товар при первом выполненном приходе (через catalog.services).
+    stock_tracked = models.BooleanField("ведётся складской учёт", default=False, editable=False)
     is_call = models.BooleanField("вызов на дом", default=False)
     is_active = models.BooleanField("активен", default=True, db_index=True)
     # Вид профилактики у самой позиции (если отличается от группы): «Кастрация кота» →

@@ -212,9 +212,9 @@ function remove(row) {
     ok: { label: 'Удалить', color: 'negative', unelevated: true },
     persistent: true,
   }).onOk(async () => {
-    const { ok } = await apiDelete(`${props.endpoint}${row.id}/`)
+    const { ok, data } = await apiDelete(`${props.endpoint}${row.id}/`)
     if (ok) load()
-    else $q.notify({ type: 'negative', message: 'Не удалось удалить запись' })
+    else $q.notify({ type: 'negative', message: fieldErrors(data).non_field_errors || 'Не удалось удалить запись', timeout: 7000 })
   })
 }
 

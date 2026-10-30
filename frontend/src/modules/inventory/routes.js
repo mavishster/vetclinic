@@ -1,0 +1,28 @@
+import DirectoryPage from '@/components/DirectoryPage.vue'
+
+export const DOC_KINDS = {
+  receipt: { label: 'Приход', icon: 'move_to_inbox', color: 'positive' },
+  write_off: { label: 'Расход', icon: 'outbox', color: 'negative' },
+  transfer: { label: 'Перемещение', icon: 'swap_horiz', color: 'primary' },
+}
+
+export default [
+  { path: 'inventory/stock', component: () => import('./StockPage.vue'), meta: { perm: 'inventory.view_stockmovement' } },
+  { path: 'inventory/documents', component: () => import('./DocumentsPage.vue'), meta: { perm: 'inventory.view_stockdocument' } },
+  { path: 'inventory/documents/:id', component: () => import('./DocumentPage.vue'), props: true, meta: { perm: 'inventory.view_stockdocument' } },
+  {
+    path: 'directories/warehouses',
+    component: DirectoryPage,
+    props: {
+      title: 'Склады', endpoint: 'inventory/warehouses/', permission: 'inventory.warehouse',
+      fields: [{ name: 'kind', label: 'Тип', type: 'choice', options: [{ id: 'sale', name: 'Реализация' }, { id: 'storage', name: 'Хранение' }] }],
+    },
+    meta: { perm: 'inventory.view_warehouse' },
+  },
+  {
+    path: 'directories/manufacturers',
+    component: DirectoryPage,
+    props: { title: 'Производители', endpoint: 'inventory/manufacturers/', permission: 'inventory.manufacturer' },
+    meta: { perm: 'inventory.view_manufacturer' },
+  },
+]
