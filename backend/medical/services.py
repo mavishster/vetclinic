@@ -21,6 +21,7 @@ from clients import services as clients
 from core.html import clean
 from medical.models import Prevention, PreventionType, Visit, VisitDiagnosis, VisitItem
 from scheduling import services as scheduling
+from staff import services as staff
 
 
 class MedicalError(Exception):
@@ -73,6 +74,8 @@ def visit_for_appointment(appointment: Any, doctor: Any) -> Visit:
 @transaction.atomic
 def save_visit(visit: Visit, diagnoses: list[tuple[Any, str]] | None = None) -> Visit:
     """Сохранить запись: очистить текст, собрать позиции из «@», записать вес питомцу."""
+    if not visit.doctor.is_active:
+        raise MedicalError("Выбранный врач уволен — выберите работающего сотрудника.")
     if visit.temperature is not None and not Decimal("30") <= visit.temperature <= Decimal("45"):
         raise MedicalError("Проверьте температуру: обычно от 30 до 45 °C.")
     if visit.weight is not None and visit.weight <= 0:
@@ -110,6 +113,23 @@ def _sync_items(visit: Visit) -> None:
             if pk in known
         ]
     VisitItem.objects.bulk_create(rows)
+
+
+def doctors() -> list[Any]:
+    """Кого можно указать врачом в медкарте — работающие сотрудники."""
+    return list(staff.active_users())
+
+
+@transaction.atomic
+def delete_visit(visit: Visit) -> None:
+    """Удалить запись медкарты (мягко) вместе с её процедурами профилактики.
+
+    Процедуры удаляются, чтобы не напоминать о них и не показывать их в отчётах.
+    Отметки в карточке питомца («стерилизован», номер чипа) и вес не меняются —
+    их при необходимости исправляют в карточке.
+    """
+    visit.preventions.all().delete()
+    visit.delete()
 
 
 def complete_visit(visit: Visit) -> None:

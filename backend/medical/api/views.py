@@ -168,6 +168,17 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             raise self._error(error) from error
         return Response(self.get_serializer(visit).data)
 
+    @action(detail=False, methods=["get"])
+    def doctors(self, request: Request) -> Response:
+        """Кого можно выбрать врачом: работающие сотрудники, сначала те, кто в графике."""
+        return Response(
+            [{"id": str(u.pk), "name": u.short_name or u.username} for u in services.doctors()]
+        )
+
+    def destroy(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        services.delete_visit(self.get_object())
+        return Response(status=204)
+
     @action(detail=True, methods=["post"])
     def complete(self, request: Request, pk: str | None = None) -> Response:
         """Приём окончен: запись на приём — «завершён»."""

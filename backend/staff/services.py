@@ -175,3 +175,10 @@ def schedule_users() -> QuerySet[User]:
 def employee_color(user: Any) -> str:
     employee = Employee.objects.filter(user=user).only("color").first()
     return employee.color if employee else "#24566a"
+
+
+def active_users() -> QuerySet[User]:
+    """Работающие сотрудники: сначала те, кто в графике, — для выбора врача."""
+    return User.objects.filter(is_active=True).order_by(
+        "-employee__in_schedule", "last_name", "first_name"
+    )

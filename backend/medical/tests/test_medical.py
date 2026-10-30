@@ -332,3 +332,32 @@ def test_chip_number_correction_updates_pet(pet, doctor) -> None:
 
     pet.refresh_from_db()
     assert pet.chip_number == "643094100555444"
+
+
+def test_doctor_can_be_changed_to_active_employee_only(pet, doctor) -> None:
+    visit = services.start_visit(pet, doctor)
+    other = get_user_model().objects.create_user(
+        username="doc2", password="x", last_name="Сидорова"
+    )
+
+    visit.doctor = other
+    services.save_visit(visit)
+    assert visit.doctor == other
+
+    other.is_active = False
+    other.save()
+    with pytest.raises(MedicalError, match="уволен"):
+        services.save_visit(visit)
+    assert doctor in services.doctors() and other not in services.doctors()
+
+
+def test_delete_visit_removes_its_preventions_from_reports(pet, doctor, vaccine) -> None:
+    visit = services.start_visit(pet, doctor)
+    services.add_prevention(visit, ptype("vaccination"), vaccine)
+    today = timezone.localdate()
+
+    services.delete_visit(visit)
+
+    assert not services.pet_visits(pet).filter(pk=visit.pk).exists()
+    assert services.prevention_report("done", today, today).count() == 0
+    assert services.due_preventions(today + timedelta(days=400)).count() == 0

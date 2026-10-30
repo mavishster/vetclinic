@@ -22,6 +22,7 @@
             :color="saveState === 'error' ? 'negative' : 'grey-6'" /> {{ saveText }}
         </div>
         <q-btn outline color="primary" icon="print" label="Печать" @click="print" />
+        <q-btn v-if="can('medical.delete_visit')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
         <q-btn v-if="visit.appointment_status === 'in_progress' && canEdit" color="positive" unelevated icon="task_alt"
           label="Завершить приём" @click="complete" />
       </div>
@@ -51,7 +52,8 @@
           <q-btn v-if="canEdit" flat dense no-caps color="primary" icon="add" label="Диагноз"
             @click="form.diagnoses.push({ diagnosis: null, kind: 'preliminary' })" />
           <q-input v-model="form.next_visit_date" type="date" label="Повторный приём" stack-label outlined dense clearable :readonly="!canEdit" />
-          <div class="text-caption text-grey-7">Врач: {{ visit.doctor_name }}</div>
+          <q-select v-model="form.doctor" :options="doctors" option-value="id" option-label="name" emit-value map-options
+            outlined dense label="Врач" :readonly="!canEdit" />
         </div>
 
         <div class="col-12 col-md-6">
@@ -121,8 +123,9 @@
 // Запись медкарты. Изменения сохраняются сами через пару секунд после ввода —
 // ничего не потеряется, даже если врача отвлекли посреди записи.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
-import { apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
+import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
 import RichEditor from './RichEditor.vue'
@@ -130,6 +133,7 @@ import PreventionPanel from './PreventionPanel.vue'
 
 const props = defineProps({ id: { type: String, required: true } })
 const $q = useQuasar()
+const router = useRouter()
 const canEdit = can('medical.change_visit')
 const visit = ref(null)
 const form = ref({})
@@ -138,6 +142,7 @@ const tab = ref('treatment')
 const purposes = ref([])
 const results = ref([])
 const diagnoses = ref([])
+const doctors = ref([])
 const diagnosisOptions = ref([])
 const history = ref([])
 const prefill = ref(null)
@@ -151,7 +156,7 @@ const error = ref('')
 const saveState = ref('saved') // saved | dirty | saving | error
 const savedAt = ref(null)
 
-const FIELDS = ['date', 'weight', 'temperature', 'purpose', 'result', 'treatment_html', 'recommendations_html', 'next_visit_date']
+const FIELDS = ['date', 'doctor', 'weight', 'temperature', 'purpose', 'result', 'treatment_html', 'recommendations_html', 'next_visit_date']
 const pad = (n) => String(n).padStart(2, '0')
 const toLocalInput = (iso) => {
   const d = new Date(iso)
@@ -227,6 +232,24 @@ async function complete() {
   }
 }
 
+function remove() {
+  $q.dialog({
+    title: 'Удалить запись медкарты?',
+    message: 'Запись и процедуры профилактики этого приёма исчезнут из медкарты и отчётов. Отметки в карточке питомца (стерилизация, чип) и вес останутся — при необходимости исправьте их в карточке.',
+    cancel: { label: 'Отмена', flat: true },
+    ok: { label: 'Удалить', color: 'negative', unelevated: true },
+    persistent: true,
+  }).onOk(async () => {
+    clearTimeout(timer)
+    saveState.value = 'saved' // несохранённое удаляемой записи сохранять не нужно
+    const pet = visit.value.pet
+    const { ok } = await apiDelete(`medical/visits/${props.id}/`)
+    if (!ok) return $q.notify({ type: 'negative', message: 'Не удалось удалить запись' })
+    $q.notify({ type: 'positive', message: 'Запись медкарты удалена' })
+    router.push(`/pets/${pet}`)
+  })
+}
+
 async function print() {
   await save()
   window.open(`/api/medical/visits/${props.id}/print/`, '_blank')
@@ -237,9 +260,11 @@ watch(() => props.id, () => {
   load()
 })
 onMounted(async () => {
-  const [p, r, d] = await Promise.all([
+  const [p, r, d, doc] = await Promise.all([
     apiGet('scheduling/purposes/?active=true'), apiGet('medical/results/?active=true'), apiGet('medical/diagnoses/?active=true'),
+    apiGet('medical/visits/doctors/'),
   ])
+  doctors.value = doc.data ?? []
   purposes.value = p.data ?? []
   results.value = r.data ?? []
   diagnoses.value = diagnosisOptions.value = d.data ?? []

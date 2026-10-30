@@ -115,3 +115,35 @@ def test_permissions(db, pet) -> None:
 
     assert plain.get(URL).status_code == 403
     assert plain.post(URL, {"pet": str(pet.pk)}, format="json").status_code == 403
+
+
+def test_doctors_list_change_doctor_and_delete(api, pet) -> None:
+    other = get_user_model().objects.create_user(
+        username="doc2", password="x", last_name="Сидорова"
+    )
+    visit = api.post(URL, {"pet": str(pet.pk)}, format="json").json()
+
+    doctors = api.get(f"{URL}doctors/").json()
+    changed = api.patch(f"{URL}{visit['id']}/", {"doctor": str(other.pk)}, format="json")
+    deleted = api.delete(f"{URL}{visit['id']}/")
+
+    assert "Сидорова" in [d["name"] for d in doctors]
+    assert changed.json()["doctor_name"] == "Сидорова"
+    assert deleted.status_code == 204
+    assert api.get(f"{URL}?pet={pet.pk}").json()["results"] == []
+
+
+def test_delete_needs_permission(db, pet) -> None:
+    from django.contrib.auth.models import Group
+
+    from core import services as core
+
+    role = Group.objects.create(name="Врач")
+    core.set_entity_permissions(role, "medical.visit", {"view", "edit"})
+    user = get_user_model().objects.create_user(username="vet", password="x")
+    user.groups.add(role)
+    client = APIClient()
+    client.force_authenticate(user)
+    visit = client.post(URL, {"pet": str(pet.pk)}, format="json").json()
+
+    assert client.delete(f"{URL}{visit['id']}/").status_code == 403
