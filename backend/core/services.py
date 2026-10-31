@@ -8,6 +8,7 @@
 """
 
 import itertools
+import re
 from datetime import timedelta
 from typing import Any, TypedDict
 
@@ -141,6 +142,8 @@ _MODULE_TITLES = {"core": "Администрирование"}
 class PermissionEntity(TypedDict):
     code: str  # «приложение.модель», например «clients.species»
     title: str
+    is_directory: bool  # справочник (списки для выбора) или рабочие данные раздела
+    hint: str  # что именно разрешается — первая фраза описания модели
 
 
 class PermissionModule(TypedDict):
@@ -152,6 +155,60 @@ class PermissionModule(TypedDict):
 def _entity_title(model: type[Any]) -> str:
     title = str(model._meta.verbose_name_plural)
     return title[:1].upper() + title[1:]
+
+
+# Пояснения к строкам таблицы прав — для того, кто настраивает роли (не для разработчика).
+PERMISSION_HINTS = {
+    "core.user": "Учётные записи сотрудников: логин, пароль, ФИО.",
+    "core.clinic": "Реквизиты клиники — для печатных форм.",
+    "core.attachment": "Файлы у клиентов, питомцев и приёмов: сканы, снимки, договоры.",
+    "core.printtemplate": "Шаблоны печати: выписка из медкарты, счёт, этикетка.",
+    "core.filecategory": "Список категорий файлов: договор, анализы, рентген…",
+    "core.counterparty": "Поставщики и другие организации — для склада и кассы.",
+    "auth.group": "Роли и их права — кто что может делать в системе.",
+    "clients.client": "Карточки клиентов: контакты, адрес, скидка.",
+    "clients.pet": "Карточки питомцев: вес, смена владельца, «умер».",
+    "clients.clientcontract": "Договоры с клиентами.",
+    "clients.clientledger": "Баланс клиента — долги и авансы (меняется счетами и кассой).",
+    "clients.species": "Список видов животных.",
+    "clients.breed": "Список пород.",
+    "clients.color": "Список окрасов.",
+    "clients.city": "Список городов.",
+    "clients.street": "Список улиц.",
+    "clients.clienttype": "Список типов клиентов.",
+    "clients.clientsource": "Список «как нашли клинику».",
+    "catalog.item": "Прайс: товары, услуги, комбинации и их цены.",
+    "catalog.unit": "Список единиц измерения.",
+    "catalog.itemgroup": "Группы прайса и наценки групп.",
+    "staff.employee": "Сотрудники: карточки, логины, назначение ролей.",
+    "staff.workinterval": "График работы сотрудников.",
+    "staff.position": "Список должностей.",
+    "staff.intervaltype": "Типы интервалов графика: приём, дежурство, отпуск…",
+    "staff.intervaltemplate": "Шаблоны времени для графика.",
+    "scheduling.appointment": "Календарь: записи на приём и их статусы.",
+    "scheduling.visitpurpose": "Список целей обращения.",
+    "medical.visit": "Записи медкарты: приёмы, диагнозы, лечение.",
+    "medical.prevention": "Вакцинации, дегельминтизация и другая профилактика.",
+    "medical.diagnosis": "Список диагнозов.",
+    "medical.visitresult": "Список результатов посещения.",
+    "medical.preventiontype": "Список видов профилактики.",
+    "billing.invoice": "Счета клиентов: создание, выполнение, откат.",
+    "inventory.stockdocument": "Приходы, расходы, перемещения, инвентаризации.",
+    "inventory.batch": "Партии товаров: серии и сроки годности.",
+    "inventory.stockmovement": "Остатки на складах.",
+    "inventory.minstock": "Минимальные остатки — «нужно заказать».",
+    "inventory.warehouse": "Список складов.",
+    "inventory.manufacturer": "Список производителей.",
+    "cash.cashshift": "Смены и закрытие кассы.",
+    "cash.payment": "Приём оплат и их возврат.",
+    "cash.cashoperation": "Внесение, выдача, перемещение денег, возврат аванса.",
+    "cash.cashmovement": "Остатки в кассах и движение денег.",
+    "cash.cashregister": "Список касс.",
+}
+
+
+def _entity_hint(model: type[Any]) -> str:
+    return PERMISSION_HINTS.get(model._meta.label_lower, "")
 
 
 def permission_modules() -> list[PermissionModule]:
@@ -172,11 +229,22 @@ def permission_modules() -> list[PermissionModule]:
         # Сначала основные данные раздела (клиенты, документы), затем справочники.
         models_with_rights.sort(key=lambda model: issubclass(model, Directory))
         entities: list[PermissionEntity] = [
-            {"code": model._meta.label_lower, "title": _entity_title(model)}
+            {
+                "code": model._meta.label_lower,
+                "title": _entity_title(model),
+                "is_directory": issubclass(model, Directory),
+                "hint": _entity_hint(model),
+            }
             for model in models_with_rights
         ]
         entities += [
-            {"code": code, "title": _ENTITY_TITLES[code]} for code in _EXTRA_ENTITIES.get(app, [])
+            {
+                "code": code,
+                "title": _ENTITY_TITLES[code],
+                "is_directory": False,
+                "hint": PERMISSION_HINTS.get(code, ""),
+            }
+            for code in _EXTRA_ENTITIES.get(app, [])
         ]
         if entities:
             title = _MODULE_TITLES.get(app, str(config.verbose_name))
@@ -467,3 +535,27 @@ def counterparty_errors(counterparty: Any) -> dict[str, str]:
         if value and (not value.isdigit() or len(value) not in lengths):
             errors[field] = message
     return errors
+
+
+# --- Оформление интерфейса ---------------------------------------------------------
+
+UI_THEMES = {"light", "dark", "auto"}
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def save_ui_settings(user: User, changes: dict[str, Any]) -> dict[str, Any]:
+    """Сохранить личное оформление: тема (светлая / тёмная / как в системе) и основной
+    цвет (#RRGGBB). Неизвестные ключи игнорируются."""
+    settings_ = dict(user.ui_settings or {})
+    if "theme" in changes:
+        if changes["theme"] not in UI_THEMES:
+            raise ValueError("Тема: светлая, тёмная или как в системе.")
+        settings_["theme"] = changes["theme"]
+    if "primary" in changes:
+        color = changes["primary"] or ""
+        if color and not _HEX.match(color):
+            raise ValueError("Цвет задаётся в виде #RRGGBB.")
+        settings_["primary"] = color
+    user.ui_settings = settings_
+    user.save(update_fields=["ui_settings"])
+    return settings_

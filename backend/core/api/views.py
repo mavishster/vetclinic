@@ -31,8 +31,20 @@ def me(request: Request) -> Response:
             "has_pin": user.has_pin,
             "clinic": services.current_clinic().name,
             "permissions": sorted(user.get_all_permissions()),
+            "ui_settings": user.ui_settings or {},
         }
     )
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def my_ui_settings(request: Request) -> Response:
+    """Личное оформление: {"theme": "light|dark|auto", "primary": "#RRGGBB"}."""
+    user: User = request.user  # type: ignore[assignment]
+    try:
+        return Response(services.save_ui_settings(user, dict(request.data)))
+    except ValueError as error:
+        return Response({"non_field_errors": [str(error)]}, status=400)
 
 
 class SetPinSerializer(serializers.Serializer):  # type: ignore[type-arg]

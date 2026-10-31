@@ -40,7 +40,7 @@
             <q-markup-table flat bordered dense wrap-cells>
               <thead>
                 <tr>
-                  <th class="text-left">Раздел и справочник</th>
+                  <th class="text-left">Раздел и что в нём</th>
                   <th v-for="action in matrix.actions" :key="action.code" class="text-center">
                     {{ action.title }}
                   </th>
@@ -62,20 +62,39 @@
                     </td>
                   </tr>
                   <template v-if="expanded[module.code]">
-                    <tr v-for="entity in module.entities" :key="entity.code">
-                      <td class="entity-cell">{{ entity.title }}</td>
-                      <td v-for="action in matrix.actions" :key="action.code" class="text-center">
-                        <q-checkbox :model-value="hasAction(entity.code, action.code)" :disable="!canEdit"
-                          @update:model-value="(value) => setAction(entity.code, action.code, value)" />
-                      </td>
-                    </tr>
+                    <template v-for="group in groupsOf(module)" :key="group.key">
+                      <tr v-if="group.title" class="group-row">
+                        <td class="group-cell">
+                          <q-icon :name="group.icon" size="16px" class="q-mr-xs" />{{ group.title }}
+                          <span class="text-caption text-grey-7"> · {{ group.entities.length }}</span>
+                        </td>
+                        <td v-for="action in matrix.actions" :key="action.code" class="text-center">
+                          <q-checkbox :model-value="groupState(group.entities, action.code)" toggle-indeterminate size="sm"
+                            :disable="!canEdit" @update:model-value="() => toggleGroup(group.entities, action.code)">
+                            <q-tooltip>{{ group.tooltip }}</q-tooltip>
+                          </q-checkbox>
+                        </td>
+                      </tr>
+                      <tr v-for="entity in group.entities" :key="entity.code">
+                        <td class="entity-cell">
+                          <div>{{ entity.title }}</div>
+                          <div v-if="entity.hint" class="text-caption text-grey-7 entity-hint">{{ entity.hint }}</div>
+                        </td>
+                        <td v-for="action in matrix.actions" :key="action.code" class="text-center">
+                          <q-checkbox :model-value="hasAction(entity.code, action.code)" :disable="!canEdit"
+                            @update:model-value="(value) => setAction(entity.code, action.code, value)" />
+                        </td>
+                      </tr>
+                    </template>
                   </template>
                 </template>
               </tbody>
             </q-markup-table>
             <div class="text-caption text-grey-7">
-              Галочка в строке раздела ставит право сразу для всех его справочников; раскройте раздел,
-              чтобы настроить каждый отдельно. Редактирование и удаление включают просмотр.
+              Галочка в строке раздела ставит право сразу на всё в разделе. Внутри раздела — две группы:
+              «Работа» (сами данные: клиенты, счета, медкарта…) и «Справочники» (списки для выбора: породы,
+              города, единицы…) — у каждой группы своя общая галочка. Под названием строки — что именно
+              разрешается. Редактирование и удаление включают просмотр.
             </div>
 
             <q-select v-model="editing.users" :options="userOptions" option-value="id" option-label="label"
@@ -170,16 +189,30 @@ function setAction(entity, action, value) {
   editing.value.access[entity] = [...actions]
 }
 
-// Галочка раздела: все справочники — да, ни одного — нет, часть — «частично» (null).
-function moduleState(module, action) {
-  const count = module.entities.filter((e) => hasAction(e.code, action)).length
-  if (count === module.entities.length) return true
+// Групповая галочка: всё — да, ничего — нет, часть — «частично» (null).
+function groupState(entities, action) {
+  const count = entities.filter((e) => hasAction(e.code, action)).length
+  if (count === entities.length) return true
   return count === 0 ? false : null
 }
 
-function toggleModule(module, action) {
-  const value = moduleState(module, action) !== true
-  for (const entity of module.entities) setAction(entity.code, action, value)
+function toggleGroup(entities, action) {
+  const value = groupState(entities, action) !== true
+  for (const entity of entities) setAction(entity.code, action, value)
+}
+
+const moduleState = (module, action) => groupState(module.entities, action)
+const toggleModule = (module, action) => toggleGroup(module.entities, action)
+
+// Внутри раздела: «Работа» (данные) и «Справочники». Если группа одна — без заголовка.
+function groupsOf(module) {
+  const data = module.entities.filter((e) => !e.is_directory)
+  const dirs = module.entities.filter((e) => e.is_directory)
+  const both = data.length && dirs.length
+  return [
+    { key: 'data', title: both ? 'Работа' : '', icon: 'work_outline', tooltip: 'Все рабочие данные раздела', entities: data },
+    { key: 'dirs', title: both || dirs.length ? 'Справочники' : '', icon: 'list_alt', tooltip: 'Все справочники раздела', entities: dirs },
+  ].filter((g) => g.entities.length)
 }
 
 function filterUsers(text, update) {
@@ -229,6 +262,18 @@ onMounted(load)
   background: rgba(127, 127, 127, 0.06);
 }
 .entity-cell {
-  padding-left: 40px !important;
+  padding-left: 52px !important;
+}
+.entity-hint {
+  line-height: 1.25;
+  white-space: normal;
+}
+.group-row {
+  background: rgba(127, 127, 127, 0.03);
+}
+.group-cell {
+  padding-left: 32px !important;
+  font-weight: 500;
+  font-size: 13px;
 }
 </style>

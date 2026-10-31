@@ -37,6 +37,8 @@ class User(AbstractUser):
     middle_name = models.CharField("отчество", max_length=150, blank=True)
     updated_at = models.DateTimeField("изменён", auto_now=True)
     version = models.PositiveIntegerField("версия", default=1, editable=False)
+    # Личное оформление интерфейса: тема и основной цвет — у каждого своё, на любом компьютере.
+    ui_settings = models.JSONField("оформление интерфейса", default=dict, blank=True)
 
     # ПИН для подтверждения операций (ADR-014). Хранится только хеш.
     pin_hash = models.CharField("ПИН (хеш)", max_length=128, blank=True, editable=False)

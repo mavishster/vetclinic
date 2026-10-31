@@ -74,3 +74,12 @@ def test_matrix_shows_entities_and_hides_service_tables() -> None:
 def test_unknown_entity_is_rejected(role) -> None:
     with pytest.raises(ValueError, match="Неизвестный раздел"):
         services.set_entity_permissions(role, "core.documentcounter", {"view"})
+
+
+def test_every_permission_row_is_explained_and_directories_marked() -> None:
+    entities = [e for m in services.permission_modules() for e in m["entities"]]
+
+    missing = [e["code"] for e in entities if not e["hint"]]
+    assert missing == [], f"нет пояснения для строк таблицы прав: {missing}"
+    flags = {e["code"]: e["is_directory"] for e in entities}
+    assert flags["clients.species"] is True and flags["clients.client"] is False

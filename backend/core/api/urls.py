@@ -19,5 +19,6 @@ urlpatterns = [
     path("auth/logout/", auth.logout_view, name="core-logout"),
     path("me/", views.me, name="core-me"),
     path("me/pin/", views.set_my_pin, name="core-me-pin"),
+    path("me/ui/", views.my_ui_settings, name="core-me-ui"),
     *router.urls,
 ]
