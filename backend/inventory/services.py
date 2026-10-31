@@ -11,6 +11,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any, TypedDict
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import F, Q, QuerySet, Sum
 from django.utils import timezone
@@ -295,6 +296,7 @@ def execute_stock_document(document: StockDocument) -> None:
                 batch.cost_per_base,
             )
             catalog.mark_stock_tracked(line.item)
+            _close_negative(document, line.item, batch, line.qty_base)
         return
     if document.kind == K.INVENTORY:
         _execute_inventory(document, lines)
@@ -405,28 +407,89 @@ class WrittenOff:
     cost_per_base: Decimal
 
 
-def write_off(lines: list[WriteOffLine], source: Any) -> list[WrittenOff]:
+def write_off(
+    lines: list[WriteOffLine], source: Any, allow_negative: bool | None = None
+) -> list[WrittenOff]:
     """Списать товар от имени документа другого модуля (выполненного счёта).
 
     Возвращает, из каких партий и по какой себестоимости списано — счёт запишет
     фактическую себестоимость в строку (ADR-008).
+
+    Продажа в минус (settings.ALLOW_NEGATIVE_STOCK): чего не хватает, списывается
+    с последней партии товара — по её закупочной цене; партия уходит в минус,
+    следующий приход его закроет (ADR-009).
     """
+    if allow_negative is None:
+        allow_negative = settings.ALLOW_NEGATIVE_STOCK
     result: list[WrittenOff] = []
     for line in lines:
-        for part in pick_batches(
-            line["item"], line["qty_base"], line["warehouse"], line.get("batch")
-        ):
+        item, qty, warehouse = line["item"], line["qty_base"], line["warehouse"]
+        warehouse_id = getattr(warehouse, "pk", warehouse)
+        try:
+            parts = pick_batches(item, qty, warehouse, line.get("batch"))
+        except StockError:
+            last = Batch.objects.filter(item=item).order_by("-received_at").first()
+            if not allow_negative or last is None:
+                raise
+            parts = [] if line.get("batch") else batch_stock(item, warehouse)
+            short = qty - sum((p.qty for p in parts), ZERO)
+            parts.append(BatchStock(last, warehouse_id, short))
+        for part in parts:
             core.post_entry(
                 StockMovement,
                 source,
-                item=line["item"],
+                item=item,
                 batch=part.batch,
-                warehouse_id=getattr(line["warehouse"], "pk", line["warehouse"]),
+                warehouse_id=warehouse_id,
                 qty_base=-part.qty,
                 cost_per_base=part.batch.cost_per_base,
             )
-            result.append(WrittenOff(line["item"], part.batch, part.qty, part.batch.cost_per_base))
+            result.append(WrittenOff(item, part.batch, part.qty, part.batch.cost_per_base))
     return result
+
+
+def _close_negative(document: StockDocument, item: Any, batch: Batch, qty: Decimal) -> None:
+    """Приход закрывает минус по товару на складе: недостающее «переносится» из новой
+    партии в партии, ушедшие в минус (проводки — от прихода, откатываются вместе с ним)."""
+    rest = qty
+    negative = (
+        StockMovement.objects.filter(item=item, warehouse=document.warehouse_id)
+        .exclude(batch=None)
+        .exclude(batch=batch)
+        .values("batch")
+        .annotate(total=Sum("qty_base"))
+        .filter(total__lt=0)
+    )
+    for row in negative:
+        if rest <= 0:
+            break
+        cover = min(-row["total"], rest)
+        old = Batch.objects.get(pk=row["batch"])
+        _post(document, item, old, document.warehouse_id, cover, old.cost_per_base)
+        _post(document, item, batch, document.warehouse_id, -cover, batch.cost_per_base)
+        rest -= cover
+
+
+def negative_stock() -> list[dict[str, Any]]:
+    """Товары в минусе (продано больше, чем оприходовано) — их ждёт приход."""
+    rows = (
+        StockMovement.objects.values(
+            "item", "item__name", "item__base_unit__name", "warehouse__name"
+        )
+        .annotate(qty=Sum("qty_base"))
+        .filter(qty__lt=0)
+        .order_by("item__name")
+    )
+    return [
+        {
+            "item": str(r["item"]),
+            "item_name": r["item__name"],
+            "unit": r["item__base_unit__name"],
+            "warehouse_name": r["warehouse__name"],
+            "qty": r["qty"],
+        }
+        for r in rows
+    ]
 
 
 def reverse(source: Any) -> None:
@@ -542,6 +605,7 @@ class StockSummary(TypedDict):
     expired: int
     expiring: int
     low: int
+    negative: int
 
 
 def summary(days: int = 90) -> StockSummary:
@@ -557,7 +621,12 @@ def summary(days: int = 90) -> StockSummary:
     expiring = sum(
         1 for r in rows if today <= r["batch__expiry_date"] <= today + timedelta(days=days)
     )
-    return {"expired": expired, "expiring": expiring, "low": len(low_stock())}
+    return {
+        "expired": expired,
+        "expiring": expiring,
+        "low": len(low_stock()),
+        "negative": len(negative_stock()),
+    }
 
 
 def current_cost(item: Any, warehouse: Any = None) -> Decimal | None:

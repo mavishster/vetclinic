@@ -250,6 +250,14 @@ class StockViewSet(viewsets.ViewSet):
         return Response(rows)
 
     @action(detail=False, methods=["get"])
+    def negative(self, request: Request) -> Response:
+        """Товары в минусе — продано больше, чем оприходовано; закроются приходом."""
+        rows = services.negative_stock()
+        for row in rows:
+            row["qty"] = _text(row["qty"])
+        return Response(rows)
+
+    @action(detail=False, methods=["get"])
     def summary(self, request: Request) -> Response:
         """Сводка для главной: просрочено, истекает за 90 дней, ниже минимума."""
         return Response(services.summary())

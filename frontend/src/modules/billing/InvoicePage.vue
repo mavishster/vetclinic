@@ -4,7 +4,7 @@
     <template v-else>
       <div class="row items-center q-gutter-sm q-mb-md">
         <q-btn flat round dense icon="arrow_back" @click="$router.back()" />
-        <h1 class="text-h5 q-my-none">Счёт{{ form.number ? ` № ${form.number}` : '' }}</h1>
+        <h1 class="text-h5 q-my-none">{{ form.is_quick ? 'Быстрый счёт' : 'Счёт' }}{{ form.number ? ` № ${form.number}` : '' }}</h1>
         <q-badge v-if="form.id" :color="PAY[form.payment_status]?.color || 'grey-6'" :label="PAY[form.payment_status]?.label || 'черновик'" />
         <span v-if="executed && form.payment_status === 'partial'" class="text-caption">оплачено {{ money(form.paid_amount) }}</span>
         <q-space />
@@ -12,7 +12,7 @@
         <template v-if="!executed && canEdit">
           <q-btn v-if="form.id && can('billing.delete_invoice')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
           <q-btn outline color="primary" icon="save" label="Сохранить" :loading="busy === 'save'" @click="save()" />
-          <q-btn outline color="positive" icon="schedule" label="В долг" :loading="busy === 'execute'" @click="execute()">
+          <q-btn v-if="!form.is_quick" outline color="positive" icon="schedule" label="В долг" :loading="busy === 'execute'" @click="execute()">
             <q-tooltip>Выполнить без оплаты: товар спишется, сумма встанет долгом на баланс клиента</q-tooltip>
           </q-btn>
           <q-btn v-if="can('cash.add_payment')" color="positive" unelevated icon="payments" label="Оплатить" :loading="busy === 'pay'"
@@ -25,7 +25,8 @@
 
       <div class="row q-col-gutter-sm q-mb-sm">
         <div class="col-12 col-md-4">
-          <ClientSelect v-if="!form.client || (!executed && !form.id)" v-model="form.client" label="Клиент *" @update:model-value="loadPets" />
+          <ClientSelect v-if="!form.is_quick && (!form.client || (!executed && !form.id))" v-model="form.client" label="Клиент *"
+            @update:model-value="loadPets" />
           <div v-else class="q-pt-sm">
             <router-link :to="`/clients/${form.client}`" class="text-h6 text-primary" style="text-decoration: none">{{ form.client_name }}</router-link>
             <div v-if="balance !== null" class="text-caption" :class="balance < 0 ? 'text-negative' : 'text-grey-7'">
@@ -101,7 +102,8 @@
       <div v-if="executed && canEdit" class="text-caption text-grey-7 q-mt-sm">
         Врача, питомца и исполнителей в выполненном счёте можно поменять без отката — изменение запишется в журнал.
       </div>
-      <PaymentDialog v-model="payOpen" :client-id="form.client" :client-name="form.client_name" :invoice-ids="[form.id]" @paid="reload" />
+      <PaymentDialog v-model="payOpen" :client-id="form.client" :client-name="form.client_name" :invoice-ids="[form.id]"
+        :guest="!!form.is_quick" @paid="reload" />
     </template>
   </q-page>
 </template>
@@ -205,6 +207,7 @@ function body() {
     discount_percent: form.value.discount_percent === '' ? null : form.value.discount_percent ?? null,
     discount_amount: form.value.discount_amount === '' ? null : form.value.discount_amount ?? null,
     comment: form.value.comment || '', appointment: form.value.appointment || null, visit: form.value.visit || null,
+    is_quick: !!form.value.is_quick,
     input_lines: form.value.lines.map((l) => (l.item_unit
       ? { item_unit: l.item_unit, quantity: l.quantity, price: Number(l.price) === Number(l.list_price) ? null : l.price, performer: l.performer || null }
       : { item: l.item, quantity: l.quantity, performer: l.performer || null })),
@@ -300,6 +303,11 @@ onMounted(async () => {
   if (props.id === 'new') {
     form.value = { client: route.query.client || null, client_name: route.query.client_name || '', pet: route.query.pet || null,
       doctor: null, discount_percent: null, discount_amount: null, comment: '', lines: [], subtotal: 0, discount_total: 0, total: 0 }
+    if (route.query.quick === '1') {
+      // Быстрый счёт: клиент — служебный «Гость», оплата сразу.
+      const guest = (await apiGet('billing/invoices/guest/')).data
+      Object.assign(form.value, { client: guest.id, client_name: guest.name, is_quick: true })
+    }
     if (form.value.client) await loadPets(form.value.client)
   } else {
     const { ok, data } = await apiGet(`billing/invoices/${props.id}/`)

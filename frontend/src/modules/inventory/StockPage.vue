@@ -7,8 +7,19 @@
     <q-tabs v-model="tab" dense align="left" no-caps active-color="primary" indicator-color="primary" class="q-mb-md">
       <q-tab name="stock" label="Остатки" />
       <q-tab name="low" label="Нужно заказать" />
+      <q-tab name="negative" :label="`В минусе${negative.length ? ` (${negative.length})` : ''}`" />
     </q-tabs>
     <LowStock v-if="tab === 'low'" :warehouses="warehouses" />
+    <template v-else-if="tab === 'negative'">
+      <div class="text-caption text-grey-7 q-mb-sm">Продано больше, чем оприходовано. Минус закроется следующим приходом — оформите его.</div>
+      <q-list bordered separator class="rounded-borders">
+        <q-item v-for="r in negative" :key="r.item + r.warehouse_name">
+          <q-item-section>{{ r.item_name }}<q-item-label caption>{{ r.warehouse_name }}</q-item-label></q-item-section>
+          <q-item-section side class="text-negative text-weight-medium">{{ Number(r.qty) }} {{ r.unit }}</q-item-section>
+        </q-item>
+        <q-item v-if="!negative.length"><q-item-section class="text-grey-7">Минусов нет</q-item-section></q-item>
+      </q-list>
+    </template>
     <template v-else>
     <div class="row q-col-gutter-sm q-mb-md items-center">
       <q-input v-model="search" dense outlined clearable debounce="300" placeholder="Товар или артикул" class="col-12 col-md-4"
@@ -36,7 +47,8 @@ import { useRoute } from 'vue-router'
 import LowStock from './LowStock.vue'
 
 const route = useRoute()
-const tab = ref(route.query.tab === 'low' ? 'low' : 'stock')
+const tab = ref(['low', 'negative'].includes(route.query.tab) ? route.query.tab : 'stock')
+const negative = ref([])
 const rows = ref([])
 const totals = ref({ cost: 0 })
 const loading = ref(false)
@@ -73,6 +85,7 @@ async function load() {
 }
 
 onMounted(async () => {
+  apiGet('inventory/stock/negative/').then(({ data }) => (negative.value = data ?? []))
   warehouses.value = (await apiGet('inventory/warehouses/?active=true')).data ?? []
   load()
 })

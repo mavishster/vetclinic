@@ -255,3 +255,40 @@ def test_update_details_of_executed_invoice(client_, service) -> None:
 
     assert refresh(inv).doctor == other
     assert line.__class__.objects.get(pk=line.pk).performer == other
+
+
+def test_guest_quick_invoice_must_be_paid_in_full(service, cash) -> None:
+    guest = clients.guest_client()
+    assert clients.guest_client().pk == guest.pk  # один на клинику
+    inv = invoice(guest, service)
+
+    with pytest.raises(CashError, match="полностью"):
+        services.pay(
+            {
+                "client": guest,
+                "invoice_ids": [inv.pk],
+                "cash_register": cash,
+                "cash_received": D("500"),
+            }
+        )
+    with pytest.raises(CashError, match="сдачу нужно выдать"):
+        services.pay(
+            {
+                "client": guest,
+                "invoice_ids": [inv.pk],
+                "cash_register": cash,
+                "cash_received": D("1500"),
+                "change_to_balance": True,
+            }
+        )
+    payment = services.pay(
+        {
+            "client": guest,
+            "invoice_ids": [inv.pk],
+            "cash_register": cash,
+            "cash_received": D("2000"),
+        }
+    )
+
+    assert payment.change_given == D("1000.00")
+    assert refresh(inv).payment_status == "paid"

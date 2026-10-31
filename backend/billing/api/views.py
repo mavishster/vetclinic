@@ -109,6 +109,7 @@ class InvoiceSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "discount_total",
             "total",
             "paid_amount",
+            "is_quick",
             "unpaid",
             "payment_status",
             "client_credit",
@@ -206,6 +207,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     @action(detail=True, methods=["post"])
     def rollback(self, request: Request, pk: str | None = None) -> Response:
         return self._run(core.rollback_document)
+
+    @action(detail=False, methods=["get"])
+    def guest(self, request: Request) -> Response:
+        """Служебный клиент «Гость» для быстрого счёта."""
+        guest = clients.guest_client()
+        return Response({"id": str(guest.pk), "name": guest.full_name})
 
     @action(detail=False, methods=["get"])
     def credit(self, request: Request) -> Response:

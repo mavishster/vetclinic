@@ -8,7 +8,7 @@
 
       <q-card-section class="q-pt-none">
         <div class="text-subtitle2">{{ clientName }}</div>
-        <div class="text-caption" :class="Number(money_.balance) < 0 ? 'text-negative' : 'text-grey-7'">
+        <div v-if="!guest" class="text-caption" :class="Number(money_.balance) < 0 ? 'text-negative' : 'text-grey-7'">
           Баланс: {{ money(money_.balance) }}{{ Number(money_.credit) > 0 ? ` · аванс к зачёту ${money(money_.credit)}` : '' }}
         </div>
       </q-card-section>
@@ -48,9 +48,11 @@
         <div v-if="!advanceOnly" class="q-mt-sm">
           <div v-if="change > 0" class="row items-center">
             <div class="text-h6 col">Сдача: {{ money(change) }}</div>
-            <q-checkbox v-model="changeToBalance" label="Оставить на балансе (аванс)" dense />
+            <q-checkbox v-if="!guest" v-model="changeToBalance" label="Оставить на балансе (аванс)" dense />
           </div>
-          <div v-else-if="short > 0" class="text-warning">Не хватает {{ money(short) }} — останется долгом.</div>
+          <div v-else-if="short > 0" :class="guest ? 'text-negative' : 'text-warning'">
+            Не хватает {{ money(short) }}{{ guest ? ' — быстрый счёт оплачивается полностью' : ' — останется долгом' }}.
+          </div>
         </div>
         <div v-if="error" class="text-negative q-mt-sm">{{ error }}</div>
       </q-card-section>
@@ -78,6 +80,7 @@ const props = defineProps({
   clientName: { type: String, default: '' },
   invoiceIds: { type: Array, default: () => [] }, // отмеченные заранее (из счёта)
   advanceOnly: { type: Boolean, default: false }, // внесение аванса без счетов
+  guest: { type: Boolean, default: false }, // быстрый счёт: без долга и без аванса
 })
 const emit = defineEmits(['update:modelValue', 'paid'])
 const $q = useQuasar()
@@ -117,6 +120,8 @@ watch(() => props.modelValue, async (open) => {
   registers.value = regs.data ?? []
   money_.value = credit.data ?? { balance: 0, credit: 0 }
   invoices.value = unpaid.data?.results ?? []
+  // «Гость» общий для всех быстрых счетов — показываем только этот счёт.
+  if (props.guest) invoices.value = invoices.value.filter((i) => props.invoiceIds.includes(i.id))
   selected.value = props.invoiceIds.length ? [...props.invoiceIds] : invoices.value.map((i) => i.id)
   cashRegister.value = registers.value.find((r) => r.kind === 'cash')?.id ?? null
   cardRegister.value = registers.value.find((r) => r.kind === 'cashless')?.id ?? null

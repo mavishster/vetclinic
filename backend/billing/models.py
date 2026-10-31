@@ -70,6 +70,7 @@ class Invoice(Document):
     subtotal = MoneyField("сумма без скидки", default=Decimal("0"))
     discount_total = MoneyField("скидка итого", default=Decimal("0"))
     total = MoneyField("к оплате", default=Decimal("0"))
+    is_quick = models.BooleanField("быстрый счёт", default=False)
     # Сколько оплачено (сумма распределений оплат) — для статуса «оплачен / частично / долг».
     paid_amount = MoneyField("оплачено", default=Decimal("0"))
 

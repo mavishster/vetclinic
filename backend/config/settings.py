@@ -124,6 +124,11 @@ MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 
 # Максимальный размер прикрепляемого файла (сканы, снимки, PDF).
 ATTACHMENT_MAX_MB = int(os.environ.get("ATTACHMENT_MAX_MB", "25"))
+
+# Продажа в минус: счёт выполняется, даже если товара по учёту не хватает (решение клиники).
+# Недостающее списывается с последней партии (её цена — себестоимость), остаток уходит
+# в минус и закрывается следующим приходом (ADR-009).
+ALLOW_NEGATIVE_STOCK = os.environ.get("ALLOW_NEGATIVE_STOCK", "1") == "1"
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 
 # Для собственных моделей ключи будут UUID (ADR-002, этап 1);

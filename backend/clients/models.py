@@ -146,6 +146,8 @@ class Client(ClinicScopedModel):
     status = models.CharField(
         "статус", max_length=16, choices=Status.choices, default=Status.ACTIVE, db_index=True
     )
+    # Служебный клиент «Гость» — для быстрых счетов без карточки (один на клинику).
+    is_guest = models.BooleanField("гость", default=False, editable=False)
 
     class Meta:
         verbose_name = "клиент"

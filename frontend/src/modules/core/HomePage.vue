@@ -2,7 +2,7 @@
   <q-page padding class="home">
     <h1 class="text-h5 q-mt-none q-mb-md">Здравствуйте, {{ firstName }}!</h1>
     <div v-if="stock" class="row q-col-gutter-md q-mb-lg">
-      <div v-for="card in stockCards" :key="card.title" class="col-12 col-sm-4">
+      <div v-for="card in stockCards" :key="card.title" class="col-12 col-sm-6 col-md-3">
         <q-card flat bordered class="cursor-pointer" @click="$router.push(card.to)">
           <q-card-section class="row items-center no-wrap">
             <q-icon :name="card.icon" :color="card.count ? card.color : 'grey-5'" size="36px" class="q-mr-md" />
@@ -38,6 +38,7 @@ const stockCards = computed(() => [
   { title: 'партий с истёкшим сроком', count: stock.value.expired, icon: 'dangerous', color: 'negative', to: '/inventory/stock?expiring=1' },
   { title: 'партий истекает за 90 дней', count: stock.value.expiring, icon: 'schedule', color: 'warning', to: '/inventory/stock?expiring=1' },
   { title: 'товаров ниже минимума', count: stock.value.low, icon: 'production_quantity_limits', color: 'primary', to: '/inventory/stock?tab=low' },
+  { title: 'товаров в минусе — нужен приход', count: stock.value.negative, icon: 'remove_circle', color: 'negative', to: '/inventory/stock?tab=negative' },
 ])
 const firstName = computed(() => session.user?.full_name.split(' ')[1] || session.user?.username)
 

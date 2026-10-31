@@ -371,3 +371,18 @@ def pay(client: Any, amount: Decimal, source: Any) -> None:
 
 def current_owner_id(pet_id: Any) -> Any:
     return Pet.objects.filter(pk=pet_id).values_list("owner_id", flat=True).first()
+
+
+def guest_client() -> Client:
+    """Служебный клиент «Гость» для быстрых счетов: создаётся при первом обращении."""
+    guest = Client.objects.filter(is_guest=True).first()
+    if guest is None:
+        guest = Client(
+            last_name="Гость", is_guest=True, description="Служебный клиент для быстрых счетов"
+        )
+        guest.save()
+    return guest
+
+
+def is_guest(client: Any) -> bool:
+    return Client.objects.filter(pk=getattr(client, "pk", client), is_guest=True).exists()

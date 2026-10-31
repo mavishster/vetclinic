@@ -149,7 +149,7 @@ def test_min_stock_and_summary(drug, main) -> None:
     assert [(r["item_name"], r["qty"], r["min_qty"]) for r in low] == [
         ("Витамины", D("5"), D("10"))
     ]
-    assert services.summary() == {"expired": 1, "expiring": 1, "low": 1}
+    assert services.summary() == {"expired": 1, "expiring": 1, "low": 1, "negative": 0}
     services.set_min_stock(drug, D("0"))
     assert services.low_stock() == []
     with pytest.raises(StockError):

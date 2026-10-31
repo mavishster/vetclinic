@@ -162,6 +162,11 @@ def pay(data: PaymentData) -> Payment:
     card = _money(Decimal(str(data.get("card_amount") or 0)))
     if card > due and invoice_ids:
         raise CashError("Безналом нельзя заплатить больше, чем к оплате — сдачу с карты не выдают.")
+    guest = clients.is_guest(client)
+    if guest and received + card < due:
+        raise CashError("Быстрый счёт оплачивается полностью — у гостя не бывает долга.")
+    if guest and data.get("change_to_balance"):
+        raise CashError("У гостя нет баланса — сдачу нужно выдать.")
     change = (
         ZERO
         if data.get("change_to_balance") or not invoice_ids

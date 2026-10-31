@@ -160,7 +160,8 @@ def test_execute_writes_off_stock_records_cost_and_debt(client_, vial, visit_ser
     assert clients.balance(client_) == D("-3100.00")
 
 
-def test_not_enough_stock_is_explained(client_, vial) -> None:
+def test_not_enough_stock_is_explained_when_negative_forbidden(client_, vial, settings) -> None:
+    settings.ALLOW_NEGATIVE_STOCK = False
     invoice = make(client_, [{"item_unit": vial, "quantity": D("20")}])
 
     with pytest.raises(InvoiceError, match="Не хватает «Фелиферон».*Оформите приход"):
@@ -224,3 +225,31 @@ def test_revenue_by_performer(client_, visit_service, doctor) -> None:
         ("Сидорова", D("1200.00")),
         ("Иванова", D("1000.00")),
     ]
+
+
+def test_negative_sale_uses_last_batch_cost_and_receipt_closes_it(client_, vial) -> None:
+    # на складе 10 фл. по 400; продаём 12
+    invoice = core.execute_document(make(client_, [{"item_unit": vial, "quantity": D("12")}]))
+
+    item = vial.item
+    assert inventory.available(item) == D("-2")
+    assert invoice.lines.get().cost == D("4800.00")  # 12 × 400 — по цене последней партии
+    assert [r["qty"] for r in inventory.negative_stock()] == [D("-2")]
+
+    receipt = inventory.save_document(
+        StockDocument(kind="receipt", warehouse=Warehouse.objects.get(name="Основной склад")),
+        [{"item_unit": item.units.get(unit__name="упак."), "quantity": D("1"), "price": D("2500")}],
+    )
+    core.execute_document(receipt)
+
+    assert inventory.available(item) == D("3")
+    assert inventory.negative_stock() == []
+    assert [s.qty for s in inventory.batch_stock(item)] == [D("3")]  # минус закрыт новой партией
+
+
+def test_rollback_of_negative_sale_returns_stock(client_, vial) -> None:
+    invoice = core.execute_document(make(client_, [{"item_unit": vial, "quantity": D("12")}]))
+
+    core.rollback_document(invoice)
+
+    assert inventory.available(vial.item) == D("10")

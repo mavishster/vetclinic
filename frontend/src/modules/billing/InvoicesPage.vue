@@ -2,6 +2,9 @@
   <q-page padding>
     <div class="row items-center q-mb-md q-gutter-sm">
       <h1 class="text-h5 q-my-none col-grow">Счета</h1>
+      <q-btn v-if="can('billing.add_invoice')" outline color="primary" icon="bolt" label="Быстрый счёт" to="/invoices/new?quick=1">
+        <q-tooltip>Продажа без карточки клиента — на «Гостя», с оплатой сразу</q-tooltip>
+      </q-btn>
       <q-btn v-if="can('billing.add_invoice')" color="primary" unelevated icon="add" label="Новый счёт" to="/invoices/new" />
     </div>
     <div class="row q-col-gutter-sm q-mb-md items-center">
