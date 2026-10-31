@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Any
 
-from django.db.models import Q, QuerySet
+from django.db.models import F, Q, QuerySet
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import serializers, viewsets
@@ -68,6 +68,9 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
 
 
 class InvoiceSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+    unpaid = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    payment_status = serializers.CharField(read_only=True)
+    client_credit = serializers.SerializerMethodField()
     lines = LineSerializer(many=True, read_only=True)
     input_lines = serializers.ListField(
         child=serializers.DictField(), write_only=True, required=False
@@ -105,6 +108,10 @@ class InvoiceSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "subtotal",
             "discount_total",
             "total",
+            "paid_amount",
+            "unpaid",
+            "payment_status",
+            "client_credit",
             "comment",
             "lines",
             "input_lines",
@@ -117,8 +124,13 @@ class InvoiceSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "subtotal",
             "discount_total",
             "total",
+            "paid_amount",
             "executed_at",
         ]
+
+    def get_client_credit(self, invoice: Invoice) -> str:
+        """Нераспределённые деньги клиента (аванс) — пойдут в оплату."""
+        return str(services.client_credit(invoice.client_id))
 
     def get_client_balance(self, invoice: Invoice) -> str:
         return str(clients.balance(invoice.client_id))
@@ -163,6 +175,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             queryset = queryset.filter(
                 Q(number__icontains=search) | Q(client__last_name__icontains=search)
             )
+        if params.get("unpaid", "").lower() in {"1", "true"}:
+            queryset = queryset.filter(status=Invoice.Status.EXECUTED, paid_amount__lt=F("total"))
         if params.get("from"):
             queryset = queryset.filter(date__date__gte=params["from"])
         if params.get("to"):
@@ -192,6 +206,33 @@ class InvoiceViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     @action(detail=True, methods=["post"])
     def rollback(self, request: Request, pk: str | None = None) -> Response:
         return self._run(core.rollback_document)
+
+    @action(detail=False, methods=["get"])
+    def credit(self, request: Request) -> Response:
+        """Деньги клиента: ?client= → баланс (+ аванс / − долг) и нераспределённое (аванс)."""
+        client = request.query_params.get("client")
+        if not client:
+            raise ValidationError({"client": ["Укажите клиента."]})
+        return Response(
+            {"balance": str(clients.balance(client)), "credit": str(services.client_credit(client))}
+        )
+
+    @action(detail=True, methods=["patch"])
+    def details(self, request: Request, pk: str | None = None) -> Response:
+        """Выполненный счёт: поправить врача, питомца, исполнителей строк — без отката.
+        {"doctor": id|null, "pet": id|null, "performers": {"<id строки>": id|null}}"""
+        invoice = self.get_object()
+        kwargs: dict[str, Any] = {}
+        for field in ("doctor", "pet"):
+            if field in request.data:
+                kwargs[field] = request.data.get(field) or None
+        try:
+            services.update_details(
+                invoice, performers=request.data.get("performers") or {}, **kwargs
+            )
+        except (services.InvoiceError, DocumentError) as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+        return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=False, methods=["post"], url_path="from-visit")
     def from_visit(self, request: Request) -> Response:

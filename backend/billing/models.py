@@ -70,10 +70,28 @@ class Invoice(Document):
     subtotal = MoneyField("сумма без скидки", default=Decimal("0"))
     discount_total = MoneyField("скидка итого", default=Decimal("0"))
     total = MoneyField("к оплате", default=Decimal("0"))
+    # Сколько оплачено (сумма распределений оплат) — для статуса «оплачен / частично / долг».
+    paid_amount = MoneyField("оплачено", default=Decimal("0"))
+
+    # Без отката можно поправить: врача, питомца и оплаченную сумму (её меняет касса).
+    mutable_after_execution = ("doctor", "pet", "paid_amount")
 
     class Meta(Document.Meta):
         verbose_name = "счёт"
         verbose_name_plural = "счета"
+
+    @property
+    def unpaid(self) -> Decimal:
+        rest: Decimal = self.total - self.paid_amount
+        return max(rest, Decimal("0"))
+
+    @property
+    def payment_status(self) -> str:
+        if not self.is_executed:
+            return "draft"
+        if self.paid_amount <= 0:
+            return "debt" if self.total > 0 else "paid"
+        return "paid" if self.paid_amount >= self.total else "partial"
 
     def on_execute(self) -> None:
         from billing import services
@@ -143,3 +161,24 @@ class InvoiceLineBatch(models.Model):
 
     def __str__(self) -> str:
         return f"{self.line}: {self.batch} × {self.qty_base}"
+
+
+class InvoicePayment(models.Model):
+    """Распределение оплаты на счёт: какая сумма какой оплатой (или зачётом аванса) покрыта.
+
+    payment_id — документ оплаты кассы (без внешнего ключа: касса — соседний модуль);
+    пусто — зачёт аванса клиента. Деньги считает журнал баланса клиента, а эта таблица
+    отвечает на вопрос «какие счета оплачены».
+    """
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="payments")
+    amount = MoneyField("сумма")
+    payment_id = models.UUIDField("оплата", null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        default_permissions = ()  # часть счёта
+        ordering = ["created_at", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.invoice}: {self.amount}"

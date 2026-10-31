@@ -16,7 +16,7 @@
       :rows-per-page-options="[25, 50, 100]" no-data-label="Счетов нет" rows-per-page-label="Строк на странице"
       @request="onRequest" @row-click="(e, row) => $router.push(`/invoices/${row.id}`)">
       <template #body-cell-status="props">
-        <q-td :props="props"><q-badge :color="props.row.status === 'executed' ? 'positive' : 'grey-6'" :label="props.row.status_label" /></q-td>
+        <q-td :props="props"><q-badge :color="PAY[props.row.payment_status].color" :label="PAY[props.row.payment_status].label" /></q-td>
       </template>
     </q-table>
   </q-page>
@@ -32,6 +32,12 @@ const rows = ref([])
 const loading = ref(false)
 const search = ref('')
 const status = ref('')
+const PAY = {
+  paid: { label: 'оплачен', color: 'positive' },
+  partial: { label: 'частично', color: 'warning' },
+  debt: { label: 'долг', color: 'negative' },
+  draft: { label: 'черновик', color: 'grey-6' },
+}
 const from = ref('')
 const to = ref('')
 const pagination = ref({ page: 1, rowsPerPage: 50, rowsNumber: 0 })

@@ -7,7 +7,15 @@ class BillingConfig(AppConfig):
 
     def ready(self) -> None:
         from billing import services
+        from billing.models import Invoice
+        from core.events import document_executed
         from core.printing import register_kind
+
+        def use_advance(sender, document, **kwargs):  # type: ignore[no-untyped-def]
+            # Аванс клиента сразу оплачивает новый счёт (как в VetManager).
+            services.allocate_credit(document.client_id, [document.pk])
+
+        document_executed.connect(use_advance, sender=Invoice, dispatch_uid="billing_use_advance")
 
         register_kind(
             "invoice",

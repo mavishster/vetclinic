@@ -181,3 +181,21 @@ def test_document_history_is_recorded(doc) -> None:
     statuses = [h.status for h in doc.history.order_by("history_date")]
 
     assert statuses == ["draft", "executed"]
+
+
+@pytest.mark.django_db
+def test_executed_document_allows_only_declared_fields(monkeypatch) -> None:
+    from core.tests.testapp.models import SampleDocument
+
+    doc = services.execute_document(
+        SampleDocument.objects.create(comment="x", amount=Decimal("10"))
+    )
+    monkeypatch.setattr(SampleDocument, "mutable_after_execution", ("comment",))
+
+    doc.comment = "поправили"
+    doc.save(update_fields=["comment"])
+    assert SampleDocument.objects.get(pk=doc.pk).comment == "поправили"
+
+    with pytest.raises(DocumentError):
+        doc.date = doc.date
+        doc.save()  # без update_fields — нельзя

@@ -5,16 +5,21 @@
       <div class="row items-center q-gutter-sm q-mb-md">
         <q-btn flat round dense icon="arrow_back" @click="$router.back()" />
         <h1 class="text-h5 q-my-none">Счёт{{ form.number ? ` № ${form.number}` : '' }}</h1>
-        <q-badge v-if="form.id" :color="executed ? 'positive' : 'grey-6'" :label="executed ? 'выполнен' : 'черновик'" />
+        <q-badge v-if="form.id" :color="PAY[form.payment_status]?.color || 'grey-6'" :label="PAY[form.payment_status]?.label || 'черновик'" />
+        <span v-if="executed && form.payment_status === 'partial'" class="text-caption">оплачено {{ money(form.paid_amount) }}</span>
         <q-space />
         <q-btn v-if="form.id" flat icon="print" label="Печать" @click="print" />
         <template v-if="!executed && canEdit">
           <q-btn v-if="form.id && can('billing.delete_invoice')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
           <q-btn outline color="primary" icon="save" label="Сохранить" :loading="busy === 'save'" @click="save()" />
-          <q-btn color="positive" unelevated icon="task_alt" label="Выполнить (в долг)" :loading="busy === 'execute'" @click="execute">
-            <q-tooltip>Товар спишется со склада, сумма встанет долгом на баланс клиента. Оплата — вместе с кассой.</q-tooltip>
+          <q-btn outline color="positive" icon="schedule" label="В долг" :loading="busy === 'execute'" @click="execute()">
+            <q-tooltip>Выполнить без оплаты: товар спишется, сумма встанет долгом на баланс клиента</q-tooltip>
           </q-btn>
+          <q-btn v-if="can('cash.add_payment')" color="positive" unelevated icon="payments" label="Оплатить" :loading="busy === 'pay'"
+            @click="execute(true)" />
         </template>
+        <q-btn v-if="executed && Number(form.unpaid) > 0 && can('cash.add_payment')" color="positive" unelevated icon="payments"
+          label="Оплатить" @click="payOpen = true" />
         <q-btn v-if="executed && canEdit" outline color="warning" icon="undo" label="Откатить в черновик" :loading="busy === 'rollback'" @click="rollback" />
       </div>
 
@@ -29,9 +34,10 @@
           </div>
         </div>
         <q-select v-model="form.pet" :options="pets" option-value="id" option-label="label" emit-value map-options outlined dense clearable
-          label="Питомец" class="col-6 col-md-2" :readonly="executed" />
+          label="Питомец" class="col-6 col-md-2" :readonly="executed && !canEdit" @update:model-value="(v) => executed && details({ pet: v })" />
         <q-select v-model="form.doctor" :options="performers" option-value="id" option-label="name" emit-value map-options outlined dense
-          clearable label="Врач" class="col-6 col-md-2" :readonly="executed" hint="По умолчанию — исполнитель строк" />
+          clearable label="Врач" class="col-6 col-md-2" :readonly="executed && !canEdit" hint="По умолчанию — исполнитель строк"
+          @update:model-value="(v) => executed && details({ doctor: v })" />
         <q-input v-model="form.discount_percent" type="number" step="0.5" min="0" max="100" outlined dense clearable label="Скидка, %"
           class="col-6 col-md-2" :readonly="executed" :disable="!!form.discount_amount"
           :hint="!form.discount_percent && !form.discount_amount && Number(form.client_discount) ? `из карточки: ${Number(form.client_discount)} %` : ''" />
@@ -69,7 +75,8 @@
               <td class="text-right text-weight-medium">{{ money(lineAmount(line)) }}</td>
               <td style="min-width: 150px">
                 <q-select v-model="line.performer" :options="performers" option-value="id" option-label="name" emit-value map-options dense
-                  borderless clearable :readonly="executed" placeholder="—" />
+                  borderless clearable :readonly="executed && !canEdit" placeholder="—"
+                  @update:model-value="(v) => executed && details({ performers: { [line.id]: v } })" />
               </td>
               <td class="text-right"><q-btn v-if="!executed" flat round dense size="sm" icon="close" @click="form.lines.splice(i, 1)" /></td>
             </tr>
@@ -85,17 +92,23 @@
           <div>Сумма: {{ money(form.subtotal) }}</div>
           <div v-if="Number(form.discount_total)">Скидка: −{{ money(form.discount_total) }}</div>
           <div class="text-h6">К оплате: {{ money(form.total) }}</div>
+          <div v-if="executed && Number(form.paid_amount)">Оплачено: {{ money(form.paid_amount) }}</div>
+          <div v-if="executed && Number(form.unpaid)" class="text-negative">Долг по счёту: {{ money(form.unpaid) }}</div>
           <div v-if="dirty && !executed" class="text-caption text-warning">Итоги со скидкой пересчитаются при сохранении</div>
         </div>
       </div>
       <div v-if="error" class="text-negative q-mt-sm">{{ error }}</div>
+      <div v-if="executed && canEdit" class="text-caption text-grey-7 q-mt-sm">
+        Врача, питомца и исполнителей в выполненном счёте можно поменять без отката — изменение запишется в журнал.
+      </div>
+      <PaymentDialog v-model="payOpen" :client-id="form.client" :client-name="form.client_name" :invoice-ids="[form.id]" @paid="reload" />
     </template>
   </q-page>
 </template>
 
 <script setup>
 // Счёт: строки услуг, товаров и комбинаций; цена в границах мин./макс.; исполнитель в строке;
-// скидка на весь счёт. «Выполнить» списывает товар со склада и ставит сумму долгом клиенту.
+// скидка на весь счёт. «Оплатить» — выполнить и сразу принять оплату; «В долг» — без оплаты.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
@@ -103,6 +116,8 @@ import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import { money } from '@/modules/catalog/money'
 import ClientSelect from '@/modules/clients/ClientSelect.vue'
+// Окно оплаты — модуль «Касса».
+import PaymentDialog from '@/modules/cash/PaymentDialog.vue'
 
 const props = defineProps({ id: { type: String, required: true } })
 const route = useRoute()
@@ -120,6 +135,13 @@ const barcode = ref('')
 const found = ref([])
 const picked = ref(null)
 const executed = computed(() => form.value.status === 'executed')
+const payOpen = ref(false)
+const PAY = {
+  paid: { label: 'оплачен', color: 'positive' },
+  partial: { label: 'оплачен частично', color: 'warning' },
+  debt: { label: 'долг', color: 'negative' },
+  draft: { label: 'черновик', color: 'grey-6' },
+}
 const balance = computed(() => (form.value.client_balance === undefined ? null : Number(form.value.client_balance)))
 
 const lineAmount = (line) => (dirty.value || line.amount === undefined ? (Number(line.price) || 0) * (Number(line.quantity) || 0) : Number(line.amount))
@@ -219,15 +241,34 @@ async function save(silent = false) {
   return true
 }
 
-async function execute() {
-  busy.value = 'execute'
+async function execute(andPay = false) {
+  busy.value = andPay ? 'pay' : 'execute'
   if (!(await save(true))) return (busy.value = '')
   const { ok, data } = await apiPost(`billing/invoices/${form.value.id}/execute/`)
   busy.value = ''
   if (!ok) return (error.value = Object.values(fieldErrors(data))[0] || 'Не удалось выполнить')
   applyInvoice(data)
-  if (props.id === 'new') router.replace(`/invoices/${data.id}`)
-  $q.notify({ type: 'positive', message: 'Счёт выполнен' })
+  // Новый счёт получает свой адрес — экран пересоздаётся, поэтому окно оплаты
+  // откроется уже на нём (по метке ?pay=1).
+  if (props.id === 'new') return router.replace({ path: `/invoices/${data.id}`, query: andPay && Number(data.unpaid) > 0 ? { pay: '1' } : {} })
+  if (andPay && Number(data.unpaid) > 0) payOpen.value = true
+  else $q.notify({ type: 'positive', message: Number(data.unpaid) ? 'Счёт выполнен — сумма встала долгом' : 'Счёт выполнен и оплачен авансом клиента' })
+}
+
+async function reload() {
+  const { ok, data } = await apiGet(`billing/invoices/${form.value.id}/`)
+  if (ok) applyInvoice(data)
+}
+
+// Выполненный счёт: врач, питомец, исполнители меняются без отката.
+async function details(changes) {
+  const { ok, data } = await apiPatch(`billing/invoices/${form.value.id}/details/`, changes)
+  if (!ok) {
+    $q.notify({ type: 'negative', message: Object.values(fieldErrors(data))[0] || 'Не удалось сохранить' })
+    return reload()
+  }
+  applyInvoice(data)
+  $q.notify({ type: 'positive', message: 'Изменение сохранено' })
 }
 
 async function rollback() {
@@ -263,6 +304,7 @@ onMounted(async () => {
   } else {
     const { ok, data } = await apiGet(`billing/invoices/${props.id}/`)
     if (ok) applyInvoice(data)
+    if (ok && route.query.pay === '1' && Number(data.unpaid) > 0) payOpen.value = true
   }
   loading.value = false
 })

@@ -362,3 +362,12 @@ def balance(client: Any) -> Decimal:
 
     total = ClientLedger.objects.filter(client=client).aggregate(total=Sum("amount"))["total"]
     return -(total or Decimal("0"))
+
+
+def pay(client: Any, amount: Decimal, source: Any) -> None:
+    """Оплата или аванс от клиента — баланс уменьшается (долг гасится, растёт аванс)."""
+    charge(client, -amount, source)
+
+
+def current_owner_id(pet_id: Any) -> Any:
+    return Pet.objects.filter(pk=pet_id).values_list("owner_id", flat=True).first()

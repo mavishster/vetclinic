@@ -11,10 +11,10 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, TypedDict
 
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, F, QuerySet, Sum
 from django.utils import timezone
 
-from billing.models import Invoice, InvoiceLine, InvoiceLineBatch
+from billing.models import Invoice, InvoiceLine, InvoiceLineBatch, InvoicePayment
 from catalog import services as catalog
 from catalog.models import Item, Kind
 from clients import services as clients
@@ -266,14 +266,23 @@ def execute_invoice(invoice: Invoice) -> None:
         header.cost = sum((c.cost for c in leaves if c.parent_id == header.pk), ZERO)
         header.save(update_fields=["cost"])
     clients.charge(invoice.client_id, invoice.total, invoice)
+    invoice.paid_amount = ZERO
+    # Аванс клиента идёт в оплату нового счёта — по событию «выполнен» (см. apps.py),
+    # когда счёт уже в статусе «выполнен».
 
 
 def rollback_invoice(invoice: Invoice) -> None:
-    """Откат в черновик: товар — обратно на склад, начисление клиенту — снять."""
+    """Откат в черновик: товар — обратно на склад, начисление клиенту — снять.
+
+    Оплаты по счёту никуда не пропадают: деньги остаются на балансе клиента авансом —
+    исправленный счёт оплатится из него, или аванс вернут деньгами.
+    """
     inventory.reverse(invoice)
     clients.reverse_charges(invoice)
     InvoiceLineBatch.objects.filter(line__invoice=invoice).delete()
     invoice.lines.update(cost=ZERO)
+    InvoicePayment.objects.filter(invoice=invoice).delete()
+    invoice.paid_amount = ZERO
 
 
 # --- Счёт из медкарты ----------------------------------------------------------------
@@ -518,3 +527,111 @@ def sample_print_context() -> dict[str, Any]:
             },
         ],
     }
+
+
+# --- Оплата счетов (для кассы) --------------------------------------------------------
+
+
+def unpaid_invoices(client: Any) -> QuerySet[Invoice]:
+    """Выполненные счета клиента, оплаченные не полностью — старые первыми."""
+    return (
+        Invoice.objects.filter(client=client, status=Invoice.Status.EXECUTED)
+        .filter(paid_amount__lt=F("total"))
+        .order_by("date", "number")
+    )
+
+
+def client_credit(client: Any) -> Decimal:
+    """Деньги клиента, ещё не распределённые на счета (аванс).
+
+    Журнал баланса = начислено по счетам − оплачено + возвращено. Нераспределённое =
+    неоплаченный остаток счетов − баланс журнала (см. PROJECT_PLAN, 6.6).
+    """
+    unpaid = sum((i.unpaid for i in unpaid_invoices(client)), ZERO)
+    return _money(unpaid + clients.balance(client))
+
+
+def _set_paid(invoice: Invoice) -> None:
+    paid = invoice.payments.aggregate(total=Sum("amount"))["total"] or ZERO
+    invoice.paid_amount = _money(paid)
+    invoice.save(update_fields=["paid_amount"])
+
+
+@transaction.atomic
+def allocate_credit(
+    client: Any, invoice_ids: list[Any] | None = None, payment_id: Any = None
+) -> Decimal:
+    """Распределить деньги клиента на неоплаченные счета: сначала указанные, затем — никакие
+    другие (если указаны) или все по порядку (если не указаны). Возвращает распределённое."""
+    credit = client_credit(client)
+    if credit <= 0:
+        return ZERO
+    invoices = list(unpaid_invoices(client))
+    if invoice_ids is not None:
+        wanted = {str(pk) for pk in invoice_ids}
+        invoices = [i for i in invoices if str(i.pk) in wanted]
+    allocated = ZERO
+    for invoice in invoices:
+        if credit <= 0:
+            break
+        amount = min(invoice.unpaid, credit)
+        if amount <= 0:
+            continue
+        InvoicePayment.objects.create(invoice=invoice, amount=amount, payment_id=payment_id)
+        _set_paid(invoice)
+        credit -= amount
+        allocated += amount
+    return allocated
+
+
+@transaction.atomic
+def release_payment(client: Any, payment_id: Any) -> None:
+    """Возврат оплаты: снять её распределения; если денег стало меньше, чем распределено
+    зачётами аванса, снять и их — с самых новых."""
+    touched = {p.invoice_id for p in InvoicePayment.objects.filter(payment_id=payment_id)}
+    InvoicePayment.objects.filter(payment_id=payment_id).delete()
+    for invoice in Invoice.objects.filter(pk__in=touched):
+        _set_paid(invoice)
+    while client_credit(client) < 0:
+        last = (
+            InvoicePayment.objects.filter(invoice__client=client)
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        if last is None:
+            break
+        shortage = -client_credit(client)
+        if last.amount > shortage:
+            last.amount -= shortage
+            last.save(update_fields=["amount"])
+        else:
+            last.delete()
+        _set_paid(last.invoice)
+
+
+@transaction.atomic
+def update_details(
+    invoice: Invoice,
+    doctor: Any = ...,
+    pet: Any = ...,
+    performers: dict[str, Any] | None = None,
+) -> Invoice:
+    """Поправить в выполненном счёте врача, питомца и исполнителей строк — без отката.
+
+    Это не меняет денег и остатков, а каждое изменение остаётся в журнале аудита.
+    """
+    fields = []
+    if doctor is not ...:
+        invoice.doctor_id = getattr(doctor, "pk", doctor)
+        fields.append("doctor")
+    if pet is not ...:
+        pet_id = getattr(pet, "pk", pet)
+        if pet_id and clients.current_owner_id(pet_id) != invoice.client_id:
+            raise InvoiceError("Питомец принадлежит другому клиенту.")
+        invoice.pet_id = pet_id
+        fields.append("pet")
+    if fields:
+        invoice.save(update_fields=fields)
+    for line_id, user in (performers or {}).items():
+        invoice.lines.filter(pk=line_id).update(performer_id=getattr(user, "pk", user))
+    return invoice

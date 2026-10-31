@@ -301,6 +301,9 @@ class Document(BaseModel):
 
     doc_type: str = ""
     # Статус, прочитанный из базы, и разрешение сменить статус (только из сервисов ядра).
+    # Поля, которые можно менять в выполненном документе без отката (не влияют на деньги
+    # и остатки). Пусто — менять нельзя ничего.
+    mutable_after_execution: tuple[str, ...] = ()
     _stored_status: str | None = None
     _status_change: bool = False
 
@@ -337,7 +340,11 @@ class Document(BaseModel):
 
             self.number = next_number(self.doc_type)
         if self._stored_status == self.Status.EXECUTED and not self._status_change:
-            raise DocumentError("Выполненный документ нельзя изменить. Сначала сделайте откат.")
+            # Без отката можно менять только «нефинансовые» поля, перечисленные документом
+            # (например, врача в счёте), и только явным update_fields — изменение пишется в аудит.
+            changed = set(kwargs.get("update_fields") or [])
+            if not changed or not changed <= set(self.mutable_after_execution):
+                raise DocumentError("Выполненный документ нельзя изменить. Сначала сделайте откат.")
         super().save(*args, **kwargs)
         self._stored_status = self.status
 
