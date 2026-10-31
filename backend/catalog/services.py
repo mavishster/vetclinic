@@ -13,6 +13,7 @@ from django.db import transaction
 from django.db.models import F, Q, QuerySet
 
 from catalog.models import CombinationLine, Item, ItemUnit, Kind, Unit
+from core import services as core
 
 D = Decimal
 
@@ -404,3 +405,31 @@ def base_item_unit(item: Any) -> ItemUnit | None:
     """Единица товара, совпадающая с единицей учёта (коэффициент 1), иначе — первая."""
     units = ItemUnit.objects.select_related("item", "unit").filter(item=item)
     return units.filter(unit_id=F("item__base_unit_id")).first() or units.order_by("ratio").first()
+
+
+def _ean13_check_digit(first12: str) -> str:
+    total = sum(int(d) * (3 if i % 2 else 1) for i, d in enumerate(first12))
+    return str((10 - total % 10) % 10)
+
+
+def ensure_barcode(item_unit: ItemUnit) -> str:
+    """Штрихкод единицы для этикетки: свой или внутренний EAN-13.
+
+    Внутренние коды начинаются с «20» — этот диапазон EAN-13 отведён для кодов внутри
+    организации и не пересекается с кодами производителей. Код сохраняется в единице —
+    при сканировании этикетки товар найдётся.
+    """
+    if item_unit.barcode:
+        return item_unit.barcode
+    while True:
+        first12 = f"20{core.next_value('internal_barcode'):010d}"
+        code = first12 + _ean13_check_digit(first12)
+        taken = (
+            ItemUnit.objects.filter(barcode=code).exists()
+            or Item.objects.filter(barcode=code).exists()
+        )
+        if not taken:
+            break
+    item_unit.barcode = code
+    item_unit.save(update_fields=["barcode"])
+    return code

@@ -3,6 +3,7 @@
     <div class="row items-center q-mb-md q-gutter-sm">
       <h1 class="text-h5 q-my-none col-grow">Документы склада</h1>
       <template v-if="can('inventory.add_stockdocument')">
+        <q-btn flat color="primary" icon="upload_file" label="Импорт остатков" @click="importOpen = true" />
         <q-btn v-for="(kind, code) in DOC_KINDS" :key="code" :color="kind.color" unelevated :icon="kind.icon"
           :label="kind.label" @click="$router.push(`/inventory/documents/new?kind=${code}`)" />
       </template>
@@ -25,6 +26,7 @@
         <q-td :props="props"><q-badge :color="props.row.status === 'executed' ? 'positive' : 'grey-6'" :label="props.row.status_label" /></q-td>
       </template>
     </q-table>
+    <StockImportDialog v-model="importOpen" />
   </q-page>
 </template>
 
@@ -34,7 +36,9 @@ import { apiGet } from '@/api'
 import { can } from '@/session'
 import { money } from '@/modules/catalog/money'
 import { DOC_KINDS } from './routes'
+import StockImportDialog from './StockImportDialog.vue'
 
+const importOpen = ref(false)
 const rows = ref([])
 const loading = ref(false)
 const search = ref('')

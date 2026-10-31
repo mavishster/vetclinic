@@ -6,28 +6,35 @@ from django.db import IntegrityError, transaction
 from core.models import DocumentCounter
 
 
-def next_number(doc_type: str) -> str:
-    """Следующий номер документа данного типа на этом узле: «K1-000123».
+def next_value(counter_name: str) -> int:
+    """Следующее значение счётчика на этом узле (1, 2, 3…).
 
-    Счётчик блокируется на время транзакции — два документа не получат один номер.
+    Счётчик блокируется на время транзакции — два документа не получат одно значение.
     """
-    if not doc_type:
-        raise ValueError("У документа не задан doc_type.")
+    if not counter_name:
+        raise ValueError("Не задано имя счётчика.")
     node = settings.NODE_ID
     with transaction.atomic():
         counter = (
             DocumentCounter.objects.select_for_update()
-            .filter(doc_type=doc_type, node_id=node)
+            .filter(doc_type=counter_name, node_id=node)
             .first()
         )
         if counter is None:
             try:
                 with transaction.atomic():
-                    counter = DocumentCounter.objects.create(doc_type=doc_type, node_id=node)
+                    counter = DocumentCounter.objects.create(doc_type=counter_name, node_id=node)
             except IntegrityError:  # счётчик только что создал параллельный запрос
                 counter = DocumentCounter.objects.select_for_update().get(
-                    doc_type=doc_type, node_id=node
+                    doc_type=counter_name, node_id=node
                 )
         counter.last_number += 1
         counter.save(update_fields=["last_number"])
-    return f"{node}-{counter.last_number:06d}"
+    return int(counter.last_number)
+
+
+def next_number(doc_type: str) -> str:
+    """Следующий номер документа данного типа на этом узле: «K1-000123»."""
+    if not doc_type:
+        raise ValueError("У документа не задан doc_type.")
+    return f"{settings.NODE_ID}-{next_value(doc_type):06d}"

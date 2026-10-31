@@ -5,6 +5,7 @@
         <q-card-section class="row items-center">
           <div class="text-h6 col">{{ title }}</div>
           <template v-if="form.id">
+            <q-btn v-if="isGoods" flat no-caps icon="qr_code_2" label="Этикетки" @click="labelsOpen = true" />
             <q-btn flat no-caps icon="layers" label="В комбинациях" @click="openCombos" />
             <q-btn v-if="isGoods" flat no-caps icon="unpublished" label="Убранные единицы" @click="openRemoved" />
             <q-btn flat no-caps icon="history" label="История цен" @click="openHistory" />
@@ -118,6 +119,23 @@
     </q-card>
   </q-dialog>
 
+  <q-dialog v-model="labelsOpen">
+    <q-card style="width: 420px; max-width: 95vw">
+      <q-card-section class="text-h6">Этикетки</q-card-section>
+      <q-card-section class="q-pt-none q-gutter-y-sm">
+        <div v-for="unit in form.units.filter((u) => u.id)" :key="unit.id" class="row items-center q-gutter-x-sm">
+          <div class="col">{{ units.find((x) => x.id === unit.unit)?.name }}<span v-if="unit.barcode" class="text-grey-7"> · {{ unit.barcode }}</span></div>
+          <q-input v-model.number="copies[unit.id]" type="number" min="0" dense outlined style="width: 90px" label="Копий" />
+        </div>
+        <div class="text-caption text-grey-7">Если у единицы нет штрихкода, система присвоит внутренний (начинается с «20») — сканер его узнает.</div>
+      </q-card-section>
+      <q-card-actions align="right">
+        <q-btn flat label="Отмена" v-close-popup />
+        <q-btn color="primary" unelevated icon="print" label="Печать" @click="printLabels" />
+      </q-card-actions>
+    </q-card>
+  </q-dialog>
+
   <q-dialog v-model="infoOpen">
     <q-card style="width: 520px; max-width: 95vw">
       <q-card-section class="text-h6">{{ info.title }}</q-card-section>
@@ -149,7 +167,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
-import { apiGet, apiPatch, apiPost, fieldErrors, existingByName } from '@/api'
+import { apiGet, apiPatch, apiPost, existingByName, fieldErrors, openPostedFile } from '@/api'
 import { can } from '@/session'
 import { money } from './money'
 import { PREVENTION_KINDS } from './routes'
@@ -177,6 +195,16 @@ const users = ref([])
 const history = ref([])
 const historyOpen = ref(false)
 const infoOpen = ref(false)
+const labelsOpen = ref(false)
+const copies = ref({})
+
+async function printLabels() {
+  const lines = Object.entries(copies.value).filter(([, n]) => Number(n) > 0).map(([id, n]) => ({ item_unit: id, copies: Number(n) }))
+  if (!lines.length) return $q.notify({ type: 'warning', message: 'Укажите, сколько этикеток напечатать' })
+  const { ok, data } = await openPostedFile('inventory/labels/', { lines })
+  if (!ok) return $q.notify({ type: 'negative', message: Object.values(fieldErrors(data || {}))[0] || 'Не удалось напечатать' })
+  labelsOpen.value = false
+}
 const info = ref({ title: '', rows: [], empty: '' })
 const canSeeUsers = can('core.view_user')
 

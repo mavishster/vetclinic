@@ -23,7 +23,7 @@ ignore_missing_imports = false
 
 [[tool.mypy.overrides]]
 # Библиотеки без аннотаций типов.
-module = ["simple_history.*", "weasyprint.*", "django_q.*", "openpyxl.*", "nh3.*"]
+module = ["simple_history.*", "weasyprint.*", "django_q.*", "openpyxl.*", "nh3.*", "barcode.*"]
 ignore_missing_imports = true
 
 [tool.django-stubs]

@@ -48,3 +48,25 @@ export function existingByName(list, name) {
   const needle = name.trim().toLowerCase()
   return list.find((item) => item.name.trim().toLowerCase() === needle)
 }
+
+// Запрос, ответ на который — файл (PDF этикеток и т. п.). Открывает его в новой вкладке.
+// Вкладка открывается сразу по нажатию, а файл подставляется, когда придёт: иначе браузер
+// (особенно Safari) примет её за всплывающее окно и заблокирует.
+export async function openPostedFile(path, body) {
+  const tab = window.open('', '_blank')
+  const response = await fetch(`/api/${path}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    tab?.close()
+    const data = await response.json().catch(() => null)
+    return { ok: false, data }
+  }
+  const url = URL.createObjectURL(await response.blob())
+  if (tab) tab.location.href = url
+  else window.location.href = url
+  return { ok: true }
+}

@@ -13,6 +13,9 @@
           <q-btn outline color="primary" icon="save" label="Сохранить черновик" :loading="busy === 'save'" @click="save()" />
           <q-btn color="positive" unelevated icon="task_alt" label="Выполнить" :loading="busy === 'execute'" @click="execute" />
         </template>
+        <q-btn v-if="form.id && form.lines.length" flat icon="qr_code_2" label="Этикетки" @click="printLabels">
+          <q-tooltip>Этикетки со штрихкодами на каждую строку — по количеству</q-tooltip>
+        </q-btn>
         <q-btn v-if="executed && canEdit" outline color="warning" icon="undo" label="Откатить" :loading="busy === 'rollback'" @click="rollback" />
       </div>
 
@@ -121,7 +124,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
-import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors, existingByName } from '@/api'
+import { apiDelete, apiGet, apiPatch, apiPost, existingByName, fieldErrors, openPostedFile } from '@/api'
 import { can } from '@/session'
 import { money } from '@/modules/catalog/money'
 import { DOC_KINDS } from './routes'
@@ -281,6 +284,12 @@ async function rollback() {
   if (!ok) return (error.value = Object.values(fieldErrors(data))[0] || 'Не удалось откатить')
   applyDocument(data)
   $q.notify({ type: 'positive', message: 'Документ откачен — снова черновик' })
+}
+
+async function printLabels() {
+  if (!executed.value && !(await save(true, false))) return
+  const { ok, data } = await openPostedFile('inventory/labels/', { document: form.value.id })
+  if (!ok) error.value = Object.values(fieldErrors(data || {}))[0] || 'Не удалось напечатать этикетки'
 }
 
 function remove() {

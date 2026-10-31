@@ -4,19 +4,21 @@ from decimal import Decimal
 from typing import Any
 
 from django.db.models import Q, QuerySet
+from django.http import HttpResponse
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from catalog import services as catalog
 from catalog.models import Item, Kind
 from core import services as core
 from core.api.directories import DirectoryViewSet
-from core.models import DocumentError
-from inventory import services
+from core.models import DocumentError, PrintTemplate
+from inventory import importing, labels, services
 from inventory.models import (
     Manufacturer,
     MinStock,
@@ -336,3 +338,85 @@ class MinStockViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
 
     serializer_class = MinStockSerializer
     queryset = MinStock.objects.select_related("item__base_unit", "warehouse")
+
+
+# --- Этикетки и импорт остатков ------------------------------------------------------
+
+
+class LabelsView(APIView):
+    """PDF этикеток: {"lines": [{"item_unit", "copies", "batch"?}], "template"?: id}.
+
+    Из прихода: {"document": id} — этикетки на каждую строку, копий — по количеству.
+    """
+
+    queryset = StockDocument.objects.none()  # права — как на складские документы
+
+    def get_queryset(self) -> QuerySet[StockDocument]:
+        return StockDocument.objects.none()
+
+    def post(self, request: Request) -> HttpResponse:
+        templates = PrintTemplate.objects.filter(kind="label", is_active=True)
+        template_id = request.data.get("template")
+        template = (
+            templates.filter(pk=template_id).first()
+            if template_id
+            else templates.order_by("name").first()
+        )
+        if template is None:
+            raise ValidationError({"template": ["Нет печатной формы «Этикетка»."]})
+        if document_id := request.data.get("document"):
+            document = StockDocument.objects.filter(pk=document_id).first()
+            if document is None:
+                raise ValidationError({"document": ["Документ не найден."]})
+            lines = [
+                {
+                    "item_unit": line.item_unit_id,
+                    "copies": int(line.quantity),
+                    "batch": line.batch_id,
+                }
+                for line in document.lines.all()
+            ]
+        else:
+            lines = request.data.get("lines") or []
+        if not lines:
+            raise ValidationError({"lines": ["Нет позиций для этикеток."]})
+        return HttpResponse(labels.render(lines, template), content_type="application/pdf")
+
+
+def _upload(request: Request) -> tuple[bytes, str]:
+    upload = request.FILES.get("file")
+    if upload is None:
+        raise ValidationError({"file": ["Выберите файл."]})
+    return upload.read(), upload.name or "stock.xlsx"
+
+
+class StockImportView(APIView):
+    """Импорт остатков: POST preview/ (проверка) и commit/ (черновик прихода), GET template/."""
+
+    queryset = StockDocument.objects.none()  # нужны права на складские документы
+
+    def get_queryset(self) -> QuerySet[StockDocument]:
+        return StockDocument.objects.none()
+
+    def get(self, request: Request, step: str) -> HttpResponse:
+        if step != "template":
+            raise ValidationError({"step": ["Неизвестный шаг."]})
+        response = HttpResponse(
+            importing.template(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = 'attachment; filename="stock-template.xlsx"'
+        return response
+
+    def post(self, request: Request, step: str) -> Response:
+        try:
+            if step == "preview":
+                return Response(importing.preview(*_upload(request)))
+            if step == "commit":
+                warehouse = request.data.get("warehouse")
+                if not Warehouse.objects.filter(pk=warehouse).exists():
+                    raise ValidationError({"warehouse": ["Выберите склад."]})
+                return Response(importing.commit(*_upload(request), warehouse))
+        except importing.ImportError_ as error:
+            raise ValidationError({"file": [str(error)]}) from error
+        raise ValidationError({"step": ["Неизвестный шаг."]})

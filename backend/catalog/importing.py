@@ -6,17 +6,17 @@
 обновляется (цена, группа, артикул…), не найденный — создаётся.
 """
 
-import csv
 import io
 from dataclasses import asdict, dataclass, field
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from django.db import transaction
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 
 from catalog import services
 from catalog.models import Item, ItemGroup, ItemUnit, Kind, Unit
+from core import tables
 
 MAX_ROWS = 5000
 
@@ -71,65 +71,29 @@ class ImportResult:
         }
 
 
-# --- Чтение файла ------------------------------------------------------------------
+# --- Чтение файла (общие функции — core.tables) ----------------------------------
 
 
 def _read_table(content: bytes, filename: str) -> list[list[Any]]:
-    if filename.lower().endswith(".csv"):
-        for encoding in ("utf-8-sig", "cp1251"):
-            try:
-                text = content.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            raise ImportError_("Не удалось прочитать CSV: неизвестная кодировка.")
-        dialect = csv.Sniffer().sniff(text[:2000], delimiters=";,\t")
-        return [row for row in csv.reader(io.StringIO(text), dialect)]
     try:
-        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    except Exception as error:  # noqa: BLE001 — любой битый файл = понятное сообщение
-        raise ImportError_("Не удалось открыть файл. Нужен Excel (.xlsx) или CSV.") from error
-    sheet = workbook.worksheets[0]
-    return [list(row) for row in sheet.iter_rows(values_only=True)]
+        return tables.read_table(content, filename)
+    except tables.TableError as error:
+        raise ImportError_(str(error)) from error
 
 
 def _header_map(row: list[Any]) -> dict[str, int]:
-    mapping: dict[str, int] = {}
-    for index, cell in enumerate(row):
-        title = str(cell or "").strip().lower()
-        for key, aliases in COLUMNS.items():
-            if key not in mapping and title in aliases:
-                mapping[key] = index
-    return mapping
+    return tables.header_map(row, COLUMNS)
 
 
 def _find_header(table: list[list[Any]]) -> tuple[int, dict[str, int]]:
-    for index, row in enumerate(table[:15]):
-        mapping = _header_map(row)
-        if "name" in mapping:
-            return index, mapping
-    raise ImportError_("Не найдена строка заголовков с колонкой «Название».")
-
-
-def _decimal(value: Any) -> Decimal | None:
-    if value in (None, ""):
-        return None
-    text = str(value).replace("\u00a0", "").replace(" ", "").replace("₽", "").replace(",", ".")
     try:
-        return Decimal(text)
-    except InvalidOperation:
-        raise ValueError(f"не число: «{value}»") from None
+        return tables.find_header(table, COLUMNS, "name")
+    except tables.TableError as error:
+        raise ImportError_(str(error)) from error
 
 
-def _text(row: list[Any], mapping: dict[str, int], key: str) -> str:
-    index = mapping.get(key)
-    if index is None or index >= len(row) or row[index] is None:
-        return ""
-    value = row[index]
-    if isinstance(value, float) and value.is_integer():
-        value = int(value)  # артикулы и штрихкоды Excel хранит как числа
-    return str(value).strip()
+_decimal = tables.decimal
+_text = tables.text
 
 
 # --- Разбор строк ------------------------------------------------------------------

@@ -252,6 +252,7 @@ def module_actions(role: Group, module: str) -> set[str]:
 # --- Документы и журнал движений (ADR-004, ADR-005, ADR-012) ----------------------
 
 next_number = numbering.next_number
+next_value = numbering.next_value
 
 
 def execute_document[D: Document](document: D) -> D:
