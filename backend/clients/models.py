@@ -11,7 +11,8 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
 
-from core.models import Attachment, ClinicScopedModel, Directory
+from core.fields import MoneyField
+from core.models import Attachment, ClinicScopedModel, Directory, LedgerEntry
 
 # --- Справочники -------------------------------------------------------------------
 
@@ -313,3 +314,26 @@ class ClientContract(ClinicScopedModel):
 
     def __str__(self) -> str:
         return f"Договор № {self.number} от {self.date:%d.%m.%Y}"
+
+
+# --- Баланс клиента ----------------------------------------------------------------
+
+
+class ClientLedger(LedgerEntry):
+    """Журнал расчётов с клиентом: + начисление (выполненный счёт), − оплата.
+
+    Баланс = −(сумма): положительный — аванс (клиент заплатил вперёд),
+    отрицательный — долг. Пишут сюда счета и касса — через clients.services.
+    """
+
+    amount_fields = ("amount",)
+
+    client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="ledger")
+    amount = MoneyField("сумма (+ начислено, − оплачено)")
+
+    class Meta(LedgerEntry.Meta):
+        verbose_name = "расчёт с клиентом"
+        verbose_name_plural = "расчёты с клиентами"
+
+    def __str__(self) -> str:
+        return f"{self.client}: {self.amount:+}"

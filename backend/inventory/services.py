@@ -558,3 +558,13 @@ def summary(days: int = 90) -> StockSummary:
         1 for r in rows if today <= r["batch__expiry_date"] <= today + timedelta(days=days)
     )
     return {"expired": expired, "expiring": expiring, "low": len(low_stock())}
+
+
+def current_cost(item: Any, warehouse: Any = None) -> Decimal | None:
+    """Закупочная цена партии, которая спишется первой (для цены по наценке в счёте)."""
+    stock = batch_stock(item, warehouse) or batch_stock(item)
+    return stock[0].batch.cost_per_base if stock else None
+
+
+def default_sale_warehouse() -> Warehouse | None:
+    return sale_warehouses().order_by("created_at").first()

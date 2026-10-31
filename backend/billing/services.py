@@ -5,3 +5,516 @@
 Другие модули обращаются к модулю только через функции этого файла.
 Бизнес-правила живут здесь, а не в моделях и не в API (ENGINEERING.md).
 """
+
+from datetime import date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, TypedDict
+
+from django.db import transaction
+from django.db.models import Count, Sum
+from django.utils import timezone
+
+from billing.models import Invoice, InvoiceLine, InvoiceLineBatch
+from catalog import services as catalog
+from catalog.models import Item, Kind
+from clients import services as clients
+from core.models import Document
+from inventory import services as inventory
+from staff import services as staff
+
+D = Decimal
+ZERO = D("0")
+CENT = D("0.01")
+
+
+class InvoiceError(Exception):
+    """Счёт нельзя сохранить или выполнить. Текст — для пользователя."""
+
+
+def _money(value: Decimal) -> Decimal:
+    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+# --- Строки ------------------------------------------------------------------------
+
+
+class LineData(TypedDict, total=False):
+    item_unit: Any  # товар или услуга в единице продажи
+    item: Any  # комбинация
+    quantity: Decimal
+    price: Decimal | None  # своя цена (в границах мин./макс.)
+    performer: Any
+
+
+def list_price(unit: Any, warehouse: Any = None) -> Decimal | None:
+    """Цена по прайсу: фиксированная или по наценке от партии, которая спишется первой."""
+    cost = inventory.current_cost(unit.item, warehouse) if unit.pricing == "markup" else None
+    return catalog.price_of(unit, cost)
+
+
+def default_performer(item: Item, invoice: Invoice) -> Any:
+    """Исполнитель по умолчанию: врач счёта (из медкарты или записи на приём);
+    для услуги без врача — её ответственный, который сейчас в смене, иначе первый."""
+    if invoice.doctor_id:
+        return invoice.doctor_id
+    responsible = catalog.default_responsible(item) if item.kind == Kind.SERVICE else []
+    on_shift = [user for user in responsible if staff.is_on_shift(user)]
+    chosen = (on_shift or responsible or [None])[0]
+    return getattr(chosen, "pk", chosen)
+
+
+def _unit_line(
+    invoice: Invoice, data: LineData, position: int, parent: Any = None, override: Any = None
+) -> InvoiceLine:
+    unit = catalog.get_item_unit(getattr(data.get("item_unit"), "pk", data.get("item_unit")))
+    if unit is None:
+        raise InvoiceError("В строке не выбрана позиция.")
+    if unit.item.combo_only and parent is None:
+        raise InvoiceError(f"«{unit.item}» продаётся только в составе комбинаций.")
+    if not unit.for_sale:
+        raise InvoiceError(f"«{unit.item}» не продаётся в единице «{unit.unit}».")
+    quantity = D(str(data.get("quantity") or 1))
+    if quantity <= 0:
+        raise InvoiceError(f"«{unit.item}»: количество должно быть больше нуля.")
+    base_price = override if override is not None else list_price(unit, invoice.warehouse_id)
+    price = data.get("price")
+    manual = price is not None and base_price is not None and D(str(price)) != base_price
+    if price is None:
+        price = base_price
+    if price is None:
+        raise InvoiceError(
+            f"«{unit.item}»: цена неизвестна — нет закупочной цены для наценки. "
+            "Укажите цену вручную или оформите приход."
+        )
+    price = D(str(price))
+    if manual and not catalog.is_price_allowed(unit, price):
+        low, high = unit.price_min, unit.price_max
+        bounds = " ".join(
+            p
+            for p in (
+                f"от {low}" if low is not None else "",
+                f"до {high}" if high is not None else "",
+            )
+            if p
+        )
+        raise InvoiceError(f"«{unit.item}»: цена {price} ₽ вне допустимых границ ({bounds} ₽).")
+    if price < 0:
+        raise InvoiceError(f"«{unit.item}»: цена не может быть отрицательной.")
+    performer = data.get("performer") or default_performer(unit.item, invoice)
+    return InvoiceLine(
+        invoice=invoice,
+        item=unit.item,
+        item_unit=unit,
+        parent=parent,
+        quantity=quantity,
+        qty_base=quantity * unit.ratio,
+        list_price=base_price,
+        price=price,
+        manual_price=manual,
+        performer_id=getattr(performer, "pk", performer),
+        position=position,
+    )
+
+
+def _add_lines(invoice: Invoice, lines: list[LineData]) -> None:
+    position = 0
+    for data in lines:
+        combo = (
+            catalog.get_item(getattr(data.get("item"), "pk", data.get("item")))
+            if data.get("item")
+            else None
+        )
+        if combo is None or combo.kind != Kind.COMBO:
+            _unit_line(invoice, data, position).save()
+            position += 1
+            continue
+        times = D(str(data.get("quantity") or 1))
+        if times <= 0:
+            raise InvoiceError(f"«{combo}»: количество должно быть больше нуля.")
+        parts = catalog.expand_combination(combo)
+        header = None
+        if not combo.is_template:  # одной строкой: заголовок + состав
+            header = InvoiceLine(
+                invoice=invoice,
+                item=combo,
+                quantity=times,
+                price=ZERO,
+                position=position,
+                performer_id=getattr(data.get("performer"), "pk", data.get("performer"))
+                or invoice.doctor_id,
+            )
+            header.save()
+            position += 1
+        for part in parts:
+            line = _unit_line(
+                invoice,
+                {
+                    "item_unit": part["item_unit"],
+                    "quantity": part["quantity"] * times,
+                    "performer": data.get("performer"),
+                },
+                position,
+                parent=header,
+                override=part["price"],
+            )
+            line.save()
+            position += 1
+
+
+# --- Скидки и суммы ----------------------------------------------------------------
+
+
+def recalculate(invoice: Invoice) -> None:
+    """Скидки и суммы. Скидка — на строки без ручной цены (ADR: ручная цена — без скидки).
+
+    Сумма скидки распределяется пропорционально; копейки остатка — на последнюю строку.
+    Скидка счёта не задана — действует скидка из карточки клиента.
+    """
+    lines = list(invoice.lines.all())
+    leaves = [line for line in lines if not any(child.parent_id == line.pk for child in lines)]
+    for line in leaves:
+        line.discount = ZERO
+    eligible = [line for line in leaves if not line.manual_price]
+    eligible_gross = sum((line.price * line.quantity for line in eligible), ZERO)
+    percent = invoice.discount_percent
+    if percent is None and invoice.discount_amount is None:
+        percent = invoice.client.discount_percent or None
+    if percent is not None and not ZERO <= percent <= 100:
+        raise InvoiceError("Скидка в процентах — от 0 до 100.")
+    if invoice.discount_amount is not None:
+        if invoice.discount_amount < 0 or invoice.discount_amount > eligible_gross:
+            raise InvoiceError(
+                "Скидка суммой не может быть больше суммы строк, на которые она действует."
+            )
+        target = invoice.discount_amount
+    else:
+        target = _money(eligible_gross * (percent or ZERO) / 100)
+    rest = target
+    for index, line in enumerate(eligible):
+        gross = line.price * line.quantity
+        share = (
+            rest
+            if index == len(eligible) - 1
+            else _money(target * gross / eligible_gross)
+            if eligible_gross
+            else ZERO
+        )
+        line.discount = min(share, _money(gross))
+        rest -= line.discount
+    for line in leaves:
+        line.amount = _money(line.price * line.quantity - line.discount)
+        line.save(update_fields=["discount", "amount"])
+    for header in (line for line in lines if line not in leaves):
+        children = [line for line in leaves if line.parent_id == header.pk]
+        header.amount = sum((c.amount for c in children), ZERO)
+        header.discount = sum((c.discount for c in children), ZERO)
+        header.price = _money(header.amount / header.quantity) if header.quantity else ZERO
+        header.save(update_fields=["amount", "discount", "price"])
+    invoice.subtotal = _money(sum((line.price * line.quantity for line in leaves), ZERO))
+    invoice.discount_total = sum((line.discount for line in leaves), ZERO)
+    invoice.total = invoice.subtotal - invoice.discount_total
+    invoice.save(update_fields=["subtotal", "discount_total", "total"])
+
+
+@transaction.atomic
+def save_invoice(invoice: Invoice, lines: list[LineData] | None = None) -> Invoice:
+    """Сохранить черновик счёта: строки (если переданы), скидки, суммы."""
+    pet = invoice.pet
+    if pet is not None and clients.current_owner(pet).pk != invoice.client_id:
+        raise InvoiceError("Питомец принадлежит другому клиенту.")
+    if invoice.warehouse_id is None:
+        invoice.warehouse = inventory.default_sale_warehouse()
+    invoice.save()
+    if lines is not None:
+        invoice.lines.all().delete()
+        _add_lines(invoice, lines)
+    recalculate(invoice)
+    return invoice
+
+
+# --- Выполнение и откат --------------------------------------------------------------
+
+
+def execute_invoice(invoice: Invoice) -> None:
+    """Выполнить счёт (из core.services.execute_document, в транзакции):
+    списать товар по партиям, записать себестоимость, начислить долг клиенту."""
+    lines = list(invoice.lines.select_related("item", "item_unit"))
+    if not lines:
+        raise InvoiceError("В счёте нет позиций.")
+    leaves = [line for line in lines if line.item_unit_id is not None]
+    for line in leaves:
+        item = line.item
+        if item.kind == Kind.GOODS and item.stock_tracked:
+            try:
+                written = inventory.write_off(
+                    [{"item": item, "qty_base": line.qty_base, "warehouse": invoice.warehouse_id}],
+                    invoice,
+                )
+            except inventory.StockError as error:
+                raise InvoiceError(f"{error} Оформите приход или выберите другой склад.") from error
+            InvoiceLineBatch.objects.bulk_create(
+                InvoiceLineBatch(
+                    line=line, batch=w.batch, qty_base=w.qty, cost_per_base=w.cost_per_base
+                )
+                for w in written
+            )
+            line.cost = _money(sum((w.qty * w.cost_per_base for w in written), ZERO))
+        else:  # услуга или товар без складского учёта — себестоимость из карточки
+            line.cost = _money((item.manual_cost or ZERO) * line.qty_base)
+        line.save(update_fields=["cost"])
+    for header in (line for line in lines if line.item_unit_id is None):
+        header.cost = sum((c.cost for c in leaves if c.parent_id == header.pk), ZERO)
+        header.save(update_fields=["cost"])
+    clients.charge(invoice.client_id, invoice.total, invoice)
+
+
+def rollback_invoice(invoice: Invoice) -> None:
+    """Откат в черновик: товар — обратно на склад, начисление клиенту — снять."""
+    inventory.reverse(invoice)
+    clients.reverse_charges(invoice)
+    InvoiceLineBatch.objects.filter(line__invoice=invoice).delete()
+    invoice.lines.update(cost=ZERO)
+
+
+# --- Счёт из медкарты ----------------------------------------------------------------
+
+
+@transaction.atomic
+def invoice_for_visit(visit: Any) -> Invoice:
+    """Счёт по записи медкарты: черновик с отмеченными через «@» позициями.
+
+    Черновик по этой записи уже есть — в него добавляются позиции, которых в нём ещё нет.
+    """
+    invoice = Invoice.objects.filter(visit_id=visit.pk, status=Document.Status.DRAFT).first()
+    wanted = [line for line in _visit_lines(visit)]
+    if invoice is None:
+        invoice = Invoice(
+            client_id=visit.client_id,
+            pet_id=visit.pet_id,
+            doctor_id=visit.doctor_id,
+            appointment_id=visit.appointment_id,
+            visit_id=visit.pk,
+        )
+        return save_invoice(invoice, wanted)
+    present = {str(line.item_unit_id) for line in invoice.lines.all()}
+    current: list[LineData] = [
+        {
+            "item_unit": line.item_unit_id,
+            "quantity": line.quantity,
+            "price": line.price if line.manual_price else None,
+            "performer": line.performer_id,
+        }
+        for line in invoice.lines.filter(parent=None).exclude(item_unit=None)
+    ]
+    current += [line for line in wanted if str(line["item_unit"]) not in present]
+    return save_invoice(invoice, current)
+
+
+def _visit_lines(visit: Any) -> list[LineData]:
+    from medical import services as medical
+
+    return medical.invoice_lines(visit)  # type: ignore[return-value]
+
+
+# --- Отчёты ------------------------------------------------------------------------
+
+
+class PerformerRow(TypedDict):
+    performer: str | None
+    name: str
+    lines: int
+    amount: Decimal
+    cost: Decimal
+
+
+def revenue_by_performer(date_from: date, date_to: date) -> list[PerformerRow]:
+    """Выручка по исполнителям — по строкам выполненных счетов за период (без заголовков
+    комбинаций: считаются строки состава)."""
+    zone = timezone.get_current_timezone()
+    start = datetime.combine(date_from, datetime.min.time(), zone)
+    end = datetime.combine(date_to, datetime.min.time(), zone) + timedelta(days=1)
+    rows = (
+        InvoiceLine.objects.filter(
+            invoice__status=Document.Status.EXECUTED,
+            invoice__is_deleted=False,
+            invoice__date__gte=start,
+            invoice__date__lt=end,
+        )
+        .exclude(item_unit=None)
+        .values("performer", "performer__last_name", "performer__first_name", "performer__username")
+        .annotate(lines=Count("id"), amount=Sum("amount"), cost=Sum("cost"))
+        .order_by("-amount")
+    )
+    result: list[PerformerRow] = []
+    for r in rows:
+        name = " ".join(p for p in (r["performer__last_name"], r["performer__first_name"]) if p)
+        result.append(
+            {
+                "performer": str(r["performer"]) if r["performer"] else None,
+                "name": name or r["performer__username"] or "без исполнителя",
+                "lines": r["lines"],
+                "amount": r["amount"] or ZERO,
+                "cost": r["cost"] or ZERO,
+            }
+        )
+    return result
+
+
+def client_invoices(client: Any) -> Any:
+    return Invoice.objects.filter(client=client).order_by("-date")
+
+
+# --- Подбор позиций и печать --------------------------------------------------------
+
+
+def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dict[str, Any]]:
+    """Позиции для счёта: по штрихкоду или словам названия; с ценой и остатком."""
+    if barcode:
+        unit = catalog.find_by_barcode(barcode)
+        units = [unit] if unit is not None else []
+        combos: list[Item] = []
+    else:
+        if len(text.strip()) < 2:
+            return []
+        items = catalog.search_items(Item.objects.filter(is_active=True, for_sale=True), text)[:20]
+        units = [
+            u
+            for item in items
+            if item.kind != Kind.COMBO and not item.combo_only
+            for u in item.units.select_related("item", "unit").filter(for_sale=True)
+        ]
+        combos = [item for item in items if item.kind == Kind.COMBO]
+    result: list[dict[str, Any]] = []
+    for unit in units:
+        if not unit.for_sale or unit.item.combo_only:
+            continue
+        tracked = unit.item.kind == Kind.GOODS and unit.item.stock_tracked
+        price = list_price(unit, warehouse)
+        result.append(
+            {
+                "item_unit": str(unit.pk),
+                "item": str(unit.item_id),
+                "kind": unit.item.kind,
+                "name": unit.item.name,
+                "unit": unit.unit.name,
+                "price": str(price) if price is not None else None,
+                "price_min": str(unit.price_min) if unit.price_min is not None else None,
+                "price_max": str(unit.price_max) if unit.price_max is not None else None,
+                "stock": str(inventory.available(unit.item, warehouse) / unit.ratio)
+                if tracked
+                else None,
+            }
+        )
+    for combo in combos:
+        price = catalog.combination_price(combo)
+        result.append(
+            {
+                "item_unit": None,
+                "item": str(combo.pk),
+                "kind": "combo",
+                "name": combo.name,
+                "unit": "компл.",
+                "price": str(price) if price is not None else None,
+                "price_min": None,
+                "price_max": None,
+                "stock": None,
+            }
+        )
+    return result
+
+
+def print_context(invoice: Invoice) -> dict[str, Any]:
+    """Данные печатной формы «Счёт»: строки с учётом режима печати комбинаций."""
+    lines = list(invoice.lines.select_related("item", "item_unit__unit", "performer"))
+    printed: list[dict[str, Any]] = []
+    for line in lines:
+        if line.parent_id is not None:
+            continue
+        row = {
+            "name": line.item.name,
+            "unit": line.item_unit.unit.name if line.item_unit else "компл.",
+            "quantity": line.quantity,
+            "price": line.price,
+            "discount": line.discount,
+            "amount": line.amount,
+            "composition": [],
+        }
+        if line.item_unit is None:  # комбинация одной строкой
+            children = [c for c in lines if c.parent_id == line.pk]
+            mode = line.item.print_mode
+            if mode == "full":
+                row["composition"] = [
+                    {
+                        "name": c.item.name,
+                        "quantity": c.quantity,
+                        "price": c.price,
+                        "amount": c.amount,
+                    }
+                    for c in children
+                ]
+            elif mode == "composition":
+                row["composition"] = [
+                    {"name": c.item.name, "quantity": c.quantity} for c in children
+                ]
+            elif mode == "services":
+                row["composition"] = [
+                    {
+                        "name": c.item.name,
+                        "quantity": c.quantity,
+                        "price": c.price,
+                        "amount": c.amount,
+                    }
+                    for c in children
+                    if c.item.kind == Kind.SERVICE
+                ]
+        printed.append(row)
+    return {
+        "invoice": {
+            "number": invoice.number,
+            "date": invoice.date,
+            "subtotal": invoice.subtotal,
+            "discount": invoice.discount_total,
+            "total": invoice.total,
+            "status": invoice.get_status_display(),
+        },
+        "client": {"full_name": invoice.client.full_name},
+        "pet": {"name": invoice.pet.name if invoice.pet else ""},
+        "doctor": {"short_name": invoice.doctor.short_name if invoice.doctor else ""},
+        "lines": printed,
+    }
+
+
+def sample_print_context() -> dict[str, Any]:
+    return {
+        "invoice": {
+            "number": "K1-000123",
+            "date": timezone.now(),
+            "subtotal": D("2400"),
+            "discount": D("140"),
+            "total": D("2260"),
+            "status": "выполнен",
+        },
+        "client": {"full_name": "Иванова Анна Петровна"},
+        "pet": {"name": "Барсик"},
+        "doctor": {"short_name": "Петров П. П."},
+        "lines": [
+            {
+                "name": "Первичный приём",
+                "unit": "усл.",
+                "quantity": D("1"),
+                "price": D("1000"),
+                "discount": D("0"),
+                "amount": D("1000"),
+                "composition": [],
+            },
+            {
+                "name": "Фелиферон",
+                "unit": "фл.",
+                "quantity": D("2"),
+                "price": D("700"),
+                "discount": D("140"),
+                "amount": D("1260"),
+                "composition": [],
+            },
+        ],
+    }

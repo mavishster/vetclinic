@@ -1,0 +1,226 @@
+"""Счета: строки, цены, скидки, комбинации, выполнение со списанием, откат, баланс, отчёт."""
+
+from decimal import Decimal
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+
+from billing import services
+from billing.models import Invoice
+from billing.services import InvoiceError
+from catalog import services as catalog
+from catalog.models import Item, ItemGroup, Kind, Unit
+from clients import services as clients
+from clients.models import Breed, Client, Pet, Species
+from core import services as core
+from inventory import services as inventory
+from inventory.models import StockDocument, Warehouse
+
+D = Decimal
+
+
+@pytest.fixture
+def doctor(db):
+    return get_user_model().objects.create_user(username="doc", password="x", last_name="Иванова")
+
+
+@pytest.fixture
+def client_(db):
+    return clients.save_client(Client(last_name="Петров"))
+
+
+@pytest.fixture
+def visit_service(db):
+    return catalog.save_item(
+        Item(
+            kind=Kind.SERVICE,
+            name="Приём",
+            group=ItemGroup.objects.get(name="Приём и консультации"),
+            base_unit=Unit.objects.get(name="усл."),
+        ),
+        [
+            {
+                "unit": Unit.objects.get(name="усл."),
+                "price": D("1000"),
+                "price_min": D("800"),
+                "price_max": D("1500"),
+            }
+        ],
+    ).units.get()
+
+
+@pytest.fixture
+def vial(db):
+    """Фелиферон: учёт во флаконах, упаковка = 5 фл."""
+    item = catalog.save_item(
+        Item(kind=Kind.GOODS, name="Фелиферон", group=ItemGroup.objects.get(name="Препараты"), base_unit=Unit.objects.get(name="фл.")),
+        [{"unit": Unit.objects.get(name="фл."), "price": D("700")},
+         {"unit": Unit.objects.get(name="упак."), "ratio": D("5"), "price": D("3500"), "for_purchase": True}],
+    )  # fmt: skip
+    receipt = inventory.save_document(
+        StockDocument(kind="receipt", warehouse=Warehouse.objects.get(name="Основной склад")),
+        [{"item_unit": item.units.get(unit__name="упак."), "quantity": D("2"), "price": D("2000")}],
+    )
+    core.execute_document(receipt)
+    return item.units.get(unit__name="фл.")
+
+
+def make(client, lines, **fields):
+    return services.save_invoice(Invoice(client=client, **fields), lines)
+
+
+def test_lines_prices_and_totals(client_, visit_service, vial, doctor) -> None:
+    invoice = make(
+        client_,
+        [{"item_unit": visit_service}, {"item_unit": vial, "quantity": D("2")}],
+        doctor=doctor,
+    )
+
+    assert [(line.price, line.amount) for line in invoice.lines.all()] == [
+        (D("1000.00"), D("1000.00")),
+        (D("700.00"), D("1400.00")),
+    ]
+    assert (invoice.subtotal, invoice.discount_total, invoice.total) == (
+        D("2400.00"),
+        D("0"),
+        D("2400.00"),
+    )
+    assert {line.performer_id for line in invoice.lines.all()} == {doctor.pk}
+    assert invoice.warehouse.name == "Основной склад"
+
+
+def test_price_within_min_max_only(client_, visit_service) -> None:
+    invoice = make(client_, [{"item_unit": visit_service, "price": D("900")}])
+    assert invoice.lines.get().manual_price
+
+    with pytest.raises(InvoiceError, match="вне допустимых границ"):
+        make(client_, [{"item_unit": visit_service, "price": D("500")}])
+
+
+def test_discount_percent_skips_manual_price_and_client_card_discount(
+    client_, visit_service, vial
+) -> None:
+    invoice = make(
+        client_,
+        [{"item_unit": visit_service, "price": D("900")}, {"item_unit": vial, "quantity": D("2")}],
+        discount_percent=D("10"),
+    )
+
+    manual, goods = invoice.lines.all()
+    assert (manual.discount, goods.discount) == (D("0"), D("140.00"))
+    assert invoice.total == D("2160.00")
+
+    client_.discount_percent = D("5")
+    client_.save()
+    invoice = make(client_, [{"item_unit": vial, "quantity": D("2")}])
+    assert invoice.discount_total == D("70.00")
+
+
+def test_discount_amount_is_spread_with_cents(client_, visit_service, vial) -> None:
+    invoice = make(
+        client_, [{"item_unit": visit_service}, {"item_unit": vial}], discount_amount=D("100")
+    )
+
+    assert sum(line.discount for line in invoice.lines.all()) == D("100")
+    assert invoice.total == D("1600.00")
+    with pytest.raises(InvoiceError, match="больше суммы"):
+        make(client_, [{"item_unit": vial}], discount_amount=D("1000"))
+
+
+def test_combo_one_line_with_composition(client_, visit_service, vial) -> None:
+    combo = catalog.save_combination(Item(name="Иммунокоррекция", group=ItemGroup.objects.get(name="Процедуры и манипуляции")),
+                                     [{"item_unit": visit_service, "price_override": D("0")}, {"item_unit": vial, "quantity": D("2")}])  # fmt: skip
+
+    invoice = make(client_, [{"item": combo, "quantity": D("1")}])
+
+    header = invoice.lines.get(parent=None)
+    assert header.item == combo and header.amount == D("1400.00")
+    assert [c.item.name for c in header.children.all()] == ["Приём", "Фелиферон"]
+    assert invoice.total == D("1400.00")
+
+
+def test_combo_only_item_not_alone(client_, vial) -> None:
+    vial.item.combo_only = True
+    vial.item.save()
+
+    with pytest.raises(InvoiceError, match="только в составе"):
+        make(client_, [{"item_unit": vial}])
+
+
+def test_execute_writes_off_stock_records_cost_and_debt(client_, vial, visit_service) -> None:
+    invoice = make(client_, [{"item_unit": vial, "quantity": D("3")}, {"item_unit": visit_service}])
+
+    core.execute_document(invoice)
+
+    goods = invoice.lines.get(item=vial.item)
+    assert goods.cost == D("1200.00")  # 3 фл. × 400 (2000 ₽ за упаковку из 5 фл.)
+    assert goods.batches.get().qty_base == D("3")
+    assert inventory.available(vial.item) == D("7")
+    assert clients.balance(client_) == D("-3100.00")
+
+
+def test_not_enough_stock_is_explained(client_, vial) -> None:
+    invoice = make(client_, [{"item_unit": vial, "quantity": D("20")}])
+
+    with pytest.raises(InvoiceError, match="Не хватает «Фелиферон».*Оформите приход"):
+        core.execute_document(invoice)
+    assert inventory.available(vial.item) == D("10")
+
+
+def test_rollback_returns_stock_and_debt_to_draft(client_, vial) -> None:
+    invoice = core.execute_document(make(client_, [{"item_unit": vial, "quantity": D("2")}]))
+
+    core.rollback_document(invoice)
+
+    assert invoice.status == "draft"
+    assert inventory.available(vial.item) == D("10")
+    assert clients.balance(client_) == D("0")
+    assert invoice.lines.get().cost == D("0")
+
+
+def test_invoice_from_visit_collects_mentions(client_, vial, visit_service, doctor) -> None:
+    from medical import services as medical
+
+    cats = Species.objects.get(name="Кошки")
+    pet = clients.save_pet(
+        Pet(
+            owner=client_,
+            name="Барсик",
+            species=cats,
+            breed=Breed.objects.get(name="Метис", species=cats),
+        )
+    )
+    visit = medical.start_visit(pet, doctor)
+    visit.treatment_html = f'<span data-item-unit="{visit_service.pk}">x</span><span data-item-unit="{vial.pk}">y</span>'
+    medical.save_visit(visit)
+
+    invoice = services.invoice_for_visit(visit)
+    again = services.invoice_for_visit(visit)
+
+    assert again.pk == invoice.pk
+    assert invoice.pet == pet and invoice.doctor == doctor
+    assert sorted(line.item.name for line in invoice.lines.all()) == ["Приём", "Фелиферон"]
+
+
+def test_revenue_by_performer(client_, visit_service, doctor) -> None:
+    other = get_user_model().objects.create_user(
+        username="doc2", password="x", last_name="Сидорова"
+    )
+    core.execute_document(
+        make(
+            client_,
+            [
+                {"item_unit": visit_service, "performer": doctor},
+                {"item_unit": visit_service, "performer": other, "price": D("1200")},
+            ],
+        )
+    )
+    make(client_, [{"item_unit": visit_service, "performer": doctor}])  # черновик не считается
+
+    rows = services.revenue_by_performer(timezone.localdate(), timezone.localdate())
+
+    assert [(r["name"], r["amount"]) for r in rows] == [
+        ("Сидорова", D("1200.00")),
+        ("Иванова", D("1000.00")),
+    ]

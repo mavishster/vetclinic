@@ -433,3 +433,12 @@ def ensure_barcode(item_unit: ItemUnit) -> str:
     item_unit.barcode = code
     item_unit.save(update_fields=["barcode"])
     return code
+
+
+def get_item(pk: Any) -> Item | None:
+    return Item.objects.select_related("group", "base_unit").filter(pk=pk).first()
+
+
+def default_responsible(item: Item) -> list[Any]:
+    """Ответственные сотрудники услуги (в порядке добавления)."""
+    return list(item.responsible.filter(is_active=True))

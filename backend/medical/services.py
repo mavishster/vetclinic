@@ -431,3 +431,17 @@ def sample_print_context() -> dict[str, Any]:
         "preventions": [{"type": "Дегельминтизация", "item": "Мильбемакс", "date": today,
                          "next_date": today, "batch": "", "note": ""}],
     }  # fmt: skip
+
+
+def invoice_lines(visit: Visit) -> list[dict[str, Any]]:
+    """Позиции, отмеченные в записи через «@», — для счёта: единица, количество, врач."""
+    return [
+        {"item_unit": line.item_unit_id, "quantity": line.quantity, "performer": visit.doctor_id}
+        for line in visit.items.all()
+    ]
+
+
+def get_visit(pk: Any) -> Visit | None:
+    return (
+        Visit.objects.select_related("pet", "client", "doctor", "appointment").filter(pk=pk).first()
+    )

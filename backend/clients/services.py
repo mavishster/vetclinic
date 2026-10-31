@@ -333,3 +333,32 @@ def set_chip_number(pet: Pet, number: str) -> None:
     """Чипирование — номер чипа в карточку питомца."""
     pet.chip_number = number.strip()
     pet.save(update_fields=["chip_number"])
+
+
+# --- Баланс клиента ----------------------------------------------------------------
+
+
+def charge(client: Any, amount: Decimal, source: Any) -> None:
+    """Начислить клиенту сумму документа (выполненный счёт) — долг растёт."""
+    from clients.models import ClientLedger
+
+    core_services.post_entry(
+        ClientLedger, source, client_id=getattr(client, "pk", client), amount=amount
+    )
+
+
+def reverse_charges(source: Any) -> None:
+    """Снять начисления документа (откат счёта)."""
+    from clients.models import ClientLedger
+
+    core_services.reverse_entries(ClientLedger, source)
+
+
+def balance(client: Any) -> Decimal:
+    """Баланс клиента: > 0 — аванс, < 0 — долг."""
+    from django.db.models import Sum
+
+    from clients.models import ClientLedger
+
+    total = ClientLedger.objects.filter(client=client).aggregate(total=Sum("amount"))["total"]
+    return -(total or Decimal("0"))

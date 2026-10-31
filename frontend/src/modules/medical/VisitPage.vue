@@ -21,6 +21,9 @@
           <q-icon :name="saveState === 'error' ? 'error' : saveState === 'saving' ? 'sync' : 'cloud_done'"
             :color="saveState === 'error' ? 'negative' : 'grey-6'" /> {{ saveText }}
         </div>
+        <q-btn v-if="can('billing.add_invoice')" outline color="primary" icon="receipt_long" label="Счёт" @click="toInvoice">
+          <q-tooltip>Счёт с позициями, отмеченными через «@»</q-tooltip>
+        </q-btn>
         <q-btn outline color="primary" icon="print" label="Печать" @click="print" />
         <q-btn v-if="can('medical.delete_visit')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
         <q-btn v-if="visit.appointment_status === 'in_progress' && canEdit" color="positive" unelevated icon="task_alt"
@@ -230,6 +233,13 @@ async function complete() {
     visit.value = data
     $q.notify({ type: 'positive', message: 'Приём завершён' })
   }
+}
+
+async function toInvoice() {
+  await save()
+  const { ok, data } = await apiPost('billing/invoices/from-visit/', { visit: props.id })
+  if (!ok) return $q.notify({ type: 'negative', message: Object.values(fieldErrors(data))[0] || 'Не удалось создать счёт' })
+  router.push(`/invoices/${data.id}`)
 }
 
 function remove() {
