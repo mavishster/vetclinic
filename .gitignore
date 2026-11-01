@@ -13,3 +13,4 @@ frontend/dist/
 .idea/
 .vscode/
 .import_linter_cache/
+*.patch
