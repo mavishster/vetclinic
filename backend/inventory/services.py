@@ -637,3 +637,46 @@ def current_cost(item: Any, warehouse: Any = None) -> Decimal | None:
 
 def default_sale_warehouse() -> Warehouse | None:
     return sale_warehouses().order_by("created_at").first()
+
+
+# --- Отчёты ------------------------------------------------------------------------
+
+
+def turnover(
+    date_from: Any, date_to: Any, warehouse: Any = None, search: str = ""
+) -> list[dict[str, Any]]:
+    """Движение товара за период (в единицах учёта): на начало, пришло, ушло, на конец."""
+    from datetime import datetime, timedelta
+
+    zone = timezone.get_current_timezone()
+    start = datetime.combine(date_from, datetime.min.time(), zone)
+    end = datetime.combine(date_to, datetime.min.time(), zone) + timedelta(days=1)
+    movements = StockMovement.objects.filter(posted_at__lt=end)
+    if warehouse:
+        movements = movements.filter(warehouse=warehouse)
+    for word in search.split():
+        movements = movements.filter(item__name__icontains=word)
+    rows = (
+        movements.values("item", "item__name", "item__base_unit__name")
+        .annotate(
+            opening=Sum("qty_base", filter=Q(posted_at__lt=start)),
+            incoming=Sum("qty_base", filter=Q(posted_at__gte=start, qty_base__gt=0)),
+            outgoing=Sum("qty_base", filter=Q(posted_at__gte=start, qty_base__lt=0)),
+        )
+        .order_by("item__name")
+    )
+    result = []
+    for r in rows:
+        opening, incoming, outgoing = (
+            r["opening"] or ZERO,
+            r["incoming"] or ZERO,
+            -(r["outgoing"] or ZERO),
+        )
+        if not (opening or incoming or outgoing):
+            continue
+        result.append(
+            {"item": str(r["item"]), "name": r["item__name"], "unit": r["item__base_unit__name"],
+             "opening": opening, "incoming": incoming, "outgoing": outgoing,
+             "closing": opening + incoming - outgoing}
+        )  # fmt: skip
+    return result

@@ -1,3 +1,4 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from cash.api import views
@@ -8,4 +9,7 @@ router.register("payments", views.PaymentViewSet, basename="payment")
 router.register("operations", views.CashOperationViewSet, basename="cash-operation")
 router.register("cash", views.CashViewSet, basename="cash")
 
-urlpatterns = router.urls
+urlpatterns = [
+    path("reports/money/", views.MoneyReportView.as_view(), name="report-money"),
+    *router.urls,
+]

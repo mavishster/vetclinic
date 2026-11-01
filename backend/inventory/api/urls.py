@@ -12,6 +12,7 @@ router.register("min-stock", views.MinStockViewSet, basename="min-stock")
 
 urlpatterns = [
     path("labels/", views.LabelsView.as_view(), name="stock-labels"),
+    path("reports/turnover/", views.TurnoverReportView.as_view(), name="report-turnover"),
     path("import/<str:step>/", views.StockImportView.as_view(), name="stock-import"),
     *router.urls,
 ]

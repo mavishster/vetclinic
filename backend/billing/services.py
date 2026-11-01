@@ -635,3 +635,112 @@ def update_details(
     for line_id, user in (performers or {}).items():
         invoice.lines.filter(pk=line_id).update(performer_id=getattr(user, "pk", user))
     return invoice
+
+
+# --- Отчёты ------------------------------------------------------------------------
+
+
+def _period(date_from: date, date_to: date) -> tuple[datetime, datetime]:
+    zone = timezone.get_current_timezone()
+    start = datetime.combine(date_from, datetime.min.time(), zone)
+    return start, datetime.combine(date_to, datetime.min.time(), zone) + timedelta(days=1)
+
+
+def _executed(date_from: date, date_to: date) -> QuerySet[Invoice]:
+    start, end = _period(date_from, date_to)
+    return Invoice.objects.filter(status=Document.Status.EXECUTED, date__gte=start, date__lt=end)
+
+
+def sales_by_day(date_from: date, date_to: date) -> list[dict[str, Any]]:
+    """Продажи по дням: счетов, сумма до скидки, скидка, к оплате, себестоимость."""
+    from django.db.models.functions import TruncDate
+
+    zone = timezone.get_current_timezone()
+    by_day = (
+        _executed(date_from, date_to)
+        .annotate(day=TruncDate("date", tzinfo=zone))
+        .values("day")
+        .annotate(
+            n=Count("id"), sum_subtotal=Sum("subtotal"), sum_discount=Sum("discount_total"),
+            sum_total=Sum("total"),
+        )
+        .order_by("day")
+    )  # fmt: skip
+    start, end = _period(date_from, date_to)
+    costs = {
+        r["day"]: r["cost"] or ZERO
+        for r in InvoiceLine.objects.filter(
+            invoice__status=Document.Status.EXECUTED,
+            invoice__date__gte=start,
+            invoice__date__lt=end,
+        )
+        .exclude(item_unit=None)
+        .annotate(day=TruncDate("invoice__date", tzinfo=zone))
+        .values("day")
+        .annotate(cost=Sum("cost"))
+    }
+    return [
+        {
+            "day": r["day"], "invoices": r["n"], "subtotal": r["sum_subtotal"] or ZERO,
+            "discount": r["sum_discount"] or ZERO, "total": r["sum_total"] or ZERO,
+            "cost": costs.get(r["day"], ZERO),
+        }
+        for r in by_day
+    ]  # fmt: skip
+
+
+def top_items(
+    date_from: date, date_to: date, kind: str | None = None, limit: int = 50
+) -> list[dict[str, Any]]:
+    """Популярные услуги и товары за период: количество, выручка, себестоимость."""
+    start, end = _period(date_from, date_to)
+    lines = InvoiceLine.objects.filter(
+        invoice__status=Document.Status.EXECUTED, invoice__date__gte=start, invoice__date__lt=end
+    ).exclude(item_unit=None)
+    if kind:
+        lines = lines.filter(item__kind=kind)
+    rows = (
+        lines.values("item", "item__name", "item__kind", "item__base_unit__name")
+        .annotate(
+            quantity=Sum("qty_base"),
+            amount=Sum("amount"),
+            cost=Sum("cost"),
+            invoices=Count("invoice", distinct=True),
+        )
+        .order_by("-amount")[:limit]
+    )
+    return [
+        {
+            "item": str(r["item"]), "name": r["item__name"], "kind": r["item__kind"],
+            "unit": r["item__base_unit__name"], "quantity": r["quantity"] or ZERO,
+            "amount": r["amount"] or ZERO, "cost": r["cost"] or ZERO, "invoices": r["invoices"],
+        }
+        for r in rows
+    ]  # fmt: skip
+
+
+def debtors() -> list[dict[str, Any]]:
+    """Должники: у кого есть неоплаченные выполненные счета.
+
+    Сумма долга, сколько счетов, дата самого старого неоплаченного.
+    """
+    by_client: dict[Any, dict[str, Any]] = {}
+    unpaid = (
+        Invoice.objects.filter(status=Document.Status.EXECUTED, paid_amount__lt=F("total"))
+        .exclude(client__is_guest=True)
+        .select_related("client")
+        .prefetch_related("client__phones")
+        .order_by("date")
+    )
+    for invoice in unpaid:
+        row = by_client.setdefault(
+            invoice.client_id,
+            {
+                "client": str(invoice.client_id), "name": invoice.client.full_name,
+                "phone": next((p.number for p in invoice.client.phones.all()), ""),
+                "debt": ZERO, "invoices": 0, "since": timezone.localdate(invoice.date),
+            },
+        )  # fmt: skip
+        row["debt"] += invoice.unpaid
+        row["invoices"] += 1
+    return sorted(by_client.values(), key=lambda r: -r["debt"])

@@ -8,12 +8,13 @@ import schedulingRoutes from './modules/scheduling/routes'
 import medicalRoutes from './modules/medical/routes'
 import inventoryRoutes from './modules/inventory/routes'
 import cashRoutes from './modules/cash/routes'
+import reportsRoutes from './modules/reports/routes'
 import billingRoutes from './modules/billing/routes'
 import { can, loadMe, session } from './session'
 
 // Каждый модуль приносит свои маршруты из src/modules/<модуль>/routes.js
 // (PROJECT_PLAN, 4.3, правило 7). Новый модуль — одна строка здесь.
-const moduleRoutes = [...coreRoutes, ...clientsRoutes, ...catalogRoutes, ...staffRoutes, ...schedulingRoutes, ...medicalRoutes, ...inventoryRoutes, ...billingRoutes, ...cashRoutes]
+const moduleRoutes = [...coreRoutes, ...clientsRoutes, ...catalogRoutes, ...staffRoutes, ...schedulingRoutes, ...medicalRoutes, ...inventoryRoutes, ...billingRoutes, ...cashRoutes, ...reportsRoutes]
 
 const router = createRouter({
   history: createWebHistory(),

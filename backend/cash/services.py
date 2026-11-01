@@ -290,3 +290,40 @@ def summary() -> list[RegisterRow]:
             }
         )
     return rows
+
+
+# --- Отчёты ------------------------------------------------------------------------
+
+
+def money_by_day(date_from: Any, date_to: Any) -> list[dict[str, Any]]:
+    """Деньги по дням: поступило наличными и безналом, выдано (возвраты, расходы)."""
+    from datetime import datetime, timedelta
+
+    from django.db.models import Q
+    from django.db.models.functions import TruncDate
+
+    zone = timezone.get_current_timezone()
+    start = datetime.combine(date_from, datetime.min.time(), zone)
+    end = datetime.combine(date_to, datetime.min.time(), zone) + timedelta(days=1)
+    from django.contrib.contenttypes.models import ContentType
+
+    # Поступило — только оплаты клиентов (внесение размена и перемещения между кассами —
+    # не выручка); выдано — возвраты, возврат аванса и расходы, без перемещений.
+    payment = ContentType.objects.get_for_model(Payment)
+    is_payment = Q(document_type=payment, amount__gt=0, reversal_of=None)
+    rows = (
+        CashMovement.objects.filter(posted_at__gte=start, posted_at__lt=end)
+        .annotate(day=TruncDate("posted_at", tzinfo=zone))
+        .values("day")
+        .annotate(
+            cash_in=Sum("amount", filter=is_payment & Q(register__kind=K.CASH)),
+            card_in=Sum("amount", filter=is_payment & Q(register__kind=K.CASHLESS)),
+            out=Sum("amount", filter=Q(amount__lt=0) & ~Q(note="перемещение")),
+        )
+        .order_by("day")
+    )
+    return [
+        {"day": r["day"], "cash_in": r["cash_in"] or ZERO, "card_in": r["card_in"] or ZERO,
+         "out": -(r["out"] or ZERO)}
+        for r in rows
+    ]  # fmt: skip

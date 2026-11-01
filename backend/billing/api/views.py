@@ -18,7 +18,9 @@ from billing import services
 from billing.models import Invoice, InvoiceLine
 from clients import services as clients
 from core import services as core
+from core.api import reports
 from core.api.permissions import can_view_cost, require_special
+from core.excel import xlsx_response
 from core.models import DocumentError, PrintTemplate
 from staff import services as staff
 
@@ -323,3 +325,72 @@ class PerformersReport(APIView):
                 for r in rows
             ]
         )
+
+
+# --- Отчёты ------------------------------------------------------------------------
+
+
+class _InvoiceReport(APIView):
+    queryset = Invoice.objects.none()  # права — как на просмотр счетов
+
+    def get_queryset(self) -> QuerySet[Invoice]:
+        return Invoice.objects.none()
+
+
+class SalesReportView(_InvoiceReport):
+    """Продажи по дням: ?from=&to= (&export=xlsx)."""
+
+    def get(self, request: Request) -> HttpResponse:
+        date_from, date_to = reports.period(request)
+        rows = services.sales_by_day(date_from, date_to)
+        hide = set() if can_view_cost(request) else {"cost"}
+        if reports.wants_excel(request):
+            columns = [
+                ("day", "День", 12),
+                ("invoices", "Счетов", 10),
+                ("subtotal", "Сумма", 14),
+                ("discount", "Скидка", 12),
+                ("total", "К оплате", 14),
+            ]
+            if not hide:
+                columns.append(("cost", "Себестоимость", 14))
+            return xlsx_response("sales.xlsx", "Продажи", columns, rows)
+        return Response(reports.as_text(rows, hide))
+
+
+class TopItemsReportView(_InvoiceReport):
+    """Популярные услуги и товары: ?from=&to=&kind=service|goods (&export=xlsx)."""
+
+    def get(self, request: Request) -> HttpResponse:
+        date_from, date_to = reports.period(request)
+        rows = services.top_items(date_from, date_to, request.query_params.get("kind") or None)
+        hide = set() if can_view_cost(request) else {"cost"}
+        if reports.wants_excel(request):
+            columns = [
+                ("name", "Позиция", 40),
+                ("quantity", "Количество", 12),
+                ("unit", "Ед.", 8),
+                ("invoices", "Счетов", 10),
+                ("amount", "Выручка", 14),
+            ]
+            if not hide:
+                columns.append(("cost", "Себестоимость", 14))
+            return xlsx_response("top-items.xlsx", "Популярное", columns, rows)
+        return Response(reports.as_text(rows, hide))
+
+
+class DebtorsReportView(_InvoiceReport):
+    """Должники (&export=xlsx)."""
+
+    def get(self, request: Request) -> HttpResponse:
+        rows = services.debtors()
+        if reports.wants_excel(request):
+            columns = [
+                ("name", "Клиент", 36),
+                ("phone", "Телефон", 18),
+                ("debt", "Долг", 14),
+                ("invoices", "Счетов", 10),
+                ("since", "Не оплачено с", 14),
+            ]
+            return xlsx_response("debtors.xlsx", "Должники", columns, rows)
+        return Response(reports.as_text(rows))

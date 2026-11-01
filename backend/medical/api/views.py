@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from clients.models import Pet
 from core import services as core
 from core.api.directories import DirectoryViewSet
+from core.excel import xlsx_response
 from core.models import PrintTemplate
 from medical import services
 from medical.models import (
@@ -469,25 +470,15 @@ class PreventionViewSet(viewsets.ReadOnlyModelViewSet):  # type: ignore[type-arg
 
 
 def _xlsx(rows: list[dict[str, Any]]) -> HttpResponse:
-    from io import BytesIO
-
-    from openpyxl import Workbook
-
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Профилактика"
-    sheet.append(["Дата", "Следующая", "Вид", "Препарат / услуга", "Питомец", "Вид животного",
-                  "Владелец", "Телефон", "Врач"])  # fmt: skip
-    for r in rows:
-        sheet.append([r["date"], r["next_date"], r["type"], r["item"], r["pet_name"],
-                      r["species"], r["client"], r["phone"], r["doctor"]])  # fmt: skip
-    for column, width in zip("ABCDEFGHI", (12, 12, 26, 30, 16, 14, 32, 18, 16), strict=True):
-        sheet.column_dimensions[column].width = width
-    buffer = BytesIO()
-    workbook.save(buffer)
-    response = HttpResponse(
-        buffer.getvalue(),
-        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-    response["Content-Disposition"] = 'attachment; filename="prevention.xlsx"'
-    return response
+    columns = [
+        ("date", "Дата", 12),
+        ("next_date", "Следующая", 12),
+        ("type", "Вид", 26),
+        ("item", "Препарат / услуга", 30),
+        ("pet_name", "Питомец", 16),
+        ("species", "Вид животного", 14),
+        ("client", "Владелец", 32),
+        ("phone", "Телефон", 18),
+        ("doctor", "Врач", 16),
+    ]
+    return xlsx_response("prevention.xlsx", "Профилактика", columns, rows)

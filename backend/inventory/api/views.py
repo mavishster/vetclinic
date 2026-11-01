@@ -16,8 +16,10 @@ from rest_framework.views import APIView
 from catalog import services as catalog
 from catalog.models import Item, Kind
 from core import services as core
+from core.api import reports
 from core.api.directories import DirectoryViewSet
 from core.api.permissions import can_view_cost, require_special
+from core.excel import xlsx_response
 from core.models import DocumentError, PrintTemplate
 from inventory import importing, labels, services
 from inventory.models import (
@@ -439,3 +441,30 @@ class StockImportView(APIView):
         except importing.ImportError_ as error:
             raise ValidationError({"file": [str(error)]}) from error
         raise ValidationError({"step": ["Неизвестный шаг."]})
+
+
+class TurnoverReportView(APIView):
+    """Движение товара: ?from=&to=&warehouse=&search= (&export=xlsx)."""
+
+    queryset = StockMovement.objects.none()  # права — как на остатки
+
+    def get_queryset(self) -> QuerySet[StockMovement]:
+        return StockMovement.objects.none()
+
+    def get(self, request: Request) -> HttpResponse:
+        date_from, date_to = reports.period(request)
+        params = request.query_params
+        rows = services.turnover(
+            date_from, date_to, params.get("warehouse") or None, params.get("search", "")
+        )
+        if reports.wants_excel(request):
+            columns = [
+                ("name", "Товар", 40),
+                ("unit", "Ед.", 8),
+                ("opening", "На начало", 12),
+                ("incoming", "Пришло", 12),
+                ("outgoing", "Ушло", 12),
+                ("closing", "На конец", 12),
+            ]
+            return xlsx_response("turnover.xlsx", "Движение товара", columns, rows)
+        return Response(reports.as_text(rows))

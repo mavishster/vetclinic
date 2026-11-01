@@ -22,7 +22,7 @@ export default [
       { title: 'Стационар', icon: 'bed', stage: 6 },
       { title: 'Лаборатория', icon: 'biotech', stage: 6 },
       { title: 'Выручка по исполнителям', icon: 'bar_chart', to: '/reports/performers', perm: 'billing.view_invoice' },
-      { title: 'Отчёты', icon: 'insights', stage: 6 },
+      { title: 'Отчёты', icon: 'insights', to: '/reports', perm: 'billing.view_invoice' },
     ],
   },
   {

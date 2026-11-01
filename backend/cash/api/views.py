@@ -4,19 +4,23 @@ from decimal import Decimal
 from typing import Any
 
 from django.db.models import QuerySet
+from django.http import HttpResponse
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from cash import services
 from cash.models import CashMovement, CashOperation, CashRegister, CashShift, Payment
 from clients.models import Client
 from core import services as core
+from core.api import reports
 from core.api.directories import DirectoryViewSet
 from core.api.permissions import require_special
+from core.excel import xlsx_response
 from core.models import DocumentError
 
 
@@ -226,3 +230,25 @@ def _shift(shift: CashShift) -> dict[str, Any]:
         "expense": str(shift.expense),
         "closing_balance": str(shift.closing_balance),
     }
+
+
+class MoneyReportView(APIView):
+    """Деньги по дням: наличные, безнал, выдано: ?from=&to= (&export=xlsx)."""
+
+    queryset = Payment.objects.none()  # права — как на просмотр оплат
+
+    def get_queryset(self) -> QuerySet[Payment]:
+        return Payment.objects.none()
+
+    def get(self, request: Request) -> HttpResponse:
+        date_from, date_to = reports.period(request)
+        rows = services.money_by_day(date_from, date_to)
+        if reports.wants_excel(request):
+            columns = [
+                ("day", "День", 12),
+                ("cash_in", "Наличные", 14),
+                ("card_in", "Безнал", 14),
+                ("out", "Выдано", 14),
+            ]
+            return xlsx_response("money.xlsx", "Деньги", columns, rows)
+        return Response(reports.as_text(rows))
