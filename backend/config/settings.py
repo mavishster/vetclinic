@@ -35,6 +35,7 @@ PROJECT_APPS = [
     "billing",
     "inventory",
     "cash",
+    "inpatient",
     "reminders",
     "sync",
 ]

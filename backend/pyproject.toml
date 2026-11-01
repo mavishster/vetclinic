@@ -40,7 +40,7 @@ addopts = "--strict-markers"
 [tool.importlinter]
 root_packages = [
     "config", "core", "clients", "catalog", "staff",
-    "scheduling", "medical", "billing", "inventory", "cash", "sync", "reminders",
+    "scheduling", "medical", "billing", "inventory", "cash", "sync", "reminders", "inpatient",
 ]
 
 [[tool.importlinter.contracts]]
@@ -49,7 +49,7 @@ type = "layers"
 layers = [
     "config",
     "sync : reminders",
-    "scheduling : medical : billing : inventory : cash",
+    "scheduling : medical : billing : inventory : cash : inpatient",
     "clients : catalog : staff",
     "core",
 ]
@@ -60,7 +60,7 @@ layers = [
 [[tool.importlinter.contracts]]
 name = "Внутренности календаря закрыты"
 type = "forbidden"
-source_modules = ["medical", "billing", "inventory", "cash"]
+source_modules = ["medical", "billing", "inventory", "cash", "inpatient"]
 forbidden_modules = ["scheduling.models", "scheduling.api"]
 allow_indirect_imports = true
 # Тестам можно готовить данные чужих модулей напрямую — правило защищает рабочий код.
@@ -69,7 +69,7 @@ ignore_imports = ["*.tests.** -> *.models"]
 [[tool.importlinter.contracts]]
 name = "Внутренности медкарты закрыты"
 type = "forbidden"
-source_modules = ["scheduling", "billing", "inventory", "cash"]
+source_modules = ["scheduling", "billing", "inventory", "cash", "inpatient"]
 forbidden_modules = ["medical.models", "medical.api"]
 allow_indirect_imports = true
 # Тестам можно готовить данные чужих модулей напрямую — правило защищает рабочий код.
@@ -78,7 +78,7 @@ ignore_imports = ["*.tests.** -> *.models"]
 [[tool.importlinter.contracts]]
 name = "Внутренности счетов закрыты"
 type = "forbidden"
-source_modules = ["scheduling", "medical", "inventory", "cash"]
+source_modules = ["scheduling", "medical", "inventory", "cash", "inpatient"]
 forbidden_modules = ["billing.models", "billing.api"]
 allow_indirect_imports = true
 # Тестам можно готовить данные чужих модулей напрямую — правило защищает рабочий код.
@@ -87,7 +87,7 @@ ignore_imports = ["*.tests.** -> *.models"]
 [[tool.importlinter.contracts]]
 name = "Внутренности склада закрыты"
 type = "forbidden"
-source_modules = ["scheduling", "medical", "billing", "cash"]
+source_modules = ["scheduling", "medical", "billing", "cash", "inpatient"]
 forbidden_modules = ["inventory.models", "inventory.api"]
 allow_indirect_imports = true
 # Тестам можно готовить данные чужих модулей напрямую — правило защищает рабочий код.
@@ -96,8 +96,17 @@ ignore_imports = ["*.tests.** -> *.models"]
 [[tool.importlinter.contracts]]
 name = "Внутренности кассы закрыты"
 type = "forbidden"
-source_modules = ["scheduling", "medical", "billing", "inventory"]
+source_modules = ["scheduling", "medical", "billing", "inventory", "inpatient"]
 forbidden_modules = ["cash.models", "cash.api"]
+allow_indirect_imports = true
+# Тестам можно готовить данные чужих модулей напрямую — правило защищает рабочий код.
+ignore_imports = ["*.tests.** -> *.models"]
+
+[[tool.importlinter.contracts]]
+name = "Внутренности стационара закрыты"
+type = "forbidden"
+source_modules = ["scheduling", "medical", "billing", "inventory", "cash", "reminders"]
+forbidden_modules = ["inpatient.models", "inpatient.api"]
 allow_indirect_imports = true
 # Тестам можно готовить данные чужих модулей напрямую — правило защищает рабочий код.
 ignore_imports = ["*.tests.** -> *.models"]

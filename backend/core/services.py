@@ -212,6 +212,8 @@ PERMISSION_HINTS = {
     "cash.cashmovement": "Остатки в кассах и движение денег.",
     "cash.cashregister": "Список касс.",
     "reminders.reminder": "Напоминания клиентам: список для обзвона и итоги звонков.",
+    "inpatient.hospitalization": "Стационар: госпитализация, лист назначений, наблюдения, выписка.",
+    "inpatient.ward": "Список палат: места и услуга «сутки стационара».",
 }
 
 
@@ -330,6 +332,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "clients.clientledger": [_V],
             "scheduling.appointment": [_V, _E],
             "medical.visit": [_V, _E],
+            "inpatient.hospitalization": [_V, _E],
             "medical.texttemplate": [_V, _E],
             "medical.prevention": [_V, _E],
             "medical.diagnosis": [_V, _E],
@@ -356,6 +359,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "clients.street": [_V, _E],
             "clients.breed": [_V, _E],
             "clients.color": [_V, _E],
+            "inpatient.hospitalization": [_V],
             "reminders.reminder": [_V, _E],
             "scheduling.appointment": [_V, _E, _D],
             "medical.visit": [_V],

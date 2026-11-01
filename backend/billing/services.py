@@ -744,3 +744,15 @@ def debtors() -> list[dict[str, Any]]:
         row["debt"] += invoice.unpaid
         row["invoices"] += 1
     return sorted(by_client.values(), key=lambda r: -r["debt"])
+
+
+def create_invoice(
+    client: Any, lines: list[LineData], pet: Any = None, doctor: Any = None, comment: str = ""
+) -> Any:
+    """Черновик счёта от другого модуля (например, стационара). Возвращает id счёта."""
+    invoice = save_invoice(
+        Invoice(client_id=getattr(client, "pk", client), pet_id=getattr(pet, "pk", pet),
+                doctor_id=getattr(doctor, "pk", doctor), comment=comment),
+        lines,
+    )  # fmt: skip
+    return invoice.pk

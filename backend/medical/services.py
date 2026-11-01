@@ -636,3 +636,14 @@ def prevention_still_due(prevention_id: Any) -> bool:
 
 def visit_still_needs_revisit(visit_id: Any) -> bool:
     return any(v.pk == visit_id for v in revisits_due(timezone.localdate() + timedelta(days=3650)))
+
+
+def prescriptions_of(visit_id: Any) -> list[dict[str, Any]]:
+    """Назначения записи медкарты — для стационара (перенести в лист назначений)."""
+    from medical.models import Prescription
+
+    return [
+        {"item": p.item_id, "title": p.drug_name, "dose": p.dose, "route": p.route,
+         "frequency": p.frequency, "days": p.days, "comment": p.comment}
+        for p in Prescription.objects.filter(visit_id=visit_id)
+    ]  # fmt: skip

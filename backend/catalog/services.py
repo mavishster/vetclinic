@@ -442,3 +442,9 @@ def get_item(pk: Any) -> Item | None:
 def default_responsible(item: Item) -> list[Any]:
     """Ответственные сотрудники услуги (в порядке добавления)."""
     return list(item.responsible.filter(is_active=True))
+
+
+def sale_unit(item: Any) -> ItemUnit | None:
+    """Единица для продажи по умолчанию: совпадающая с единицей учёта, иначе первая продаваемая."""
+    units = ItemUnit.objects.filter(item=item, for_sale=True)
+    return units.filter(unit_id=F("item__base_unit_id")).first() or units.order_by("ratio").first()

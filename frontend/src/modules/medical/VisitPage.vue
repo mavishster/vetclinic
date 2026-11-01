@@ -24,6 +24,7 @@
         <q-btn v-if="can('billing.add_invoice')" outline color="primary" icon="receipt_long" label="Счёт" @click="toInvoice">
           <q-tooltip>Счёт с позициями, отмеченными через «@»</q-tooltip>
         </q-btn>
+        <q-btn v-if="can('inpatient.add_hospitalization')" flat color="primary" icon="local_hotel" label="В стационар" @click="admitOpen = true" />
         <q-btn outline color="primary" icon="print" label="Печать" @click="print" />
         <q-btn v-if="can('medical.delete_visit')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
         <q-btn v-if="visit.appointment_status === 'in_progress' && canEdit" color="positive" unelevated icon="task_alt"
@@ -124,6 +125,7 @@
           <div v-if="error" class="text-negative q-mt-sm">{{ error }}</div>
         </div>
       </div>
+      <AdmitDialog v-model="admitOpen" :preset="{ pet: visit.pet, petName: visit.pet_name, visit: visit.id, doctor: visit.doctor }" />
     </template>
   </q-page>
 </template>
@@ -139,6 +141,8 @@ import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
 import RichEditor from './RichEditor.vue'
 import PrescriptionsPanel from './PrescriptionsPanel.vue'
+// Приём в стационар — модуль «Стационар».
+import AdmitDialog from '@/modules/inpatient/AdmitDialog.vue'
 import PreventionPanel from './PreventionPanel.vue'
 
 const props = defineProps({ id: { type: String, required: true } })
@@ -156,6 +160,7 @@ const doctors = ref([])
 const diagnosisOptions = ref([])
 const history = ref([])
 const prefill = ref(null)
+const admitOpen = ref(false)
 
 // Подсказка из отмеченных позиций: открыть «Профилактику» с заполненной формой.
 function suggest(suggestion) {
