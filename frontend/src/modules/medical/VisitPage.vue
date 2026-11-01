@@ -62,7 +62,8 @@
         <div class="col-12 col-md-6">
           <q-tabs v-model="tab" dense align="left" no-caps active-color="primary" indicator-color="primary">
             <q-tab name="treatment" label="Описание лечения" />
-            <q-tab name="recommendations" label="Рекомендации и назначения" />
+            <q-tab name="recommendations" label="Рекомендации" />
+            <q-tab name="prescriptions" :label="`Назначения${visit.prescriptions.length ? ` (${visit.prescriptions.length})` : ''}`" />
             <q-tab name="prevention" :label="`Профилактика${visit.preventions.length ? ` (${visit.preventions.length})` : ''}`" />
             <q-tab name="history" label="История" />
             <q-tab name="files" label="Файлы" />
@@ -76,10 +77,15 @@
           </q-banner>
           <q-tab-panels v-model="tab" keep-alive animated class="bg-transparent">
             <q-tab-panel name="treatment" class="q-px-none">
-              <RichEditor v-model="form.treatment_html" placeholder="Жалобы, анамнез, осмотр, что сделано на приёме…" />
+              <RichEditor v-model="form.treatment_html" placeholder="Жалобы, анамнез, осмотр, что сделано на приёме…"
+                :visit-id="visit.id" section="treatment" :purpose="form.purpose" />
             </q-tab-panel>
             <q-tab-panel name="recommendations" class="q-px-none">
-              <RichEditor v-model="form.recommendations_html" placeholder="Рекомендации владельцу, назначения, питание…" />
+              <RichEditor v-model="form.recommendations_html" placeholder="Рекомендации владельцу, питание, режим…"
+                :visit-id="visit.id" section="recommendations" :purpose="form.purpose" />
+            </q-tab-panel>
+            <q-tab-panel name="prescriptions" class="q-px-none">
+              <PrescriptionsPanel :visit="visit" :can-edit="canEdit" @changed="(v) => (visit = v)" />
             </q-tab-panel>
             <q-tab-panel name="prevention" class="q-px-none">
               <PreventionPanel :visit="visit" :can-edit="canEdit" :prefill="prefill" @changed="(v) => (visit = v)" />
@@ -132,6 +138,7 @@ import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
 import RichEditor from './RichEditor.vue'
+import PrescriptionsPanel from './PrescriptionsPanel.vue'
 import PreventionPanel from './PreventionPanel.vue'
 
 const props = defineProps({ id: { type: String, required: true } })

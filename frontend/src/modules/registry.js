@@ -36,6 +36,7 @@ export default [
       { title: 'Типы клиентов', icon: 'label', to: '/directories/client-types', perm: 'clients.view_clienttype' },
       { title: 'Группы товаров и услуг', icon: 'workspaces', to: '/directories/item-groups', perm: 'catalog.view_itemgroup' },
       { title: 'Единицы измерения', icon: 'straighten', to: '/directories/units', perm: 'catalog.view_unit' },
+      { title: 'Шаблоны медкарты', icon: 'article', to: '/medical/templates', perm: 'medical.view_texttemplate' },
       { title: 'Диагнозы', icon: 'local_hospital', to: '/directories/diagnoses', perm: 'medical.view_diagnosis' },
       { title: 'Виды профилактики', icon: 'vaccines', to: '/directories/prevention-types', perm: 'medical.view_preventiontype' },
       { title: 'Результаты посещения', icon: 'fact_check', to: '/directories/visit-results', perm: 'medical.view_visitresult' },

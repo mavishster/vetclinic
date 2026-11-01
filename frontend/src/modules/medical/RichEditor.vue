@@ -1,9 +1,30 @@
 <template>
   <div>
     <q-editor ref="editor" :model-value="modelValue" min-height="220px" :toolbar="toolbar"
-      :placeholder="placeholder" @update:model-value="emit('update:modelValue', $event)" @keydown="onKeydown" />
+      :placeholder="placeholder" @update:model-value="onChange" @keydown="onKeydown">
+      <template #templates>
+        <q-btn-dropdown v-if="visitId" dense flat no-caps size="sm" icon="article" label="Шаблон" @show="loadTemplates"
+          @before-show="editor.caret.save()">
+          <q-list dense style="min-width: 260px; max-width: 360px">
+            <q-item v-for="t in templates" :key="t.id" v-close-popup clickable @click="insertTemplate(t)">
+              <q-item-section>
+                <q-item-label>{{ t.name }}</q-item-label>
+                <q-item-label caption>{{ [t.is_personal ? 'личный' : '', t.purpose_name].filter(Boolean).join(' · ') }}</q-item-label>
+              </q-item-section>
+            </q-item>
+            <q-item v-if="!templates.length"><q-item-section class="text-grey-7">Шаблонов для этой вкладки нет</q-item-section></q-item>
+            <q-separator />
+            <q-item v-close-popup clickable @click="saveAsTemplate">
+              <q-item-section avatar><q-icon name="bookmark_add" /></q-item-section>
+              <q-item-section>Сохранить текст как мой шаблон</q-item-section>
+            </q-item>
+          </q-list>
+        </q-btn-dropdown>
+      </template>
+    </q-editor>
     <div class="text-caption text-grey-7 q-mt-xs">
       Наберите <b>@</b> или <b>*</b>, чтобы отметить услугу или товар из прайса — потом они одной кнопкой попадут в счёт.
+      <template v-if="visitId">«Шаблон» вставит готовый текст; <b>Tab</b> — к следующему полю для заполнения.</template>
     </div>
 
     <!-- Без анимации: окно получает фокус сразу, и буквы, набранные после «@», не теряются. -->
@@ -33,17 +54,111 @@
 // Текст медкарты: оформление + отметки позиций прайса через «@» (или «*», как в VetManager).
 // Отметка — неизменяемый фрагмент с id единицы товара; сервер собирает их в позиции записи.
 import { ref } from 'vue'
-import { apiGet } from '@/api'
+import { useQuasar } from 'quasar'
+import { apiGet, apiPost } from '@/api'
 import { money } from '@/modules/catalog/money'
 
-defineProps({ modelValue: { type: String, default: '' }, placeholder: { type: String, default: '' } })
+const props = defineProps({
+  modelValue: { type: String, default: '' },
+  placeholder: { type: String, default: '' },
+  visitId: { type: String, default: null }, // для шаблонов: подставить данные этой записи
+  section: { type: String, default: 'treatment' }, // вкладка: treatment | recommendations
+  purpose: { type: String, default: null }, // цель приёма — её шаблоны первыми
+})
 const emit = defineEmits(['update:modelValue'])
+const $q = useQuasar()
 const toolbar = [
   ['bold', 'italic', 'underline', 'strike'],
   ['unordered', 'ordered', 'outdent', 'indent'],
   [{ icon: 'format_size', list: 'no-icons', options: ['p', 'h3', 'h4'] }],
   ['undo', 'redo'],
+  ['templates'],
 ]
+
+// --- Шаблоны: вставка с подстановкой данных записи, поля [___], переход по Tab ---
+const templates = ref([])
+async function loadTemplates() {
+  const params = new URLSearchParams({ section: props.section })
+  if (props.purpose) params.set('purpose', props.purpose)
+  templates.value = (await apiGet(`medical/text-templates/?${params}`)).data ?? []
+}
+
+async function insertTemplate(template) {
+  const { ok, data } = await apiPost(`medical/visits/${props.visitId}/render-template/`, { template: template.id })
+  if (!ok) return $q.notify({ type: 'negative', message: 'Не удалось вставить шаблон' })
+  editor.value.focus()
+  editor.value.caret.restore()
+  inserting = true // вставка — не ввод: поля шаблона не трогаем
+  editor.value.runCmd('insertHTML', data.html)
+  setTimeout(() => {
+    inserting = false
+    goToField(1, true)
+  }, 0)
+}
+let inserting = false
+
+function fieldsInEditor() {
+  return [...editor.value.getContentEl().querySelectorAll('.fill-field')]
+}
+
+// Выделить следующее (step = 1) или предыдущее (−1) поле для заполнения; first — первое в тексте.
+function goToField(step, first = false) {
+  const fields = fieldsInEditor()
+  if (!fields.length) return false
+  const selection = window.getSelection()
+  let target = fields[0]
+  if (!first && selection.rangeCount) {
+    const caret = selection.getRangeAt(0)
+    const inside = fields.find((f) => f.contains(caret.startContainer))
+    const index = inside ? fields.indexOf(inside) : -1
+    if (index >= 0) target = fields[(index + step + fields.length) % fields.length]
+    else {
+      const after = fields.filter((f) => caret.comparePoint(f, 0) > 0)
+      const before = fields.filter((f) => caret.comparePoint(f, 0) < 0)
+      target = step > 0 ? after[0] || fields[0] : before[before.length - 1] || fields[fields.length - 1]
+    }
+  }
+  const range = document.createRange()
+  range.selectNodeContents(target)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  target.scrollIntoView({ block: 'nearest' })
+  return true
+}
+
+function onChange(value) {
+  emit('update:modelValue', value)
+  unwrapFilledField()
+}
+
+// Поле заполнили — убираем подсветку: оно становится обычным текстом.
+function unwrapFilledField() {
+  if (inserting) return
+  const node = window.getSelection()?.anchorNode
+  const element = node && (node.nodeType === 1 ? node : node.parentElement)
+  const field = element?.closest?.('.fill-field')
+  if (!field) return
+  const text = document.createTextNode(field.textContent)
+  field.replaceWith(text)
+  const range = document.createRange()
+  range.setStart(text, text.length)
+  range.collapse(true)
+  window.getSelection().removeAllRanges()
+  window.getSelection().addRange(range)
+  emit('update:modelValue', editor.value.getContentEl().innerHTML)
+}
+
+function saveAsTemplate() {
+  $q.dialog({
+    title: 'Сохранить как мой шаблон', message: 'Название шаблона', prompt: { model: '', type: 'text' },
+    cancel: { label: 'Отмена', flat: true }, ok: { label: 'Сохранить', color: 'primary', unelevated: true },
+  }).onOk(async (name) => {
+    const { ok } = await apiPost('medical/text-templates/', {
+      name, section: props.section, purpose: props.purpose, body_html: props.modelValue, personal: true,
+    })
+    $q.notify(ok ? { type: 'positive', message: 'Шаблон сохранён — он в списке «Шаблон»' } : { type: 'negative', message: 'Не удалось сохранить шаблон' })
+  })
+}
 
 const editor = ref(null)
 const pickerOpen = ref(false)
@@ -53,6 +168,11 @@ const active = ref(0)
 let pending = null // выбранная позиция — вставляется, когда окно поиска закроется и фокус вернётся
 
 function onKeydown(event) {
+  if (event.key === 'Tab' && fieldsInEditor().length) {
+    event.preventDefault()
+    goToField(event.shiftKey ? -1 : 1)
+    return
+  }
   if (event.key !== '@' && event.key !== '*') return
   event.preventDefault()
   editor.value.caret.save()
@@ -97,6 +217,12 @@ function restoreCaret() {
 </script>
 
 <style>
+.fill-field {
+  background: rgba(181, 131, 42, 0.22);
+  border-bottom: 1px dashed #b5832a;
+  border-radius: 3px;
+  padding: 0 3px;
+}
 .item-mention {
   background: rgba(36, 86, 106, 0.12);
   color: #24566a;

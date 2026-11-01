@@ -19,7 +19,16 @@ from core import services as core
 from core.api.directories import DirectoryViewSet
 from core.models import PrintTemplate
 from medical import services
-from medical.models import Diagnosis, Prevention, PreventionType, Visit, VisitDiagnosis, VisitResult
+from medical.models import (
+    Diagnosis,
+    Prescription,
+    Prevention,
+    PreventionType,
+    TextTemplate,
+    Visit,
+    VisitDiagnosis,
+    VisitResult,
+)
 from scheduling import services as scheduling
 
 
@@ -62,8 +71,106 @@ class PreventionSerializer(serializers.ModelSerializer):  # type: ignore[type-ar
         read_only_fields = ["visit", "date", "reminder"]
 
 
+class PrescriptionSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+    route_label = serializers.CharField(source="get_route_display", read_only=True)
+    sell_unit_name = serializers.CharField(source="sell_unit.unit.name", read_only=True, default="")
+
+    class Meta:
+        model = Prescription
+        fields = [
+            "item",
+            "drug_name",
+            "dose",
+            "route",
+            "route_label",
+            "frequency",
+            "days",
+            "comment",
+            "sell_unit",
+            "sell_unit_name",
+            "sell_qty",
+        ]
+        extra_kwargs = {"drug_name": {"required": False, "allow_blank": True}}
+
+
+class TextTemplateSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+    personal = serializers.BooleanField(write_only=True, required=False, default=False)
+    is_personal = serializers.SerializerMethodField()
+    purpose_name = serializers.CharField(source="purpose.name", read_only=True, default="")
+
+    class Meta:
+        model = TextTemplate
+        fields = [
+            "id",
+            "name",
+            "section",
+            "purpose",
+            "purpose_name",
+            "body_html",
+            "is_active",
+            "personal",
+            "is_personal",
+        ]
+
+    def get_is_personal(self, template: TextTemplate) -> bool:
+        return template.owner_id is not None
+
+    def _save(self, template: TextTemplate, data: dict[str, Any]) -> TextTemplate:
+        personal = data.pop("personal", None)
+        for field, value in data.items():
+            setattr(template, field, value)
+        if personal is not None:
+            template.owner = self.context["request"].user if personal else None
+        try:
+            return services.save_template(template)
+        except services.MedicalError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+
+    def create(self, validated_data: dict[str, Any]) -> TextTemplate:
+        return self._save(TextTemplate(), validated_data)
+
+    def update(self, instance: TextTemplate, validated_data: dict[str, Any]) -> TextTemplate:
+        return self._save(instance, validated_data)
+
+
+class TextTemplateViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
+    """Текстовые шаблоны: общие и личные (чужие личные не видны).
+
+    ?section=treatment|recommendations&purpose=<id> — для вкладки записи, по порядку
+    (сначала для цели приёма и личные). GET /variables/ — список переменных.
+    """
+
+    serializer_class = TextTemplateSerializer
+    queryset = TextTemplate.objects.all()
+
+    def get_queryset(self) -> QuerySet[TextTemplate]:
+        from django.db.models import Q
+
+        user = self.request.user
+        return TextTemplate.objects.select_related("purpose").filter(Q(owner=None) | Q(owner=user))
+
+    def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        section = request.query_params.get("section")
+        if section:
+            found = services.templates_for(
+                request.user, section, request.query_params.get("purpose")
+            )
+            return Response(self.get_serializer(found, many=True).data)
+        return super().list(request, *args, **kwargs)
+
+    @action(detail=False, methods=["get"])
+    def variables(self, request: Request) -> Response:
+        return Response(
+            [
+                {"name": f"{{{key}}}", "title": title}
+                for key, (title, _) in services.TEMPLATE_VARIABLES.items()
+            ]
+        )
+
+
 class VisitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     diagnoses = VisitDiagnosisSerializer(many=True, required=False)
+    prescriptions = PrescriptionSerializer(many=True, read_only=True)
     preventions = PreventionSerializer(many=True, read_only=True)
     items = serializers.SerializerMethodField()
     prevention_suggestions = serializers.SerializerMethodField()
@@ -85,6 +192,7 @@ class VisitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "appointment_status", "weight", "temperature", "treatment_html",
             "recommendations_html", "next_visit_date", "diagnoses", "items", "preventions",
             "prevention_suggestions",
+            "prescriptions",
             "created_at", "updated_at",
         ]  # fmt: skip
         read_only_fields = ["pet", "client", "appointment"]
@@ -133,7 +241,12 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     def get_queryset(self) -> QuerySet[Visit]:
         queryset = Visit.objects.select_related(
             "pet", "client", "doctor", "purpose", "result", "appointment"
-        ).prefetch_related("diagnoses__diagnosis", "preventions__type", "preventions__item")
+        ).prefetch_related(
+            "diagnoses__diagnosis",
+            "preventions__type",
+            "preventions__item",
+            "prescriptions__sell_unit__unit",
+        )
         params = self.request.query_params
         for field in ("pet", "client", "doctor"):
             if value := params.get(field):
@@ -226,6 +339,41 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             except services.MedicalError as error:
                 raise self._error(error) from error
         return Response(self.get_serializer(self.get_object()).data)
+
+    @action(detail=True, methods=["post"], url_path="render-template")
+    def render_template(self, request: Request, pk: str | None = None) -> Response:
+        """Текст шаблона для вставки: переменные подставлены, поля [___] отмечены."""
+        visit = self.get_object()
+        template = TextTemplate.objects.filter(pk=request.data.get("template")).first()
+        if template is None:
+            raise ValidationError({"template": ["Шаблон не найден."]})
+        return Response({"html": services.render_template(template, visit)})
+
+    @action(detail=True, methods=["put"])
+    def prescriptions(self, request: Request, pk: str | None = None) -> Response:
+        """Заменить назначения записи: {"rows": [{item, drug_name, dose, route, …}]}."""
+        visit = self.get_object()
+        rows = PrescriptionSerializer(data=request.data.get("rows") or [], many=True)
+        rows.is_valid(raise_exception=True)
+        try:
+            services.save_prescriptions(visit, list(rows.validated_data))
+        except services.MedicalError as error:
+            raise self._error(error) from error
+        return Response(self.get_serializer(self.get_object()).data)
+
+    @action(detail=True, methods=["get"], url_path="print-prescriptions")
+    def print_prescriptions(self, request: Request, pk: str | None = None) -> HttpResponse:
+        """Памятка владельцу: назначения и рекомендации (PDF)."""
+        visit = self.get_object()
+        template = (
+            PrintTemplate.objects.filter(kind="prescriptions", is_active=True)
+            .order_by("name")
+            .first()
+        )
+        if template is None:
+            raise ValidationError({"template": ["Нет печатной формы «Назначения»."]})
+        pdf = core.render_print(template, services.prescriptions_context(visit))
+        return HttpResponse(pdf, content_type="application/pdf")
 
     @action(detail=True, methods=["get"])
     def print(self, request: Request, pk: str | None = None) -> HttpResponse:

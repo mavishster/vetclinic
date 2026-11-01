@@ -183,3 +183,101 @@ class Prevention(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.type}: {self.item or ''} — {self.date:%d.%m.%Y}"
+
+
+class TextTemplate(BaseModel):
+    """Текстовый шаблон медкарты: анамнез, осмотр, рекомендации.
+
+    В тексте — переменные в фигурных скобках ({кличка}, {возраст}, {вес}…), которые
+    подставляются при вставке, и поля для заполнения [___] — врач переходит между ними
+    клавишей Tab. Личный шаблон (owner) виден только его автору, общий — всем.
+    """
+
+    class Section(models.TextChoices):
+        TREATMENT = "treatment", "описание лечения"
+        RECOMMENDATIONS = "recommendations", "рекомендации"
+        BOTH = "both", "обе вкладки"
+
+    name = models.CharField("название", max_length=200)
+    section = models.CharField(
+        "вкладка", max_length=16, choices=Section.choices, default=Section.BOTH
+    )
+    purpose = models.ForeignKey(
+        "scheduling.VisitPurpose",
+        verbose_name="цель обращения",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text="Шаблоны этой цели предлагаются первыми",
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="автор (личный шаблон)",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    body_html = models.TextField("текст")
+    is_active = models.BooleanField("активен", default=True)
+
+    class Meta:
+        verbose_name = "текстовый шаблон"
+        verbose_name_plural = "текстовые шаблоны"
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Prescription(models.Model):
+    """Назначение в записи медкарты: препарат, доза, способ, кратность, длительность.
+
+    Препарат — из прайса (item) или просто названием, если его в прайсе нет.
+    «Продать» — препарат попадёт в счёт по записи (sell_unit × sell_qty).
+    """
+
+    class Route(models.TextChoices):
+        ORAL = "oral", "внутрь"
+        SUBCUTANEOUS = "sc", "подкожно"
+        INTRAMUSCULAR = "im", "внутримышечно"
+        INTRAVENOUS = "iv", "внутривенно"
+        TOPICAL = "topical", "наружно"
+        EYES = "eyes", "в глаза"
+        EARS = "ears", "в уши"
+        RECTAL = "rectal", "ректально"
+        OTHER = "other", "другое"
+
+    visit = models.ForeignKey(Visit, on_delete=models.CASCADE, related_name="prescriptions")
+    item = models.ForeignKey(
+        "catalog.Item",
+        verbose_name="препарат из прайса",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    drug_name = models.CharField("препарат", max_length=255)
+    dose = models.CharField("доза", max_length=100, blank=True)
+    route = models.CharField("способ", max_length=10, choices=Route.choices, default=Route.ORAL)
+    frequency = models.CharField("кратность", max_length=100, blank=True)
+    days = models.PositiveIntegerField("дней", null=True, blank=True)
+    comment = models.CharField("примечание", max_length=255, blank=True)
+    sell_unit = models.ForeignKey(
+        "catalog.ItemUnit",
+        verbose_name="продать в единице",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    sell_qty = QuantityField("продать, количество", null=True, blank=True)
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        default_permissions = ()  # часть записи медкарты
+        ordering = ["position", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.drug_name} {self.dose}".strip()

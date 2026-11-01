@@ -434,14 +434,180 @@ def sample_print_context() -> dict[str, Any]:
 
 
 def invoice_lines(visit: Visit) -> list[dict[str, Any]]:
-    """Позиции, отмеченные в записи через «@», — для счёта: единица, количество, врач."""
-    return [
+    """Позиции для счёта по записи: отмеченные через «@» и назначения с отметкой «продать»."""
+    lines = [
         {"item_unit": line.item_unit_id, "quantity": line.quantity, "performer": visit.doctor_id}
         for line in visit.items.all()
     ]
+    lines += [
+        {"item_unit": p.sell_unit_id, "quantity": p.sell_qty, "performer": visit.doctor_id}
+        for p in visit.prescriptions.exclude(sell_unit=None)
+    ]
+    return lines
 
 
 def get_visit(pk: Any) -> Visit | None:
     return (
         Visit.objects.select_related("pet", "client", "doctor", "appointment").filter(pk=pk).first()
     )
+
+
+# --- Текстовые шаблоны -------------------------------------------------------------
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def age_text(pet: Any, on: date | None = None) -> str:
+    """«3 года 2 мес.», «≈ 2 года», «5 мес.» — для шаблонов и печати."""
+    if not pet.birth_date:
+        return ""
+    on = on or timezone.localdate()
+    months = (on.year - pet.birth_date.year) * 12 + on.month - pet.birth_date.month
+    if on.day < pet.birth_date.day:
+        months -= 1
+    years, rest = divmod(max(months, 0), 12)
+    parts = []
+    if years:
+        parts.append(f"{years} {_plural(years, 'год', 'года', 'лет')}")
+    if rest:
+        parts.append(f"{rest} мес.")
+    if not parts:
+        parts.append(f"{max((on - pet.birth_date).days, 0)} дн.")
+    return ("≈ " if pet.birth_date_approximate else "") + " ".join(parts)
+
+
+def _number(value: Decimal | None) -> str:
+    return "" if value is None else format(value.normalize(), "f").replace(".", ",")
+
+
+# Переменные шаблонов: {название} → значение из записи медкарты.
+TEMPLATE_VARIABLES: dict[str, tuple[str, Any]] = {
+    "кличка": ("кличка питомца", lambda v: v.pet.name),
+    "вид": ("вид животного", lambda v: v.pet.species.name),
+    "порода": ("порода", lambda v: v.pet.breed.name),
+    "пол": ("пол", lambda v: v.pet.get_sex_display()),
+    "возраст": ("возраст на дату приёма", lambda v: age_text(v.pet, timezone.localdate(v.date))),
+    "вес": ("вес с приёма, кг", lambda v: _number(v.weight)),
+    "температура": ("температура с приёма", lambda v: _number(v.temperature)),
+    "дата": ("дата приёма", lambda v: f"{timezone.localtime(v.date):%d.%m.%Y}"),
+    "врач": ("врач (Фамилия И. О.)", lambda v: v.doctor.short_name),
+    "владелец": ("ФИО владельца", lambda v: v.client.full_name),
+}
+_VARIABLE = re.compile(r"\{([а-яё]+)\}", re.IGNORECASE)
+_FIELD = re.compile(r"\[(_{2,})\s*([^\[\]\n]{0,60}?)\s*\]")
+
+
+def render_template(template: Any, visit: Visit) -> str:
+    """Текст шаблона для вставки в запись: переменные подставлены, поля [___] —
+    отмечены, чтобы врач переходил между ними клавишей Tab."""
+    from html import escape
+
+    def variable(match: re.Match[str]) -> str:
+        key = match.group(1).lower()
+        known = TEMPLATE_VARIABLES.get(key)
+        if not known:
+            return match.group(0)
+        value = str(known[1](visit) or "")
+        # Нет значения (например, температуру ещё не измерили) — пусть станет полем для заполнения.
+        return escape(value) if value else f'<span class="fill-field">{key}</span>'
+
+    def field(match: re.Match[str]) -> str:
+        hint = escape(match.group(2).strip())
+        return f'<span class="fill-field">{hint or "___"}</span>'
+
+    return clean(_FIELD.sub(field, _VARIABLE.sub(variable, template.body_html)))
+
+
+def templates_for(user: Any, section: str, purpose: Any = None) -> list[Any]:
+    """Шаблоны для вкладки: общие и личные этого врача; сначала — для цели приёма и личные."""
+    from django.db.models import Q
+
+    from medical.models import TextTemplate
+
+    found = list(
+        TextTemplate.objects.filter(is_active=True)
+        .filter(Q(owner=None) | Q(owner=user))
+        .filter(section__in=[section, TextTemplate.Section.BOTH])
+    )
+    purpose_id = getattr(purpose, "pk", purpose)
+    found.sort(
+        key=lambda t: (str(t.purpose_id) != str(purpose_id), t.owner_id is None, t.name.lower())
+    )
+    return found
+
+
+def save_template(template: Any) -> Any:
+    template.name = template.name.strip()
+    if not template.name:
+        raise MedicalError("Укажите название шаблона.")
+    template.body_html = clean(template.body_html)
+    template.save()
+    return template
+
+
+# --- Назначения --------------------------------------------------------------------
+
+
+@transaction.atomic
+def save_prescriptions(visit: Visit, rows: list[dict[str, Any]]) -> None:
+    """Заменить назначения записи. Препарат — из прайса или названием."""
+    from medical.models import Prescription
+
+    prepared = []
+    for position, row in enumerate(rows):
+        item = row.get("item")
+        name = (row.get("drug_name") or (item.name if item else "")).strip()
+        if not name:
+            raise MedicalError("В назначении не указан препарат.")
+        unit, qty = row.get("sell_unit"), row.get("sell_qty")
+        if unit is not None:
+            if item is None or unit.item_id != item.pk:
+                raise MedicalError(f"«{name}»: единица продажи должна быть этого же препарата.")
+            if qty is None or qty <= 0:
+                raise MedicalError(f"«{name}»: укажите, сколько продать.")
+        days = row.get("days")
+        if days is not None and days <= 0:
+            raise MedicalError(f"«{name}»: число дней должно быть больше нуля.")
+        prepared.append(
+            Prescription(
+                visit=visit, item=item, drug_name=name, dose=(row.get("dose") or "").strip(),
+                route=row.get("route") or Prescription.Route.ORAL,
+                frequency=(row.get("frequency") or "").strip(), days=days,
+                comment=(row.get("comment") or "").strip(), sell_unit=unit,
+                sell_qty=qty if unit is not None else None, position=position,
+            )
+        )  # fmt: skip
+    visit.prescriptions.all().delete()
+    Prescription.objects.bulk_create(prepared)
+
+
+def prescriptions_context(visit: Visit) -> dict[str, Any]:
+    """Данные для печати памятки владельцу."""
+    return {
+        **print_context(visit),
+        "pet_age": age_text(visit.pet, timezone.localdate(visit.date)),
+        "prescriptions": [
+            {
+                "drug": p.drug_name, "dose": p.dose, "route": p.get_route_display(),
+                "frequency": p.frequency, "days": p.days, "comment": p.comment,
+            }
+            for p in visit.prescriptions.all()
+        ],
+    }  # fmt: skip
+
+
+def sample_prescriptions_context() -> dict[str, Any]:
+    return {
+        **sample_print_context(),
+        "pet_age": "3 года 2 мес.",
+        "prescriptions": [
+            {"drug": "Мильбемакс", "dose": "1 таб.", "route": "внутрь",
+             "frequency": "однократно", "days": None, "comment": "утром, с кормом"},
+        ],
+    }  # fmt: skip

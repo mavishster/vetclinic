@@ -3,6 +3,7 @@ import DirectoryPage from '@/components/DirectoryPage.vue'
 export default [
   { path: 'medical', component: () => import('./VisitsPage.vue'), meta: { perm: 'medical.view_visit' } },
   { path: 'medical/prevention', component: () => import('./PreventionReportPage.vue'), meta: { perm: 'medical.view_prevention' } },
+  { path: 'medical/templates', component: () => import('./TemplatesPage.vue'), meta: { perm: 'medical.view_texttemplate' } },
   { path: 'visits/:id', component: () => import('./VisitPage.vue'), props: true, meta: { perm: 'medical.view_visit' } },
   {
     path: 'directories/diagnoses',
