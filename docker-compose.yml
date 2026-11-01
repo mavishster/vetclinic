@@ -1,5 +1,5 @@
 # Окружение разработки: одна команда — `make up` (или `docker compose up --build`).
-# Конфигурация сервера клиники появится на этапе 4 (ADR-021).
+# Сервер клиники — docker-compose.prod.yml (см. docs/INSTALL.md).
 
 services:
   db:
@@ -21,7 +21,9 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      target: dev
     restart: unless-stopped
     env_file: .env
     environment:
@@ -36,7 +38,9 @@ services:
 
   worker:
     # Фоновые задачи (Django-Q2). Тот же образ и код, что у backend.
-    build: ./backend
+    build:
+      context: ./backend
+      target: dev
     restart: unless-stopped
     env_file: .env
     environment:

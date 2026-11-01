@@ -36,6 +36,15 @@ def me(request: Request) -> Response:
     )
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def backup_status(request: Request) -> Response:
+    """Резервные копии: показываются тем, кто настраивает систему (право на роли)."""
+    if not request.user.has_perm("auth.change_group"):
+        return Response({"detail": "Недостаточно прав."}, status=403)
+    return Response(services.backup_status())
+
+
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
 def my_ui_settings(request: Request) -> Response:

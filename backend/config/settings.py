@@ -125,6 +125,12 @@ MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 # Максимальный размер прикрепляемого файла (сканы, снимки, PDF).
 ATTACHMENT_MAX_MB = int(os.environ.get("ATTACHMENT_MAX_MB", "25"))
 
+# Папка резервных копий: система читает из неё статус (backup.json, restore_check.json),
+# который пишет контейнер backup (deploy/backup), и показывает его на главной.
+BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/backups"))
+# Копия старше этого срока — тревога на главной.
+BACKUP_MAX_AGE_HOURS = int(os.environ.get("BACKUP_MAX_AGE_HOURS", "36"))
+
 # Продажа в минус: счёт выполняется, даже если товара по учёту не хватает (решение клиники).
 # Недостающее списывается с последней партии (её цена — себестоимость), остаток уходит
 # в минус и закрывается следующим приходом (ADR-009).

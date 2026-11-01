@@ -1,0 +1,94 @@
+# Сервер клиники. Запуск: make prod-up (см. docs/INSTALL.md).
+# Адрес системы: http://имя-или-IP-сервера (порт 80). База наружу не открыта.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vetclinic}
+      POSTGRES_USER: ${POSTGRES_USER:-vetclinic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD в файле .env}
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+      target: prod
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      DJANGO_DEBUG: "0"
+      MEDIA_ROOT: /app/media
+      BACKUP_DIR: /backups
+    volumes:
+      - media:/app/media
+      - static:/app/staticfiles
+      - ${BACKUP_HOST_DIR:-./backups}:/backups:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      target: prod
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      DJANGO_DEBUG: "0"
+      MEDIA_ROOT: /app/media
+    volumes:
+      - media:/app/media
+    # Ждёт, пока backend применит миграции, затем запускает обработчик очереди.
+    command: >-
+      sh -c "until python manage.py migrate --check >/dev/null 2>&1; do sleep 3; done;
+      python manage.py qcluster"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    # Единая точка входа: интерфейс + /api и /admin в backend.
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - static:/static:ro
+    depends_on:
+      - backend
+
+  backup:
+    # Резервные копии базы и файлов каждый день в BACKUP_TIME; по воскресеньям —
+    # проверка восстановления. Папку копий лучше держать на другом диске или NAS.
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PGHOST: db
+      BACKUP_DIR: /backups
+      MEDIA_DIR: /media
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - ./deploy/backup:/scripts:ro
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
+      - media:/media
+    entrypoint: ["sh", "/scripts/loop.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  media:
+  static:

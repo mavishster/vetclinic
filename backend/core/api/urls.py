@@ -20,5 +20,6 @@ urlpatterns = [
     path("me/", views.me, name="core-me"),
     path("me/pin/", views.set_my_pin, name="core-me-pin"),
     path("me/ui/", views.my_ui_settings, name="core-me-ui"),
+    path("backup-status/", views.backup_status, name="core-backup-status"),
     *router.urls,
 ]

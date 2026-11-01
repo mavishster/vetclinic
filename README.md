@@ -61,4 +61,4 @@ docs/        PROJECT_PLAN.md и записи о решениях (adr/)
 
 ## Сервер клиники
 
-Сервер будет на Windows; способ запуска (Ubuntu в Hyper-V или Docker Desktop + WSL2) выбирается, когда станет известна редакция Windows и характеристики сервера (ADR-021). Инструкция появится на этапе 4.
+Установка, резервные копии и обновление — [docs/INSTALL.md](docs/INSTALL.md): Docker Desktop на Windows 10/11 Pro или Docker в WSL 2 на Windows Server (ADR-023).

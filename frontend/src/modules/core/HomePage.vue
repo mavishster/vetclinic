@@ -1,6 +1,16 @@
 <template>
   <q-page padding class="home">
     <h1 class="text-h5 q-mt-none q-mb-md">Здравствуйте, {{ firstName }}!</h1>
+    <q-banner v-if="backup" rounded class="q-mb-md" :class="backup.ok ? 'row-highlight-positive' : 'row-highlight-negative'">
+      <template #avatar><q-icon :name="backup.ok ? 'cloud_done' : 'warning'" :color="backup.ok ? 'positive' : 'negative'" /></template>
+      <div class="text-weight-medium">Резервные копии{{ backup.ok ? ' в порядке' : ' — нужно внимание' }}</div>
+      <div v-if="backup.backup?.ok" class="text-caption">
+        Последняя копия: {{ fmt(backup.backup.at) }}<template v-if="backup.restore_check?.ok"> · восстановление проверено {{ fmt(backup.restore_check.at) }}
+        ({{ backup.restore_check.clients }} клиентов, {{ backup.restore_check.visits }} записей медкарты)</template>
+      </div>
+      <div v-for="p in backup.problems" :key="p" class="text-caption text-negative">{{ p }}</div>
+    </q-banner>
+
     <div v-if="stock" class="row q-col-gutter-md q-mb-lg">
       <div v-for="card in stockCards" :key="card.title" class="col-12 col-sm-6 col-md-3">
         <q-card flat bordered class="cursor-pointer" @click="$router.push(card.to)">
@@ -32,6 +42,8 @@ import { can, session } from '@/session'
 
 const state = ref('loading') // loading | ok | error
 const stock = ref(null)
+const backup = ref(null)
+const fmt = (stamp) => new Date(stamp.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })
 
 // Склад требует внимания: просрочка, сроки на исходе, ниже минимума.
 const stockCards = computed(() => [
@@ -61,6 +73,10 @@ const bannerClass = computed(
 )
 
 onMounted(async () => {
+  // Резервные копии видят те, кто настраивает систему.
+  if (can('auth.change_group')) {
+    apiGet('core/backup-status/').then(({ ok, data }) => { if (ok && data.configured) backup.value = data })
+  }
   if (can('inventory.view_stockmovement')) {
     apiGet('inventory/stock/summary/').then(({ ok, data }) => { if (ok) stock.value = data })
   }

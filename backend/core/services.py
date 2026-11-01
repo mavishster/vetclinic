@@ -740,3 +740,52 @@ def save_ui_settings(user: User, changes: dict[str, Any]) -> dict[str, Any]:
     user.ui_settings = settings_
     user.save(update_fields=["ui_settings"])
     return settings_
+
+
+# --- Резервные копии ---------------------------------------------------------------
+
+
+def backup_status() -> dict[str, Any]:
+    """Состояние резервных копий для главной: последняя копия, проверка восстановления,
+    и «всё ли в порядке» (копия свежая и удалась, восстановление проверено)."""
+    import json
+    from datetime import datetime
+
+    from django.utils import timezone
+
+    def read(name: str) -> dict[str, Any] | None:
+        path = settings.BACKUP_DIR / f"{name}.json"
+        try:
+            return dict(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return None
+
+    if not settings.BACKUP_DIR.is_dir():
+        # Папки копий нет — это компьютер разработки, а не сервер клиники.
+        return {
+            "configured": False,
+            "backup": None,
+            "restore_check": None,
+            "ok": True,
+            "problems": [],
+        }
+    backup, check = read("backup"), read("restore_check")
+    problems: list[str] = []
+    if backup is None:
+        problems.append("Резервных копий ещё нет — проверьте, что запущен контейнер backup.")
+    elif not backup.get("ok"):
+        problems.append("Последняя резервная копия не удалась.")
+    else:
+        made = datetime.strptime(backup["at"], "%Y-%m-%dT%H:%M:%S%z")
+        hours = (timezone.now() - made).total_seconds() / 3600
+        if hours > settings.BACKUP_MAX_AGE_HOURS:
+            problems.append(f"Последней резервной копии больше {int(hours)} ч.")
+    if check is not None and not check.get("ok"):
+        problems.append("Проверка восстановления из копии не прошла.")
+    return {
+        "configured": True,
+        "backup": backup,
+        "restore_check": check,
+        "ok": not problems,
+        "problems": problems,
+    }
