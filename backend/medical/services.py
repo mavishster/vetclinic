@@ -611,3 +611,28 @@ def sample_prescriptions_context() -> dict[str, Any]:
              "frequency": "однократно", "days": None, "comment": "утром, с кормом"},
         ],
     }  # fmt: skip
+
+
+# --- Для напоминаний ----------------------------------------------------------------
+
+
+def revisits_due(until: date) -> list[Visit]:
+    """Записи с датой повторного приёма до until, после которых у питомца не было приёмов."""
+    from django.db.models import Exists, OuterRef
+
+    later = Visit.objects.filter(pet=OuterRef("pet"), date__gt=OuterRef("date"))
+    return list(
+        Visit.objects.filter(next_visit_date__isnull=False, next_visit_date__lte=until)
+        .annotate(has_later=Exists(later))
+        .filter(has_later=False)
+        .select_related("pet", "client")
+    )
+
+
+def prevention_still_due(prevention_id: Any) -> bool:
+    """Напоминание о процедуре ещё нужно: она не закрыта более новой и не удалена."""
+    return Prevention.objects.filter(pk=prevention_id, reminder=Prevention.Reminder.ACTIVE).exists()
+
+
+def visit_still_needs_revisit(visit_id: Any) -> bool:
+    return any(v.pk == visit_id for v in revisits_due(timezone.localdate() + timedelta(days=3650)))

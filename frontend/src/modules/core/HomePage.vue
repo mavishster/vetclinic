@@ -11,6 +11,12 @@
       <div v-for="p in backup.problems" :key="p" class="text-caption text-negative">{{ p }}</div>
     </q-banner>
 
+    <q-card v-if="toCall" flat bordered class="q-mb-md cursor-pointer" @click="$router.push('/reminders')">
+      <q-card-section class="row items-center no-wrap">
+        <q-icon name="notifications_active" color="primary" size="36px" class="q-mr-md" />
+        <div><div class="text-h5">{{ toCall }}</div><div class="text-caption text-grey-7">к обзвону — напоминания клиентам</div></div>
+      </q-card-section>
+    </q-card>
     <div v-if="stock" class="row q-col-gutter-md q-mb-lg">
       <div v-for="card in stockCards" :key="card.title" class="col-12 col-sm-6 col-md-3">
         <q-card flat bordered class="cursor-pointer" @click="$router.push(card.to)">
@@ -42,6 +48,7 @@ import { can, session } from '@/session'
 
 const state = ref('loading') // loading | ok | error
 const stock = ref(null)
+const toCall = ref(0)
 const backup = ref(null)
 const fmt = (stamp) => new Date(stamp.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })
 
@@ -76,6 +83,9 @@ onMounted(async () => {
   // Резервные копии видят те, кто настраивает систему.
   if (can('auth.change_group')) {
     apiGet('core/backup-status/').then(({ ok, data }) => { if (ok && data.configured) backup.value = data })
+  }
+  if (can('reminders.view_reminder')) {
+    apiGet('reminders/reminders/count/').then(({ ok, data }) => { if (ok) toCall.value = data.to_call })
   }
   if (can('inventory.view_stockmovement')) {
     apiGet('inventory/stock/summary/').then(({ ok, data }) => { if (ok) stock.value = data })

@@ -50,6 +50,7 @@
           <div class="q-gutter-y-md">
             <ClientInvoices v-if="can('billing.view_invoice')" :client="client" />
             <ClientAppointments v-if="can('scheduling.view_appointment')" :client="client" />
+            <ClientReminders v-if="can('reminders.view_reminder')" :client="client" />
             <ClientPets v-if="can('clients.view_pet')" :client="client" />
             <ClientContracts v-if="can('clients.view_clientcontract')" :client-id="client.id" @changed="reloadClient" />
             <AttachmentsBlock v-if="can('core.view_attachment')" ref="files" owner-type="clients.client"
@@ -72,6 +73,8 @@ import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
 // Записи на приём — блок модуля «Календарь», встраивается в карточку клиента.
 import ClientAppointments from '@/modules/scheduling/ClientAppointments.vue'
+// Напоминания — блок модуля «Напоминания».
+import ClientReminders from '@/modules/reminders/ClientReminders.vue'
 // Счета и баланс — блок модуля «Счета».
 import ClientInvoices from '@/modules/billing/ClientInvoices.vue'
 import ClientContracts from './ClientContracts.vue'

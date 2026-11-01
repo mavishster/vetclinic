@@ -35,6 +35,7 @@ PROJECT_APPS = [
     "billing",
     "inventory",
     "cash",
+    "reminders",
     "sync",
 ]
 
@@ -135,6 +136,9 @@ BACKUP_MAX_AGE_HOURS = int(os.environ.get("BACKUP_MAX_AGE_HOURS", "36"))
 # Недостающее списывается с последней партии (её цена — себестоимость), остаток уходит
 # в минус и закрывается следующим приходом (ADR-009).
 ALLOW_NEGATIVE_STOCK = os.environ.get("ALLOW_NEGATIVE_STOCK", "1") == "1"
+
+# Напоминания о профилактике — за сколько дней до срока попадать в список обзвона.
+PREVENTION_REMIND_DAYS = int(os.environ.get("PREVENTION_REMIND_DAYS", "7"))
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 
 # Для собственных моделей ключи будут UUID (ADR-002, этап 1);

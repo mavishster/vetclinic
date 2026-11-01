@@ -217,3 +217,28 @@ def book_repeat(
 def get_appointment(pk: Any) -> Appointment | None:
     """Запись на приём по id — для других модулей (медкарта открывает приём по записи)."""
     return Appointment.objects.select_related("pet", "purpose", "doctor").filter(pk=pk).first()
+
+
+# --- Для напоминаний ----------------------------------------------------------------
+
+
+def planned_on(day: date) -> QuerySet[Appointment]:
+    """Запланированные записи на день — напомнить накануне."""
+    start, end = day_bounds(day)
+    return Appointment.objects.filter(
+        status=S.PLANNED, start__gte=start, start__lt=end
+    ).select_related("client", "pet", "purpose", "doctor")
+
+
+def is_planned(appointment_id: Any) -> bool:
+    return Appointment.objects.filter(pk=appointment_id, status__in=ACTIVE).exists()
+
+
+def booked_since(client: Any, pet: Any, since: datetime) -> bool:
+    """Клиент записался (или пришёл) после момента since — по этому питомцу или вообще."""
+    found = Appointment.objects.filter(client=client, created_at__gte=since).exclude(
+        status=S.CANCELLED
+    )
+    if pet is not None:
+        found = found.filter(Q(pet=pet) | Q(pet=None))
+    return found.exists()

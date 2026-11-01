@@ -211,6 +211,7 @@ PERMISSION_HINTS = {
     "cash.cashoperation": "Внесение, выдача, перемещение денег, возврат аванса.",
     "cash.cashmovement": "Остатки в кассах и движение денег.",
     "cash.cashregister": "Список касс.",
+    "reminders.reminder": "Напоминания клиентам: список для обзвона и итоги звонков.",
 }
 
 
@@ -355,6 +356,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "clients.street": [_V, _E],
             "clients.breed": [_V, _E],
             "clients.color": [_V, _E],
+            "reminders.reminder": [_V, _E],
             "scheduling.appointment": [_V, _E, _D],
             "medical.visit": [_V],
             "medical.prevention": [_V],
