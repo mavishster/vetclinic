@@ -38,6 +38,7 @@
 - Деньги — `Decimal(12,2)`, количества — `Decimal(14,3)`; `float` для денег и количеств запрещён (ADR-011).
 - Время — всегда с часовым поясом.
 - Все модели наследуют `core.models.BaseModel` (данные клиники — `ClinicScopedModel`): UUID, служебные поля, мягкое удаление (ADR-002, ADR-003). Деньги и количества — `core.fields.MoneyField` и `QuantityField`.
+- Особое право (откат, возврат, видимость данных) — `Meta.permissions` модели; проверка в API — `core.api.permissions.require_special()`, в интерфейсе — `can('модуль.право')`. Себестоимость — `can_view_cost()`.
 - Новая модель с правами — добавьте пояснение для таблицы ролей в `core.services.PERMISSION_HINTS` (тест не даст забыть).
 - Новый справочник: модель наследует `core.models.Directory`, API — `core.api.directories.DirectoryViewSet`, админка — `core.admin.DirectoryAdmin`. Обычно это несколько строк (пример — `clients`: виды и породы).
 - Новый документ: модель наследует `core.models.Document`, задаёт `doc_type` (для нумерации) и при необходимости `on_execute()` / `on_rollback()`. Выполнение и откат — только `core.services.execute_document()` / `rollback_document()`.

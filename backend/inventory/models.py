@@ -81,6 +81,9 @@ class StockDocument(Document):
     reason = models.CharField("причина списания", max_length=200, blank=True)
 
     class Meta(Document.Meta):
+        permissions = [
+            ("rollback_stockdocument", "Откатывать выполненные складские документы"),
+        ]
         verbose_name = "складской документ"
         verbose_name_plural = "складские документы"
         # Нумерация своя у каждого вида: приход № K1-000001 и расход № K1-000001 — разные.

@@ -16,7 +16,7 @@
         <q-btn v-if="form.id && form.lines.length" flat icon="qr_code_2" label="Этикетки" @click="printLabels">
           <q-tooltip>Этикетки со штрихкодами на каждую строку — по количеству</q-tooltip>
         </q-btn>
-        <q-btn v-if="executed && canEdit" outline color="warning" icon="undo" label="Откатить" :loading="busy === 'rollback'" @click="rollback" />
+        <q-btn v-if="executed && can('inventory.rollback_stockdocument')" outline color="warning" icon="undo" label="Откатить" :loading="busy === 'rollback'" @click="rollback" />
       </div>
 
       <div class="row q-col-gutter-sm q-mb-md">

@@ -2,6 +2,16 @@
   <q-page padding>
     <div class="row items-center q-mb-md q-gutter-sm">
       <h1 class="text-h5 q-my-none col-grow">Роли и права</h1>
+      <q-btn-dropdown v-if="can('auth.add_group')" outline color="primary" icon="auto_awesome" label="По шаблону" no-caps>
+        <q-list style="max-width: 360px">
+          <q-item v-for="t in templates" :key="t.code" v-close-popup clickable @click="openEditor(null, t)">
+            <q-item-section>
+              <q-item-label>{{ t.name }}</q-item-label>
+              <q-item-label caption>{{ t.description }}</q-item-label>
+            </q-item-section>
+          </q-item>
+        </q-list>
+      </q-btn-dropdown>
       <q-btn v-if="can('auth.add_group')" color="primary" icon="add" label="Новая роль" unelevated
         @click="openEditor()" />
     </div>
@@ -97,6 +107,22 @@
               разрешается. Редактирование и удаление включают просмотр.
             </div>
 
+            <div v-if="specialModules.length">
+              <div class="text-subtitle2">Особые права</div>
+              <div class="text-caption text-grey-7 q-mb-xs">Отдельно от обычных: откаты, возвраты денег, закрытие кассы, себестоимость.</div>
+              <q-list bordered separator dense class="rounded-borders">
+                <template v-for="module in specialModules" :key="module.code">
+                  <q-item-label header class="q-py-xs">{{ module.title }}</q-item-label>
+                  <q-item v-for="sp in module.special" :key="sp.code" tag="label">
+                    <q-item-section side>
+                      <q-checkbox v-model="editing.special" :val="sp.code" :disable="!canEdit" dense />
+                    </q-item-section>
+                    <q-item-section>{{ sp.title }}</q-item-section>
+                  </q-item>
+                </template>
+              </q-list>
+            </div>
+
             <q-select v-model="editing.users" :options="userOptions" option-value="id" option-label="label"
               emit-value map-options multiple use-chips outlined use-input input-debounce="0"
               label="Сотрудники в роли" :readonly="!canEdit" @filter="filterUsers" />
@@ -125,16 +151,20 @@ const $q = useQuasar()
 const roles = ref([])
 const loading = ref(false)
 const matrix = ref({ modules: [], actions: [] })
+const templates = ref([])
+const specialModules = computed(() => matrix.value.modules.filter((m) => m.special?.length))
 const users = ref([])
 const userOptions = ref([])
 
 async function load() {
   loading.value = true
-  const [rolesResult, matrixResult, usersResult] = await Promise.all([
+  const [rolesResult, matrixResult, usersResult, templatesResult] = await Promise.all([
     apiGet('core/roles/'),
     apiGet('core/roles/matrix/'),
     can('core.view_user') ? apiGet('core/users/') : Promise.resolve({ ok: true, data: [] }),
+    apiGet('core/roles/templates/'),
   ])
+  templates.value = templatesResult.data ?? []
   roles.value = rolesResult.ok ? rolesResult.data : []
   if (matrixResult.ok) matrix.value = matrixResult.data
   users.value = (usersResult.data ?? []).map((u) => ({ id: u.id, label: u.full_name || u.username }))
@@ -162,10 +192,14 @@ const canEdit = computed(() => can(editing.value.id ? 'auth.change_group' : 'aut
 
 const allEntities = () => matrix.value.modules.flatMap((m) => m.entities.map((e) => e.code))
 
-function openEditor(role = null) {
+function openEditor(role = null, template = null) {
   errors.value = {}
-  const access = Object.fromEntries(allEntities().map((code) => [code, [...(role?.access[code] ?? [])]]))
-  editing.value = role ? { ...role, users: [...role.users], access } : { name: '', users: [], access }
+  const source = role?.access || template?.access || {}
+  const access = Object.fromEntries(allEntities().map((code) => [code, [...(source[code] ?? [])]]))
+  const special = [...(role?.special || template?.special || [])]
+  editing.value = role
+    ? { ...role, users: [...role.users], access, special }
+    : { name: template?.name || '', users: [], access, special }
   // Разделы с частичными правами раскрыты сразу — чтобы было видно, что именно разрешено.
   expanded.value = Object.fromEntries(
     matrix.value.modules.map((m) => [m.code, matrix.value.actions.some((a) => moduleState(m, a.code) === null)]),
@@ -224,7 +258,7 @@ function filterUsers(text, update) {
 
 async function save() {
   saving.value = true
-  const body = { name: editing.value.name, access: editing.value.access }
+  const body = { name: editing.value.name, access: editing.value.access, special: editing.value.special }
   if (can('core.view_user')) body.users = editing.value.users
   const { ok, data } = editing.value.id
     ? await apiPatch(`core/roles/${editing.value.id}/`, body)

@@ -2,7 +2,7 @@
   <q-page padding>
     <div class="row items-center q-mb-md q-gutter-sm">
       <h1 class="text-h5 q-my-none col-grow">Остатки</h1>
-      <div class="text-subtitle1">На сумму: <b>{{ money(totals.cost) }}</b></div>
+      <div v-if="showCost" class="text-subtitle1">На сумму: <b>{{ money(totals.cost) }}</b></div>
     </div>
     <q-tabs v-model="tab" dense align="left" no-caps active-color="primary" indicator-color="primary" class="q-mb-md">
       <q-tab name="stock" label="Остатки" />
@@ -42,6 +42,7 @@
 // Остатки по товарам, складам и партиям. Остаток — в единице учёта (таб., мл, шт.).
 import { onMounted, ref } from 'vue'
 import { apiGet } from '@/api'
+import { can } from '@/session'
 import { money } from '@/modules/catalog/money'
 import { useRoute } from 'vue-router'
 import LowStock from './LowStock.vue'
@@ -63,13 +64,14 @@ function expiryClass(iso) {
   const days = (new Date(iso) - new Date()) / 86400000
   return days < 0 ? 'text-negative text-weight-bold' : days < 90 ? 'text-warning text-weight-medium' : ''
 }
+const showCost = can('catalog.view_cost') // закупочные цены — только с особым правом
 const columns = [
   { name: 'item', label: 'Товар', field: 'item_name', align: 'left', sortable: true, classes: 'text-weight-medium' },
   { name: 'warehouse', label: 'Склад', field: 'warehouse_name', align: 'left', sortable: true },
   { name: 'series', label: 'Серия', field: 'series', align: 'left' },
   { name: 'expiry', label: 'Годен до', field: 'expiry_date', align: 'left', sortable: true },
   { name: 'qty', label: 'Остаток', field: (r) => `${qty(r.qty)} ${r.unit}`, align: 'right' },
-  { name: 'cost', label: 'По закупке', field: (r) => money(r.cost), align: 'right' },
+  ...(showCost ? [{ name: 'cost', label: 'По закупке', field: (r) => money(r.cost), align: 'right' }] : []),
 ]
 
 async function load() {

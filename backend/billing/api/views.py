@@ -18,11 +18,18 @@ from billing import services
 from billing.models import Invoice, InvoiceLine
 from clients import services as clients
 from core import services as core
+from core.api.permissions import can_view_cost, require_special
 from core.models import DocumentError, PrintTemplate
 from staff import services as staff
 
 
 class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+    def to_representation(self, line: Any) -> dict[str, Any]:
+        data = super().to_representation(line)
+        if not can_view_cost(self.context.get("request")):
+            data.pop("cost", None)  # себестоимость — только с особым правом
+        return data
+
     name = serializers.CharField(source="item.name", read_only=True)
     kind = serializers.CharField(source="item.kind", read_only=True)
     unit_name = serializers.SerializerMethodField()
@@ -206,6 +213,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
 
     @action(detail=True, methods=["post"])
     def rollback(self, request: Request, pk: str | None = None) -> Response:
+        require_special(request, "billing.rollback_invoice")
         return self._run(core.rollback_document)
 
     @action(detail=False, methods=["get"])
@@ -308,4 +316,10 @@ class PerformersReport(APIView):
         except ValueError as error:
             raise ValidationError({"from": ["Даты в формате ГГГГ-ММ-ДД."]}) from error
         rows = services.revenue_by_performer(date_from, date_to)
-        return Response([{**r, "amount": str(r["amount"]), "cost": str(r["cost"])} for r in rows])
+        show_cost = can_view_cost(request)
+        return Response(
+            [
+                {**r, "amount": str(r["amount"]), "cost": str(r["cost"]) if show_cost else None}
+                for r in rows
+            ]
+        )

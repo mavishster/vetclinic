@@ -9,7 +9,7 @@
       </div>
       <q-btn v-if="can('cash.add_payment') && balance < 0" flat dense color="positive" icon="payments" label="Оплатить долг" @click="payOpen = true" />
       <q-btn v-if="can('cash.add_payment')" flat dense color="primary" icon="savings" label="Аванс" @click="advanceOpen = true" />
-      <q-btn v-if="can('cash.add_cashoperation') && balance > 0" flat dense color="warning" icon="undo" label="Вернуть аванс" @click="returnOpen = true" />
+      <q-btn v-if="can('cash.return_advance') && balance > 0" flat dense color="warning" icon="undo" label="Вернуть аванс" @click="returnOpen = true" />
       <q-btn v-if="can('billing.add_invoice')" flat dense color="primary" icon="add" label="Новый счёт"
         :to="{ path: '/invoices/new', query: { client: client.id, client_name: client.full_name } }" />
     </q-card-section>

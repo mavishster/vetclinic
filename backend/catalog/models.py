@@ -126,6 +126,9 @@ class Item(BaseModel):
     )
 
     class Meta:
+        permissions = [
+            ("view_cost", "Видеть себестоимость, закупочные цены и прибыль"),
+        ]
         verbose_name = "товар или услуга"
         verbose_name_plural = "товары и услуги"
         ordering = ["name"]

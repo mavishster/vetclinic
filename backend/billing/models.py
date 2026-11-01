@@ -78,6 +78,9 @@ class Invoice(Document):
     mutable_after_execution = ("doctor", "pet", "paid_amount")
 
     class Meta(Document.Meta):
+        permissions = [
+            ("rollback_invoice", "Откатывать выполненные и оплаченные счета"),
+        ]
         verbose_name = "счёт"
         verbose_name_plural = "счета"
 

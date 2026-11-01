@@ -10,8 +10,9 @@
       no-data-label="За период нет выполненных счетов">
       <template #bottom-row>
         <q-tr class="text-weight-bold"><q-td>Итого</q-td><q-td class="text-right">{{ totals.lines }}</q-td>
-          <q-td class="text-right">{{ money(totals.amount) }}</q-td><q-td class="text-right">{{ money(totals.cost) }}</q-td>
-          <q-td class="text-right">{{ money(totals.amount - totals.cost) }}</q-td></q-tr>
+          <q-td class="text-right">{{ money(totals.amount) }}</q-td>
+          <template v-if="showCost"><q-td class="text-right">{{ money(totals.cost) }}</q-td>
+            <q-td class="text-right">{{ money(totals.amount - totals.cost) }}</q-td></template></q-tr>
       </template>
     </q-table>
   </q-page>
@@ -20,6 +21,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { apiGet } from '@/api'
+import { can } from '@/session'
 import { money } from '@/modules/catalog/money'
 
 const today = new Date()
@@ -28,12 +30,18 @@ const from = ref(iso(new Date(today.getFullYear(), today.getMonth(), 1)))
 const to = ref(iso(today))
 const rows = ref([])
 const loading = ref(false)
+// Себестоимость и прибыль — только с особым правом «Видеть себестоимость».
+const showCost = can('catalog.view_cost')
 const columns = [
   { name: 'name', label: 'Исполнитель', field: 'name', align: 'left', classes: 'text-weight-medium' },
   { name: 'lines', label: 'Позиций', field: 'lines', align: 'right' },
   { name: 'amount', label: 'Выручка', field: (r) => money(r.amount), align: 'right' },
-  { name: 'cost', label: 'Себестоимость', field: (r) => money(r.cost), align: 'right' },
-  { name: 'margin', label: 'Валовая прибыль', field: (r) => money(Number(r.amount) - Number(r.cost)), align: 'right' },
+  ...(showCost
+    ? [
+        { name: 'cost', label: 'Себестоимость', field: (r) => money(r.cost), align: 'right' },
+        { name: 'margin', label: 'Валовая прибыль', field: (r) => money(Number(r.amount) - Number(r.cost)), align: 'right' },
+      ]
+    : []),
 ]
 const totals = computed(() => rows.value.reduce((t, r) => ({
   lines: t.lines + r.lines, amount: t.amount + Number(r.amount), cost: t.cost + Number(r.cost),

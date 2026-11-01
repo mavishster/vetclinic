@@ -14,6 +14,7 @@ from catalog import services
 from catalog.models import CombinationLine, Item, ItemGroup, ItemUnit, Kind, Unit
 from core import services as core
 from core.api.directories import DirectoryViewSet
+from core.api.permissions import can_view_cost
 
 
 def _text(value: Any) -> str | None:
@@ -119,8 +120,16 @@ class ItemSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     def create(self, validated_data: dict[str, Any]) -> Item:
         return self._save(Item(), validated_data)
 
+    def to_representation(self, item: Item) -> dict[str, Any]:
+        data = super().to_representation(item)
+        if not can_view_cost(self.context.get("request")):
+            data["manual_cost"] = None  # себестоимость — только с особым правом
+        return data
+
     def update(self, instance: Item, validated_data: dict[str, Any]) -> Item:
         validated_data.pop("kind", None)  # товар не превращается в услугу
+        if not can_view_cost(self.context.get("request")):
+            validated_data.pop("manual_cost", None)  # не видел — не может и стереть
         return self._save(instance, validated_data)
 
 

@@ -26,13 +26,17 @@ class RoleSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         required=False,
         help_text='{"clients.species": ["view", "edit"], "core.printtemplate": ["view"], ...}',
     )
+    special = serializers.ListField(
+        child=serializers.CharField(), required=False, help_text='["billing.rollback_invoice", ...]'
+    )
 
     class Meta:
         model = Group
-        fields = ["id", "name", "users", "access"]
+        fields = ["id", "name", "users", "access", "special"]
 
     def to_representation(self, role: Group) -> dict[str, Any]:
         data = super().to_representation(role)
+        data["special"] = sorted(services.special_of(role))
         data["access"] = {
             entity: sorted(services.entity_actions(role, entity))
             for entity in sorted(services.permission_entities())
@@ -50,15 +54,26 @@ class RoleSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     @transaction.atomic
     def save(self, **kwargs: Any) -> Group:
         access = self.validated_data.pop("access", None)
+        special = self.validated_data.pop("special", None)
         role: Group = super().save(**kwargs)
         for entity, actions in (access or {}).items():
             services.set_entity_permissions(role, entity, set(actions))
+        if special is not None:
+            try:
+                services.set_special_permissions(role, set(special))
+            except ValueError as error:
+                raise serializers.ValidationError({"special": [str(error)]}) from error
         return role
 
 
 class RoleViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     queryset = Group.objects.order_by("name")
     serializer_class = RoleSerializer
+
+    @action(detail=False, methods=["get"])
+    def templates(self, request: Request) -> Response:
+        """Шаблоны ролей: «Врач», «Регистратор», «Кассир», «Кладовщик», «Руководитель»."""
+        return Response(services.role_templates())
 
     @action(detail=False, methods=["get"])
     def matrix(self, request: Request) -> Response:

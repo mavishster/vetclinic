@@ -16,6 +16,7 @@ from cash.models import CashMovement, CashOperation, CashRegister, CashShift, Pa
 from clients.models import Client
 from core import services as core
 from core.api.directories import DirectoryViewSet
+from core.api.permissions import require_special
 from core.models import DocumentError
 
 
@@ -99,6 +100,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):  # type: ignore[type-arg]
 
     @action(detail=True, methods=["post"])
     def refund(self, request: Request, pk: str | None = None) -> Response:
+        require_special(request, "cash.refund_payment")
         payment = self.get_object()
         try:
             core.rollback_document(payment)
@@ -144,6 +146,8 @@ class OperationSerializer(serializers.ModelSerializer):  # type: ignore[type-arg
 
     def create(self, validated_data: dict[str, Any]) -> CashOperation:
         pin = validated_data.pop("pin", "")
+        if validated_data.get("kind") == CashOperation.Kind.ADVANCE_RETURN:
+            require_special(self.context["request"], "cash.return_advance")
         try:
             return services.operate(
                 CashOperation(**validated_data), self.context["request"].user, pin
@@ -193,6 +197,7 @@ class CashViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["post"], url_path="close-shift")
     def close_shift(self, request: Request) -> Response:
+        require_special(request, "cash.close_shift")
         register = CashRegister.objects.filter(pk=request.data.get("register")).first()
         if register is None:
             raise ValidationError({"register": ["Выберите кассу."]})

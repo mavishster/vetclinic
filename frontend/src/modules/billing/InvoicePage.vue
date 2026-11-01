@@ -20,7 +20,7 @@
         </template>
         <q-btn v-if="executed && Number(form.unpaid) > 0 && can('cash.add_payment')" color="positive" unelevated icon="payments"
           label="Оплатить" @click="payOpen = true" />
-        <q-btn v-if="executed && canEdit" outline color="warning" icon="undo" label="Откатить в черновик" :loading="busy === 'rollback'" @click="rollback" />
+        <q-btn v-if="executed && can('billing.rollback_invoice')" outline color="warning" icon="undo" label="Откатить в черновик" :loading="busy === 'rollback'" @click="rollback" />
       </div>
 
       <div class="row q-col-gutter-sm q-mb-sm">

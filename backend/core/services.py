@@ -146,10 +146,16 @@ class PermissionEntity(TypedDict):
     hint: str  # что именно разрешается — первая фраза описания модели
 
 
+class SpecialPermission(TypedDict):
+    code: str  # «приложение.право», например «billing.rollback_invoice»
+    title: str
+
+
 class PermissionModule(TypedDict):
     code: str
     title: str
     entities: list[PermissionEntity]
+    special: list[SpecialPermission]  # особые права раздела: откаты, возвраты, себестоимость…
 
 
 def _entity_title(model: type[Any]) -> str:
@@ -246,9 +252,182 @@ def permission_modules() -> list[PermissionModule]:
             }
             for code in _EXTRA_ENTITIES.get(app, [])
         ]
+        special: list[SpecialPermission] = [
+            {"code": f"{app}.{codename}", "title": str(name)}
+            for model in models_with_rights
+            for codename, name in model._meta.permissions
+        ]
         if entities:
             title = _MODULE_TITLES.get(app, str(config.verbose_name))
-            result.append({"code": app, "title": title, "entities": entities})
+            result.append({"code": app, "title": title, "entities": entities, "special": special})
+    return result
+
+
+def special_permissions() -> set[str]:
+    return {sp["code"] for module in permission_modules() for sp in module["special"]}
+
+
+def _special(code: str) -> Permission:
+    app_label, codename = code.split(".")
+    return Permission.objects.get(content_type__app_label=app_label, codename=codename)
+
+
+def set_special_permissions(role: Group, codes: set[str]) -> None:
+    """Назначить роли особые права (остальные особые права снимаются)."""
+    known = special_permissions()
+    unknown = codes - known
+    if unknown:
+        raise ValueError(f"Неизвестные особые права: {', '.join(sorted(unknown))}")
+    for code in known:
+        permission = _special(code)
+        if code in codes:
+            role.permissions.add(permission)
+        else:
+            role.permissions.remove(permission)
+
+
+def special_of(role: Group) -> set[str]:
+    granted = {
+        f"{p.content_type.app_label}.{p.codename}"
+        for p in role.permissions.select_related("content_type")
+    }
+    return granted & special_permissions()
+
+
+# Шаблоны ролей: типичные наборы прав, с которых удобно начать. «edit» = добавлять и менять.
+_V, _E, _D = "view", "edit", "delete"
+_DIRECTORIES_VIEW = [
+    "clients.species",
+    "clients.breed",
+    "clients.color",
+    "clients.city",
+    "clients.street",
+    "clients.clienttype",
+    "clients.clientsource",
+    "catalog.unit",
+    "catalog.itemgroup",
+    "scheduling.visitpurpose",
+    "medical.diagnosis",
+    "medical.visitresult",
+    "medical.preventiontype",
+    "staff.position",
+    "inventory.warehouse",
+    "core.filecategory",
+    "cash.cashregister",
+]
+ROLE_TEMPLATES: list[dict[str, Any]] = [
+    {
+        "code": "doctor",
+        "name": "Врач",
+        "description": "Приём: календарь, медкарта, профилактика, счета по приёму.",
+        "access": {
+            **{code: [_V] for code in _DIRECTORIES_VIEW},
+            "clients.client": [_V, _E],
+            "clients.pet": [_V, _E],
+            "clients.clientcontract": [_V],
+            "clients.clientledger": [_V],
+            "scheduling.appointment": [_V, _E],
+            "medical.visit": [_V, _E],
+            "medical.prevention": [_V, _E],
+            "medical.diagnosis": [_V, _E],
+            "catalog.item": [_V],
+            "inventory.stockmovement": [_V],
+            "inventory.batch": [_V],
+            "billing.invoice": [_V, _E],
+            "core.attachment": [_V, _E],
+            "staff.workinterval": [_V],
+        },
+        "special": [],
+    },
+    {
+        "code": "registrar",
+        "name": "Регистратор",
+        "description": "Ресепшен: клиенты, питомцы, договоры, запись, счета, приём оплат.",
+        "access": {
+            **{code: [_V] for code in _DIRECTORIES_VIEW},
+            "clients.client": [_V, _E],
+            "clients.pet": [_V, _E],
+            "clients.clientcontract": [_V, _E],
+            "clients.clientledger": [_V],
+            "clients.city": [_V, _E],
+            "clients.street": [_V, _E],
+            "clients.breed": [_V, _E],
+            "clients.color": [_V, _E],
+            "scheduling.appointment": [_V, _E, _D],
+            "medical.visit": [_V],
+            "medical.prevention": [_V],
+            "catalog.item": [_V],
+            "billing.invoice": [_V, _E],
+            "cash.payment": [_V, _E],
+            "cash.cashmovement": [_V],
+            "core.attachment": [_V, _E],
+            "staff.workinterval": [_V],
+        },
+        "special": [],
+    },
+    {
+        "code": "cashier",
+        "name": "Кассир",
+        "description": "Касса: оплаты и их возврат, авансы, внесение и выдача, закрытие кассы.",
+        "access": {
+            **{code: [_V] for code in _DIRECTORIES_VIEW},
+            "clients.client": [_V],
+            "clients.clientledger": [_V],
+            "catalog.item": [_V],
+            "billing.invoice": [_V, _E],
+            "cash.payment": [_V, _E],
+            "cash.cashoperation": [_V, _E],
+            "cash.cashmovement": [_V],
+            "cash.cashshift": [_V],
+            "core.counterparty": [_V],
+        },
+        "special": ["cash.refund_payment", "cash.return_advance", "cash.close_shift"],
+    },
+    {
+        "code": "storekeeper",
+        "name": "Кладовщик",
+        "description": "Склад: приходы, расходы, инвентаризации, остатки; прайс; закупочные цены.",
+        "access": {
+            **{code: [_V] for code in _DIRECTORIES_VIEW},
+            "catalog.item": [_V, _E],
+            "catalog.unit": [_V, _E],
+            "catalog.itemgroup": [_V, _E],
+            "inventory.stockdocument": [_V, _E, _D],
+            "inventory.batch": [_V],
+            "inventory.stockmovement": [_V],
+            "inventory.minstock": [_V, _E, _D],
+            "inventory.warehouse": [_V, _E],
+            "inventory.manufacturer": [_V, _E],
+            "core.counterparty": [_V, _E],
+        },
+        "special": ["inventory.rollback_stockdocument", "catalog.view_cost"],
+    },
+    {
+        "code": "manager",
+        "name": "Руководитель",
+        "description": "Всё: все разделы и справочники, особые права, настройка ролей.",
+        "access": "all",
+        "special": "all",
+    },
+]
+
+
+def role_templates() -> list[dict[str, Any]]:
+    """Шаблоны ролей, развёрнутые под текущий набор разделов (неизвестное отбрасывается)."""
+    entities = permission_entities()
+    specials = special_permissions()
+    result = []
+    for template in ROLE_TEMPLATES:
+        if template["access"] == "all":
+            access = {code: [_V, _E, _D] for code in entities}
+        else:
+            access = {c: a for c, a in template["access"].items() if c in entities}
+        special = (
+            sorted(specials)
+            if template["special"] == "all"
+            else [c for c in template["special"] if c in specials]
+        )
+        result.append({**template, "access": access, "special": special})
     return result
 
 

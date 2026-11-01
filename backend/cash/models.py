@@ -52,6 +52,9 @@ class CashShift(BaseModel):
     closing_balance = MoneyField("остаток на закрытии", default=Decimal("0"))
 
     class Meta:
+        permissions = [
+            ("close_shift", "Закрывать кассу (смену)"),
+        ]
         verbose_name = "смена кассы"
         verbose_name_plural = "смены кассы"
         ordering = ["-opened_at"]
@@ -103,6 +106,9 @@ class Payment(Document):
     allocated = MoneyField("распределено на счета", default=Decimal("0"))
 
     class Meta(Document.Meta):
+        permissions = [
+            ("refund_payment", "Возвращать оплаты клиентам"),
+        ]
         verbose_name = "оплата"
         verbose_name_plural = "оплаты"
 
@@ -166,6 +172,9 @@ class CashOperation(Document):
     purpose = models.CharField("назначение", max_length=255, blank=True)
 
     class Meta(Document.Meta):
+        permissions = [
+            ("return_advance", "Возвращать аванс клиенту"),
+        ]
         verbose_name = "кассовая операция"
         verbose_name_plural = "кассовые операции"
 

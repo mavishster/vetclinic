@@ -17,6 +17,7 @@ from catalog import services as catalog
 from catalog.models import Item, Kind
 from core import services as core
 from core.api.directories import DirectoryViewSet
+from core.api.permissions import can_view_cost, require_special
 from core.models import DocumentError, PrintTemplate
 from inventory import importing, labels, services
 from inventory.models import (
@@ -119,6 +120,14 @@ class DocumentSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         ]
         read_only_fields = ["number", "status", "executed_at"]
 
+    def to_representation(self, document: StockDocument) -> dict[str, Any]:
+        data = super().to_representation(document)
+        if not can_view_cost(self.context.get("request")):
+            data["total"] = None  # закупочные цены — только с особым правом
+            for line in data.get("lines", []):
+                line["price"] = None
+        return data
+
     def get_total(self, document: StockDocument) -> str | None:
         """Сумма прихода по закупочным ценам."""
         if document.kind != StockDocument.Kind.RECEIPT:
@@ -209,6 +218,7 @@ class DocumentViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
 
     @action(detail=True, methods=["post"])
     def rollback(self, request: Request, pk: str | None = None) -> Response:
+        require_special(request, "inventory.rollback_stockdocument")
         return self._run(core.rollback_document)
 
 
@@ -233,12 +243,12 @@ class StockViewSet(viewsets.ViewSet):
             params.get("warehouse") or None, params.get("search", ""), int(days) if days else None
         )
         cost = sum((r["cost"] for r in rows), Decimal("0")).quantize(Decimal("0.01"))
-        totals = {"qty_rows": len(rows), "cost": str(cost)}
+        show_cost = can_view_cost(request)
+        totals = {"qty_rows": len(rows), "cost": str(cost) if show_cost else None}
         for row in rows:
-            row["qty"], row["cost"] = (
-                _text(row["qty"]),
-                _text(row["cost"].quantize(Decimal("0.01"))),
-            )  # type: ignore[typeddict-item]
+            row["qty"] = _text(row["qty"])  # type: ignore[typeddict-item]
+            cost_text = _text(row["cost"].quantize(Decimal("0.01"))) if show_cost else None
+            row["cost"] = cost_text  # type: ignore[typeddict-item]
         return Response({"rows": rows, "totals": totals})
 
     @action(detail=False, methods=["get"])
@@ -266,6 +276,7 @@ class StockViewSet(viewsets.ViewSet):
     def batches(self, request: Request) -> Response:
         item = request.query_params.get("item")
         warehouse = request.query_params.get("warehouse") or None
+        show_cost = can_view_cost(request)
         return Response(
             [
                 {
@@ -275,7 +286,7 @@ class StockViewSet(viewsets.ViewSet):
                     "expiry_date": s.batch.expiry_date,
                     "warehouse": str(s.warehouse_id),
                     "qty": _text(s.qty),
-                    "cost_per_base": _text(s.batch.cost_per_base),
+                    "cost_per_base": _text(s.batch.cost_per_base) if show_cost else None,
                 }
                 for s in services.batch_stock(item, warehouse)
             ]

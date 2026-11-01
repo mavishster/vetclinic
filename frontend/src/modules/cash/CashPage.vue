@@ -23,7 +23,7 @@
               <template v-else>Смена закрыта</template>
             </div>
           </q-card-section>
-          <q-card-actions v-if="r.shift_opened_at && can('cash.add_cashoperation')">
+          <q-card-actions v-if="r.shift_opened_at && can('cash.close_shift')">
             <q-btn flat dense no-caps color="primary" icon="lock" label="Закрыть кассу" @click="closeShift(r)" />
           </q-card-actions>
         </q-card>
@@ -42,7 +42,7 @@
       <template #body-cell-actions="props">
         <q-td :props="props" class="text-right">
           <q-badge v-if="props.row.status !== 'executed'" color="grey-6" label="возвращена" />
-          <q-btn v-else-if="can('cash.add_payment')" flat dense no-caps color="negative" label="Возврат" @click="refund(props.row)" />
+          <q-btn v-else-if="can('cash.refund_payment')" flat dense no-caps color="negative" label="Возврат" @click="refund(props.row)" />
         </q-td>
       </template>
     </q-table>

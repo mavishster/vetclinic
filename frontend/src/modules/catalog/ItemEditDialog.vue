@@ -27,7 +27,7 @@
                 @new-value="createUnit" />
               <q-input v-model="form.barcode" label="Штрихкод" outlined dense class="col-6 col-md-3" />
             </template>
-            <div class="col-6 col-md-3 row no-wrap q-gutter-x-xs">
+            <div v-if="can('catalog.view_cost')" class="col-6 col-md-3 row no-wrap q-gutter-x-xs">
               <q-input v-model="costInUnit" type="number" step="0.01" min="0" outlined dense clearable class="col"
                 :label="isGoods ? 'Себестоимость' : 'Себестоимость'"
                 :hint="costHint" />
