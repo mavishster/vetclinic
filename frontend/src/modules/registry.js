@@ -47,6 +47,7 @@ export default [
       { title: 'Шаблоны времени', icon: 'schedule', to: '/directories/interval-templates', perm: 'staff.view_intervaltemplate' },
       { title: 'Кассы', icon: 'point_of_sale', to: '/directories/cash-registers', perm: 'cash.view_cashregister' },
       { title: 'Показатели анализов', icon: 'science', to: '/directories/analytes', perm: 'laboratory.view_analyte' },
+      { title: 'Планшеты подписи', icon: 'tablet_mac', to: '/directories/signing-stations', perm: 'clients.view_signingstation' },
       { title: 'Палаты', icon: 'meeting_room', to: '/directories/wards', perm: 'inpatient.view_ward' },
       { title: 'Склады', icon: 'warehouse', to: '/directories/warehouses', perm: 'inventory.view_warehouse' },
       { title: 'Производители', icon: 'factory', to: '/directories/manufacturers', perm: 'inventory.view_manufacturer' },
