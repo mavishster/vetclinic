@@ -6,6 +6,8 @@
       <div class="text-h5 q-mt-md">{{ clinic }}</div>
       <div class="text-subtitle1 text-grey-7 q-mt-sm">Ожидание документа на подпись…</div>
       <div class="text-caption text-grey-6 q-mt-xl">{{ station }}</div>
+      <!-- Только в ожидании: сменить учётную запись (например, если в этом браузере нужно войти сотруднику). -->
+      <q-btn flat dense no-caps size="sm" color="grey-6" icon="logout" label="Выйти" class="exit" @click="exit" />
     </div>
 
     <!-- Спасибо -->
@@ -39,8 +41,12 @@
 // клиент читает его, расписывается пальцем или стилусом и нажимает «Подписать».
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { apiGet, apiPost, fieldErrors } from '@/api'
-import { session } from '@/session'
+import { useRouter } from 'vue-router'
+import { useQuasar } from 'quasar'
+import { logout, session } from '@/session'
 
+const router = useRouter()
+const $q = useQuasar()
 const doc = ref(null)
 const thanks = ref(false)
 const station = ref('')
@@ -127,6 +133,12 @@ async function sign() {
   setTimeout(() => (thanks.value = false), 4000)
 }
 
+function exit() {
+  $q.dialog({ title: 'Выйти с экрана подписи?', message: 'Планшет перестанет получать документы, пока под ним снова не войдут.',
+    cancel: { label: 'Остаться', flat: true }, ok: { label: 'Выйти', color: 'primary', unelevated: true } })
+    .onOk(async () => { await logout(); router.replace('/login') })
+}
+
 onMounted(async () => {
   poll()
   timer = setInterval(poll, 2000)
@@ -151,6 +163,12 @@ onUnmounted(() => {
 }
 .idle {
   height: 100%;
+  position: relative;
+}
+.exit {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
 }
 .full-height {
   height: 100%;
