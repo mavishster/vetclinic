@@ -147,8 +147,10 @@ PREVENTION_REMIND_DAYS = int(os.environ.get("PREVENTION_REMIND_DAYS", "7"))
 LAB_API_TOKEN = os.environ.get("LAB_API_TOKEN", "")
 
 # С какого числа нумеровать приёмы для анализатора. Выше номеров медкарт VetManager
-# (~5 500 в 2026), чтобы на время перехода номера двух систем не совпадали.
-VISIT_LAB_CODE_START = int(os.environ.get("VISIT_LAB_CODE_START", "50000"))
+# (~5 500 в ноябре 2026), чтобы на время перехода номера двух систем не совпадали.
+# Внимание: VetManager дойдёт до 8000 примерно за 2–3 месяца — параллельная работа
+# двух систем (SEND_TO=both в LabService) должна закончиться раньше.
+VISIT_LAB_CODE_START = int(os.environ.get("VISIT_LAB_CODE_START", "8000"))
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 
 # Для собственных моделей ключи будут UUID (ADR-002, этап 1);
