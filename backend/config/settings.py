@@ -36,6 +36,7 @@ PROJECT_APPS = [
     "inventory",
     "cash",
     "inpatient",
+    "laboratory",
     "reminders",
     "sync",
 ]
@@ -140,6 +141,10 @@ ALLOW_NEGATIVE_STOCK = os.environ.get("ALLOW_NEGATIVE_STOCK", "1") == "1"
 
 # Напоминания о профилактике — за сколько дней до срока попадать в список обзвона.
 PREVENTION_REMIND_DAYS = int(os.environ.get("PREVENTION_REMIND_DAYS", "7"))
+
+# Ключ для приёма результатов анализов от LabService (заголовок X-Lab-Token).
+# Пусто — приём выключен.
+LAB_API_TOKEN = os.environ.get("LAB_API_TOKEN", "")
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 
 # Для собственных моделей ключи будут UUID (ADR-002, этап 1);

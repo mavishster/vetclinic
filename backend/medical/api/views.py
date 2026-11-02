@@ -188,7 +188,8 @@ class VisitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     class Meta:
         model = Visit
         fields = [
-            "id", "pet", "pet_name", "client", "client_name", "doctor", "doctor_name", "date",
+            "id", "lab_code", "pet", "pet_name", "client", "client_name", "doctor", "doctor_name",
+            "date",
             "purpose", "purpose_name", "purpose_kind", "result", "result_name", "appointment",
             "appointment_status", "weight", "temperature", "treatment_html",
             "recommendations_html", "next_visit_date", "diagnoses", "items", "preventions",
@@ -196,7 +197,7 @@ class VisitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "prescriptions",
             "created_at", "updated_at",
         ]  # fmt: skip
-        read_only_fields = ["pet", "client", "appointment"]
+        read_only_fields = ["lab_code", "pet", "client", "appointment"]
 
     def get_items(self, visit: Visit) -> list[dict[str, Any]]:
         return [

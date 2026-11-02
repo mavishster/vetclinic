@@ -157,8 +157,9 @@ async function loadOptions() {
       options[field.name] = field.options
       continue
     }
-    const { ok, data } = await apiGet(`${field.endpoint}?active=true`)
-    options[field.name] = ok ? data : []
+    const separator = field.endpoint.includes('?') ? '&' : '?'
+    const { ok, data } = await apiGet(`${field.endpoint}${separator}active=true&page_size=500`)
+    options[field.name] = ok ? (Array.isArray(data) ? data : data.results ?? []) : [] // список или постраничный ответ
   }
 }
 

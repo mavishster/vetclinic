@@ -11,6 +11,12 @@
       <div v-for="p in backup.problems" :key="p" class="text-caption text-negative">{{ p }}</div>
     </q-banner>
 
+    <q-card v-if="unassignedLab" flat bordered class="q-mb-md cursor-pointer" @click="$router.push('/laboratory')">
+      <q-card-section class="row items-center no-wrap">
+        <q-icon name="biotech" color="warning" size="36px" class="q-mr-md" />
+        <div><div class="text-h5">{{ unassignedLab }}</div><div class="text-caption text-grey-7">анализов без медкарты — привяжите в «Лаборатории»</div></div>
+      </q-card-section>
+    </q-card>
     <q-card v-if="toCall" flat bordered class="q-mb-md cursor-pointer" @click="$router.push('/reminders')">
       <q-card-section class="row items-center no-wrap">
         <q-icon name="notifications_active" color="primary" size="36px" class="q-mr-md" />
@@ -49,6 +55,7 @@ import { can, session } from '@/session'
 const state = ref('loading') // loading | ok | error
 const stock = ref(null)
 const toCall = ref(0)
+const unassignedLab = ref(0)
 const backup = ref(null)
 const fmt = (stamp) => new Date(stamp.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })
 
@@ -83,6 +90,9 @@ onMounted(async () => {
   // Резервные копии видят те, кто настраивает систему.
   if (can('auth.change_group')) {
     apiGet('core/backup-status/').then(({ ok, data }) => { if (ok && data.configured) backup.value = data })
+  }
+  if (can('laboratory.view_labresult')) {
+    apiGet('laboratory/results/unassigned-count/').then(({ ok, data }) => { if (ok) unassignedLab.value = data.count })
   }
   if (can('reminders.view_reminder')) {
     apiGet('reminders/reminders/count/').then(({ ok, data }) => { if (ok) toCall.value = data.to_call })

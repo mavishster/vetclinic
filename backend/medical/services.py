@@ -18,6 +18,7 @@ from django.utils import timezone
 
 from catalog import services as catalog
 from clients import services as clients
+from core import services as core
 from core.html import clean
 from inventory import services as inventory
 from medical.models import Prevention, PreventionType, Visit, VisitDiagnosis, VisitItem
@@ -47,6 +48,7 @@ def start_visit(pet: Any, doctor: Any, appointment: Any = None) -> Visit:
         raise MedicalError("Нет ни одной цели обращения — добавьте их в справочник.")
     with transaction.atomic():
         visit = Visit.objects.create(
+            lab_code=core.next_value("visit_lab_code"),
             pet=pet, client=clients.current_owner(pet), doctor=doctor, date=timezone.now(),
             purpose=purpose, appointment=appointment,
             weight=_last_weight(pet),
@@ -647,3 +649,12 @@ def prescriptions_of(visit_id: Any) -> list[dict[str, Any]]:
          "frequency": p.frequency, "days": p.days, "comment": p.comment}
         for p in Prescription.objects.filter(visit_id=visit_id)
     ]  # fmt: skip
+
+
+def visit_by_lab_code(code: Any) -> Visit | None:
+    """Запись медкарты по номеру для анализатора — для лаборатории."""
+    try:
+        number = int(str(code).strip())
+    except ValueError:
+        return None
+    return Visit.objects.select_related("pet", "client").filter(lab_code=number).first()

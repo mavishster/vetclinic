@@ -29,7 +29,15 @@ class VisitResult(Directory):
 
 
 class Visit(ClinicScopedModel):
-    """Запись медкарты (приём)."""
+    """Запись медкарты (приём).
+
+    lab_code — короткий номер для анализатора: его вводят в прибор, и результаты
+    анализов сами попадают в эту запись (как номер медкарты в VetManager).
+    """
+
+    lab_code = models.PositiveIntegerField(
+        "номер для анализатора", null=True, blank=True, unique=True
+    )
 
     pet = models.ForeignKey(
         "clients.Pet", verbose_name="питомец", on_delete=models.PROTECT, related_name="+"

@@ -13,6 +13,7 @@
             <router-link :to="`/pets/${visit.pet}`" class="text-primary" style="text-decoration: none">{{ visit.pet_name }}</router-link>
           </div>
           <div class="text-caption text-grey-7">
+            № для анализатора: <b>{{ visit.lab_code }}</b> ·
             владелец: <router-link :to="`/clients/${visit.client}`" class="text-grey-8">{{ visit.client_name }}</router-link>
           </div>
         </div>
@@ -66,6 +67,7 @@
             <q-tab name="recommendations" label="Рекомендации" />
             <q-tab name="prescriptions" :label="`Назначения${visit.prescriptions.length ? ` (${visit.prescriptions.length})` : ''}`" />
             <q-tab name="prevention" :label="`Профилактика${visit.preventions.length ? ` (${visit.preventions.length})` : ''}`" />
+            <q-tab v-if="can('laboratory.view_labresult')" name="lab" label="Анализы" />
             <q-tab name="history" label="История" />
             <q-tab name="files" label="Файлы" />
           </q-tabs>
@@ -90,6 +92,9 @@
             </q-tab-panel>
             <q-tab-panel name="prevention" class="q-px-none">
               <PreventionPanel :visit="visit" :can-edit="canEdit" :prefill="prefill" @changed="(v) => (visit = v)" />
+            </q-tab-panel>
+            <q-tab-panel name="lab" class="q-px-none">
+              <LabTab :visit="visit" />
             </q-tab-panel>
             <q-tab-panel name="history" class="q-px-none">
               <q-list separator bordered class="rounded-borders">
@@ -141,6 +146,8 @@ import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
 import RichEditor from './RichEditor.vue'
 import PrescriptionsPanel from './PrescriptionsPanel.vue'
+// Анализы — модуль «Лаборатория».
+import LabTab from '@/modules/laboratory/LabTab.vue'
 // Приём в стационар — модуль «Стационар».
 import AdmitDialog from '@/modules/inpatient/AdmitDialog.vue'
 import PreventionPanel from './PreventionPanel.vue'

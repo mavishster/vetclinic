@@ -13,6 +13,7 @@ export default [
           { id: 'general', name: 'Общая' }, { id: 'intensive', name: 'Интенсивная терапия' }, { id: 'infectious', name: 'Инфекционный бокс' },
         ] },
         { name: 'places', label: 'Мест', type: 'number' },
+        { name: 'daily_item', label: 'Услуга «сутки стационара»', endpoint: 'catalog/items/?kind=service', hint: 'Нужна для счёта за стационар', column: false },
       ],
     },
     meta: { perm: 'inpatient.view_ward' },

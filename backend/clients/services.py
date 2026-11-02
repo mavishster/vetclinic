@@ -386,3 +386,9 @@ def guest_client() -> Client:
 
 def is_guest(client: Any) -> bool:
     return Client.objects.filter(pk=getattr(client, "pk", client), is_guest=True).exists()
+
+
+def pet_by_lab_number(code: str) -> Pet | None:
+    """Питомец по лабораторному номеру из карточки — для результатов анализов."""
+    code = (code or "").strip()
+    return Pet.objects.filter(lab_number=code).first() if code else None

@@ -214,6 +214,8 @@ PERMISSION_HINTS = {
     "reminders.reminder": "Напоминания клиентам: список для обзвона и итоги звонков.",
     "inpatient.hospitalization": "Стационар: госпитализация, лист назначений, наблюдения, выписка.",
     "inpatient.ward": "Список палат: места и услуга «сутки стационара».",
+    "laboratory.labresult": "Результаты анализов с приборов: просмотр, привязка к медкарте.",
+    "laboratory.analyte": "Список показателей анализов: коды приборов, названия, единицы, нормы.",
 }
 
 
@@ -332,6 +334,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "clients.clientledger": [_V],
             "scheduling.appointment": [_V, _E],
             "medical.visit": [_V, _E],
+            "laboratory.labresult": [_V, _E],
             "inpatient.hospitalization": [_V, _E],
             "medical.texttemplate": [_V, _E],
             "medical.prevention": [_V, _E],
@@ -359,6 +362,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "clients.street": [_V, _E],
             "clients.breed": [_V, _E],
             "clients.color": [_V, _E],
+            "laboratory.labresult": [_V, _E],
             "inpatient.hospitalization": [_V],
             "reminders.reminder": [_V, _E],
             "scheduling.appointment": [_V, _E, _D],
