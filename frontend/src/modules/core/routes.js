@@ -36,4 +36,5 @@ export default [
     meta: { perm: 'core.view_counterparty' },
   },
   { path: 'roles', component: () => import('./RolesPage.vue'), meta: { perm: 'auth.view_group' } },
+  { path: 'print-templates', component: () => import('./PrintTemplatesPage.vue'), meta: { perm: 'core.view_printtemplate' } },
 ]
