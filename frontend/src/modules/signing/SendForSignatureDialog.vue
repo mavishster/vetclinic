@@ -5,6 +5,8 @@
       <q-card-section v-if="!request" class="q-pt-none q-gutter-y-sm">
         <q-select v-model="form.template" :options="templates" option-value="id" option-label="name" emit-value map-options outlined
           dense label="Документ" @update:model-value="guessPurpose" />
+        <q-select v-model="form.purpose" :options="PURPOSES" emit-value map-options outlined dense label="Что это за документ"
+          :hint="form.purpose === 'consent' ? 'После подписи в карточке появится согласие и станет доступно фото' : ''" />
         <q-select v-if="stations.length > 1" v-model="form.station" :options="stations" option-value="id" option-label="name"
           emit-value map-options outlined dense label="На какой планшет" />
         <q-select v-if="form.purpose === 'contract' && contracts.length" v-model="form.contract" :options="contracts" option-value="id"
@@ -67,9 +69,18 @@ watch(() => props.modelValue, async (open) => {
   form.value = { template: null, station: stations.value[0]?.id ?? null, purpose: 'other', contract: null }
 }, { immediate: true })
 
+const PURPOSES = [
+  { value: 'contract', label: 'Договор' },
+  { value: 'consent', label: 'Согласие на обработку ПДн и фото' },
+  { value: 'other', label: 'Другой документ (согласие на наркоз, операцию…)' },
+]
+
+// Подсказка по названию; согласием на ПДн и фото считается только документ о персональных данных,
+// а не любое «согласие» (на наркоз, операцию). Выбор можно поправить вручную.
 function guessPurpose(id) {
   const name = (templates.value.find((t) => t.id === id)?.name || '').toLowerCase()
-  form.value.purpose = name.includes('согласие') ? 'consent' : name.includes('договор') ? 'contract' : 'other'
+  const personal = name.includes('пдн') || name.includes('персональн') || name.includes('фото')
+  form.value.purpose = personal ? 'consent' : name.includes('договор') ? 'contract' : 'other'
 }
 
 async function send() {
