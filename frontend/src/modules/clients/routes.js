@@ -9,6 +9,10 @@ const directory = (path, title, permission, fields = []) => ({
 })
 
 export default [
+  directory('signing-stations', 'Планшеты подписи', 'signingstation', [
+    { name: 'user', label: 'Учётная запись планшета', endpoint: 'core/users/',
+      hint: 'Отдельный пользователь с ролью «Планшет подписи» — создайте его в «Сотрудниках»' },
+  ]),
   { path: 'clients', component: () => import('./ClientsPage.vue'), meta: { perm: 'clients.view_client' } },
   { path: 'clients/:id', component: () => import('./ClientPage.vue'), props: true, meta: { perm: 'clients.view_client' } },
   { path: 'pets', component: () => import('./PetsPage.vue'), meta: { perm: 'clients.view_pet' } },

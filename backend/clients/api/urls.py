@@ -1,6 +1,7 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from clients.api import clients, contracts, pets, views
+from clients.api import clients, contracts, pets, signing, views
 
 router = DefaultRouter()
 router.register("species", views.SpeciesViewSet, basename="species")
@@ -13,5 +14,11 @@ router.register("colors", views.ColorViewSet, basename="color")
 router.register("clients", clients.ClientViewSet, basename="client")
 router.register("pets", pets.PetViewSet, basename="pet")
 router.register("contracts", contracts.ContractViewSet, basename="contract")
+router.register("signing-stations", signing.SigningStationViewSet, basename="signing-station")
+router.register("signatures", signing.SignatureRequestViewSet, basename="signature")
 
-urlpatterns = router.urls
+urlpatterns = [
+    path("signing/current/", signing.StationCurrentView.as_view(), name="signing-current"),
+    path("signing/sign/", signing.StationSignView.as_view(), name="signing-sign"),
+    *router.urls,
+]

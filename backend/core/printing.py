@@ -157,3 +157,9 @@ def render_pdf(body: str, context: dict[str, Any]) -> bytes:
 def validate(body: str, kind_code: str, common: dict[str, Any]) -> None:
     """Проверить шаблон на примере данных: синтаксис и ошибки при выводе."""
     render_html(body, {**common, **get_kind(kind_code).sample()})
+
+
+def html_to_pdf(html: str) -> bytes:
+    """Готовая HTML-страница → PDF (без шаблонизатора — например, подписанный документ)."""
+    pdf: bytes = HTML(string=html).write_pdf()
+    return pdf

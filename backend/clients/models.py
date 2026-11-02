@@ -6,13 +6,14 @@
 import re
 from typing import Any
 
+from django.conf import settings
 from django.contrib.postgres.indexes import GinIndex
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
 
 from core.fields import MoneyField
-from core.models import Attachment, ClinicScopedModel, Directory, LedgerEntry
+from core.models import Attachment, BaseModel, ClinicScopedModel, Directory, LedgerEntry
 
 # --- Справочники -------------------------------------------------------------------
 
@@ -148,6 +149,19 @@ class Client(ClinicScopedModel):
     )
     # Служебный клиент «Гость» — для быстрых счетов без карточки (один на клинику).
     is_guest = models.BooleanField("гость", default=False, editable=False)
+    # Фото владельца (снимок с камеры) и согласие на фотографирование и обработку ПДн:
+    # без согласия фото не делается (152-ФЗ).
+    photo = models.ForeignKey(
+        Attachment,
+        verbose_name="фото",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    photo_consent_at = models.DateTimeField(
+        "согласие на фото и обработку ПДн", null=True, blank=True
+    )
 
     class Meta:
         verbose_name = "клиент"
@@ -339,3 +353,90 @@ class ClientLedger(LedgerEntry):
 
     def __str__(self) -> str:
         return f"{self.client}: {self.amount:+}"
+
+
+# --- Подпись на планшете -----------------------------------------------------------
+
+
+class SigningStation(Directory):
+    """Планшет для подписи: у каждого — своя учётная запись с единственным правом
+    «подписывать на планшете». Документ на подпись отправляют с компьютера."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        verbose_name="учётная запись планшета",
+        on_delete=models.PROTECT,
+        related_name="signing_station",
+    )
+
+    class Meta(Directory.Meta):
+        verbose_name = "планшет подписи"
+        verbose_name_plural = "планшеты подписи"
+
+
+class SignatureRequest(BaseModel):
+    """Документ, отправленный клиенту на подпись на планшете.
+
+    Текст фиксируется при отправке (html + контрольная сумма): что клиент видел, то и
+    подписал, даже если шаблон потом поменяют. Подписанный PDF — в файлах клиента.
+    """
+
+    class Purpose(models.TextChoices):
+        CONTRACT = "contract", "договор"
+        CONSENT = "consent", "согласие на обработку ПДн и фото"
+        OTHER = "other", "другой документ"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "ждёт подписи"
+        SIGNED = "signed", "подписан"
+        CANCELLED = "cancelled", "отменён"
+
+    client = models.ForeignKey(
+        Client, verbose_name="клиент", on_delete=models.CASCADE, related_name="+"
+    )
+    station = models.ForeignKey(
+        SigningStation, verbose_name="планшет", on_delete=models.PROTECT, related_name="requests"
+    )
+    title = models.CharField("документ", max_length=255)
+    purpose = models.CharField(
+        "назначение", max_length=10, choices=Purpose.choices, default=Purpose.OTHER
+    )
+    contract = models.ForeignKey(
+        ClientContract,
+        verbose_name="договор",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    html = models.TextField("текст документа")
+    content_hash = models.CharField("контрольная сумма текста", max_length=64)
+    status = models.CharField(
+        "статус", max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="отправил",
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    expires_at = models.DateTimeField("ждёт до")
+    signed_at = models.DateTimeField("подписан", null=True, blank=True)
+    signed_from = models.CharField("откуда подписан", max_length=255, blank=True)
+    result = models.ForeignKey(
+        Attachment,
+        verbose_name="подписанный PDF",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "документ на подпись"
+        verbose_name_plural = "документы на подпись"
+        ordering = ["-created_at"]
+        permissions = [("sign_on_station", "Подписывать на планшете (учётная запись планшета)")]
+
+    def __str__(self) -> str:
+        return f"{self.title} — {self.client}"

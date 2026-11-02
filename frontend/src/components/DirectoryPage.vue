@@ -11,7 +11,7 @@
         <template #prepend><q-icon name="search" /></template>
       </q-input>
       <q-select v-for="field in listFields" :key="field.name" v-model="filters[field.name]"
-        :options="options[field.name]" option-value="id" option-label="name" emit-value map-options
+        :options="options[field.name]" option-value="id" :option-label="optionLabel" emit-value map-options
         dense outlined clearable :label="field.label" class="col-12 col-sm-3"
         @update:model-value="load" />
       <q-btn-toggle v-model="active" :options="activeOptions" no-caps unelevated toggle-color="primary"
@@ -60,7 +60,7 @@
                 outlined :label="field.label" :hint="field.hint" clearable
                 :error="!!errors[field.name]" :error-message="errors[field.name]" />
               <q-select v-else v-model="editing[field.name]" :options="options[field.name]" option-value="id"
-                option-label="name" emit-value map-options outlined :label="field.label"
+                :option-label="optionLabel" emit-value map-options outlined :label="field.label"
                 :error="!!errors[field.name]" :error-message="errors[field.name]" />
             </template>
             <div v-if="errors.non_field_errors" class="text-negative">{{ errors.non_field_errors }}</div>
@@ -162,6 +162,9 @@ async function loadOptions() {
     options[field.name] = ok ? (Array.isArray(data) ? data : data.results ?? []) : [] // список или постраничный ответ
   }
 }
+
+// Подпись варианта: название; у пользователей — ФИО или логин.
+const optionLabel = (option) => option?.name || option?.full_name || option?.username || ''
 
 const editorOpen = ref(false)
 const editing = ref({})

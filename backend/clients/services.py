@@ -7,7 +7,7 @@
 """
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, TypedDict
 
@@ -392,3 +392,244 @@ def pet_by_lab_number(code: str) -> Pet | None:
     """Питомец по лабораторному номеру из карточки — для результатов анализов."""
     code = (code or "").strip()
     return Pet.objects.filter(lab_number=code).first() if code else None
+
+
+# --- Подпись на планшете -----------------------------------------------------------
+
+SIGN_WAIT_MINUTES = 15
+
+
+class SigningError(Exception):
+    """Подписание невозможно. Текст — для пользователя."""
+
+
+def client_print_context(client: Client, contract: Any = None) -> dict[str, Any]:
+    """Данные клиента для документа на подпись: ФИО, телефоны, адрес, питомцы, договор."""
+    return {
+        "client": {
+            "full_name": client.full_name,
+            "phones": ", ".join(p.number for p in client.phones.all()),
+            "address": ", ".join(
+                part
+                for part in (
+                    f"г. {client.city.name}" if client.city else "",
+                    client.street.name if client.street else "",
+                    client.house,
+                )
+                if part
+            ),
+            "email": client.email,
+        },
+        "pets": [
+            {"name": p.name, "species": p.species.name, "breed": p.breed.name}
+            for p in Pet.objects.filter(owner=client, status=Pet.Status.ACTIVE).select_related(
+                "species", "breed"
+            )
+        ],
+        "contract": {"number": contract.number, "date": contract.date} if contract else {},
+    }
+
+
+def sample_client_document_context() -> dict[str, Any]:
+    return {
+        "client": {
+            "full_name": "Иванова Анна Петровна",
+            "phones": "+7 900 111-22-33",
+            "address": "г. Москва, ул. Лесная, д. 5",
+            "email": "anna@example.ru",
+        },
+        "pets": [{"name": "Барсик", "species": "Кошки", "breed": "Метис"}],
+        "contract": {"number": "К-15", "date": timezone.localdate()},
+    }
+
+
+def station_of(user: Any) -> Any:
+    from clients.models import SigningStation
+
+    return SigningStation.objects.filter(user=user, is_active=True).first()
+
+
+@transaction.atomic
+def send_for_signature(
+    client: Client,
+    template: Any,
+    station: Any,
+    user: Any,
+    purpose: str = "other",
+    contract: Any = None,
+) -> Any:
+    """Отправить документ на планшет. Текст фиксируется сейчас (с контрольной суммой).
+
+    На планшете одновременно — один документ: прежний, если не подписан, отменяется.
+    """
+    import hashlib
+
+    from clients.models import SignatureRequest
+    from core import printing
+    from core import services as core_services
+
+    if contract is not None and contract.client_id != client.pk:
+        raise SigningError("Договор другого клиента.")
+    html = printing.render_html(
+        template.body,
+        {**core_services.common_print_context(user), **client_print_context(client, contract)},
+    )
+    SignatureRequest.objects.filter(station=station, status=SignatureRequest.Status.PENDING).update(
+        status=SignatureRequest.Status.CANCELLED
+    )
+    return SignatureRequest.objects.create(
+        client=client,
+        station=station,
+        title=template.name,
+        purpose=purpose,
+        contract=contract,
+        html=html,
+        content_hash=hashlib.sha256(html.encode("utf-8")).hexdigest(),
+        sent_by=user,
+        expires_at=timezone.now() + timedelta(minutes=SIGN_WAIT_MINUTES),
+    )
+
+
+def pending_for(station: Any) -> Any:
+    """Документ, ждущий подписи на этом планшете (не отменён и не просрочен)."""
+    from clients.models import SignatureRequest
+
+    return (
+        SignatureRequest.objects.filter(
+            station=station, status=SignatureRequest.Status.PENDING, expires_at__gt=timezone.now()
+        )
+        .select_related("client")
+        .first()
+    )
+
+
+def cancel_signature(request: Any) -> None:
+    from clients.models import SignatureRequest
+
+    if request.status == SignatureRequest.Status.PENDING:
+        request.status = SignatureRequest.Status.CANCELLED
+        request.save(update_fields=["status"])
+
+
+def _signature_png(data_url: str) -> bytes:
+    import base64
+    import io
+
+    from PIL import Image
+
+    prefix = "data:image/png;base64,"
+    if not data_url.startswith(prefix):
+        raise SigningError("Подпись не получена.")
+    try:
+        raw = base64.b64decode(data_url[len(prefix) :], validate=True)
+        image = Image.open(io.BytesIO(raw))
+        image.verify()
+    except Exception as error:  # noqa: BLE001 — любой мусор = понятное сообщение
+        raise SigningError("Подпись не получена — попробуйте ещё раз.") from error
+    if len(raw) > 2 * 1024 * 1024 or image.size[0] > 4000 or image.size[1] > 4000:
+        raise SigningError("Слишком большое изображение подписи.")
+    return raw
+
+
+@transaction.atomic
+def sign(request: Any, station: Any, signature_data_url: str, signed_from: str = "") -> Any:
+    """Принять подпись: собрать PDF (документ + подпись + сведения о подписании),
+    положить в файлы клиента; договор — отметить подписанным, согласие — записать в карточку."""
+    import base64
+    from html import escape
+
+    from django.core.files.base import ContentFile
+
+    from clients.models import SignatureRequest
+    from core import printing
+    from core.attachments import attach
+    from core.models import FileCategory
+
+    request = SignatureRequest.objects.select_for_update().get(pk=request.pk)
+    if request.station_id != station.pk:
+        raise SigningError("Этот документ отправлен на другой планшет.")
+    if request.status != SignatureRequest.Status.PENDING:
+        raise SigningError("Документ уже подписан или отменён.")
+    if request.expires_at <= timezone.now():
+        raise SigningError("Время ожидания подписи истекло — попросите отправить документ снова.")
+    png = _signature_png(signature_data_url)
+    now = timezone.now()
+    info = (
+        '<div style="margin-top:18px; page-break-inside:avoid;">'
+        "<p><b>Подпись клиента:</b><br>"
+        f'<img src="data:image/png;base64,{base64.b64encode(png).decode()}" '
+        'style="height:30mm; border-bottom:1px solid #333;"></p>'
+        '<p style="font-size:8pt; color:#555;">Подписано на планшете «'
+        f"{escape(station.name)}» {timezone.localtime(now):%d.%m.%Y %H:%M}. "
+        f"Отправил на подпись: {escape(request.sent_by.short_name or request.sent_by.username)}. "
+        f"Контрольная сумма текста (SHA-256): {request.content_hash}.</p></div>"
+    )
+    html = (
+        request.html.replace("</body>", f"{info}</body>")
+        if "</body>" in request.html
+        else request.html + info
+    )
+    pdf = printing.html_to_pdf(html)
+    category = FileCategory.objects.filter(
+        name="Договор" if request.purpose == "contract" else "Общий"
+    ).first()
+    stamp = timezone.localtime(now).strftime("%Y-%m-%d")
+    attachment = attach(
+        "clients.client",
+        request.client_id,
+        ContentFile(pdf, name=f"{request.title} ({stamp}).pdf"),
+        name=f"{request.title} — подписан {timezone.localtime(now):%d.%m.%Y %H:%M}",
+        category=category,
+    )
+    attachment.content_type = "application/pdf"
+    attachment.save(update_fields=["content_type"])
+    request.status = SignatureRequest.Status.SIGNED
+    request.signed_at = now
+    request.signed_from = signed_from[:255]
+    request.result = attachment
+    request.save()
+    if request.contract_id:
+        request.contract.attachment = attachment
+        request.contract.save(update_fields=["attachment"])
+    if request.purpose == SignatureRequest.Purpose.CONSENT:
+        Client.objects.filter(pk=request.client_id).update(photo_consent_at=now)
+    return request
+
+
+# --- Фото клиента ------------------------------------------------------------------
+
+PHOTO_MAX_PX = 800
+
+
+def save_photo(client: Client, file: Any) -> Any:
+    """Фото владельца с камеры: уменьшается до 800 px, хранится как файл клиента («Фото»)."""
+    import io
+
+    from django.core.files.base import ContentFile
+    from PIL import Image, ImageOps
+
+    from core.attachments import attach
+    from core.models import FileCategory
+
+    if client.photo_consent_at is None:
+        raise ClientError("Нет согласия клиента на фотографирование — сначала подпишите согласие.")
+    try:
+        image = ImageOps.exif_transpose(Image.open(file)).convert("RGB")
+    except Exception as error:  # noqa: BLE001
+        raise ClientError("Не удалось прочитать снимок.") from error
+    image.thumbnail((PHOTO_MAX_PX, PHOTO_MAX_PX))
+    buffer = io.BytesIO()
+    image.save(buffer, "JPEG", quality=85)
+    stamp = timezone.localtime().strftime("%Y-%m-%d")
+    attachment = attach(
+        "clients.client",
+        client.pk,
+        ContentFile(buffer.getvalue(), name=f"Фото {stamp}.jpg"),
+        name=f"Фото владельца {timezone.localtime():%d.%m.%Y}",
+        category=FileCategory.objects.filter(name="Фото").first(),
+    )
+    attachment.content_type = "image/jpeg"
+    attachment.save(update_fields=["content_type"])
+    client.photo = attachment
+    client.save(update_fields=["photo"])
+    return attachment

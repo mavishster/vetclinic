@@ -8,11 +8,21 @@
     <template v-else>
       <div class="row items-center q-gutter-sm q-mb-md">
         <q-btn flat round dense icon="arrow_back" to="/clients" />
+        <!-- Фото владельца: снимок с камеры (нужно согласие клиента). -->
+        <q-avatar size="56px" :color="client.photo ? undefined : 'grey-3'" :text-color="client.photo ? undefined : 'grey-7'"
+          class="cursor-pointer" @click="openPhoto">
+          <img v-if="client.photo" :src="`/api/core/attachments/${client.photo}/download/`" alt="Фото владельца">
+          <q-icon v-else name="person" />
+          <q-tooltip>{{ client.photo ? 'Фото владельца — нажмите, чтобы переснять' : client.photo_consent_at ? 'Сделать фото' : 'Фото — после согласия клиента' }}</q-tooltip>
+        </q-avatar>
         <h1 class="text-h5 q-my-none">{{ client.full_name }}</h1>
         <q-badge v-for="badge in clientBadges(client)" :key="badge.label" :color="badge.color" :label="badge.label" />
         <q-badge v-if="client.has_contract" color="positive" outline label="договор заключён" />
         <q-badge v-else color="warning" outline label="договора нет" />
+        <q-badge v-if="client.photo_consent_at" color="positive" outline label="согласие на ПДн и фото" />
         <q-space />
+        <q-btn v-if="can('clients.add_signaturerequest')" outline color="primary" icon="draw" label="На подпись" @click="signOpen = true" />
+        <q-btn v-if="can('clients.change_client')" flat color="primary" icon="photo_camera" label="Фото" @click="openPhoto" />
         <q-btn v-if="can('clients.change_client')" outline color="primary" icon="edit" label="Изменить"
           @click="editorOpen = true" />
         <q-btn v-if="can('clients.change_client')" flat :icon="client.status === 'inactive' ? 'restore' : 'block'"
@@ -53,13 +63,17 @@
             <ClientReminders v-if="can('reminders.view_reminder')" :client="client" />
             <ClientPets v-if="can('clients.view_pet')" :client="client" />
             <ClientContracts v-if="can('clients.view_clientcontract')" :client-id="client.id" @changed="reloadClient" />
-            <AttachmentsBlock v-if="can('core.view_attachment')" ref="files" owner-type="clients.client"
+            <AttachmentsBlock :key="`${client.photo}-${client.photo_consent_at}-${filesVersion}`" v-if="can('core.view_attachment')" ref="files" owner-type="clients.client"
               :owner-id="client.id" />
           </div>
         </div>
       </div>
 
       <ClientEditDialog v-model="editorOpen" :client="client" @saved="(data) => (client = data)" />
+    </template>
+    <template v-if="client">
+      <SendForSignatureDialog v-model="signOpen" :client="client" @signed="load(); filesVersion++" />
+      <PhotoDialog v-model="photoOpen" :client-id="client.id" @saved="(data) => (client = data)" />
     </template>
   </q-page>
 </template>
@@ -71,6 +85,8 @@ import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch } from '@/api'
 import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
+import PhotoDialog from '@/modules/signing/PhotoDialog.vue'
+import SendForSignatureDialog from '@/modules/signing/SendForSignatureDialog.vue'
 // Записи на приём — блок модуля «Календарь», встраивается в карточку клиента.
 import ClientAppointments from '@/modules/scheduling/ClientAppointments.vue'
 // Напоминания — блок модуля «Напоминания».
@@ -88,6 +104,22 @@ const router = useRouter()
 const client = ref(null)
 const loading = ref(true)
 const editorOpen = ref(false)
+const signOpen = ref(false)
+const filesVersion = ref(0) // подписанный PDF и фото появляются в «Файлах» сразу
+const photoOpen = ref(false)
+
+// Фото — только с согласием клиента на обработку ПДн и фотографирование (152-ФЗ).
+function openPhoto() {
+  if (!can('clients.change_client')) return
+  if (!client.value.photo_consent_at) {
+    return $q.dialog({
+      title: 'Нужно согласие клиента',
+      message: 'Сначала клиент подписывает «Согласие на обработку ПДн и фотографирование» — кнопка «На подпись».',
+      ok: { label: 'Понятно', color: 'primary', flat: true },
+    })
+  }
+  photoOpen.value = true
+}
 
 const kindLabel = (kind) => PHONE_KINDS.find((k) => k.value === kind)?.label ?? kind
 const address = computed(() =>

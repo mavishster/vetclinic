@@ -27,6 +27,8 @@ const router = createRouter({
       component: () => import('./modules/core/LoginPage.vue'),
       meta: { public: true },
     },
+    // Экран подписи для планшета у стойки — на весь экран, без меню.
+    { path: '/signing', component: () => import('./modules/signing/SigningScreen.vue'), meta: { perm: 'clients.sign_on_station' } },
     { path: '/', component: MainLayout, children: moduleRoutes },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
@@ -37,8 +39,16 @@ router.beforeEach(async (to) => {
   if (!session.loaded) await loadMe()
   if (to.meta.public) return true
   if (!session.user) return { path: '/login', query: { next: to.fullPath } }
+  // Учётная запись планшета подписи видит только экран подписи.
+  if (isSigningStation() && to.path !== '/signing') return '/signing'
   if (to.meta.perm && !can(to.meta.perm)) return '/'
   return true
 })
+
+function isSigningStation() {
+  const perms = session.user?.permissions || []
+  // Только право планшета и ничего больше — это планшет, а не сотрудник.
+  return perms.includes('clients.sign_on_station') && !session.user.is_superuser && perms.every((p) => p === 'clients.sign_on_station')
+}
 
 export default router

@@ -176,6 +176,8 @@ PERMISSION_HINTS = {
     "clients.pet": "Карточки питомцев: вес, смена владельца, «умер».",
     "clients.clientcontract": "Договоры с клиентами.",
     "clients.clientledger": "Баланс клиента — долги и авансы (меняется счетами и кассой).",
+    "clients.signaturerequest": "Документы на подпись клиенту на планшете: отправить, отменить.",
+    "clients.signingstation": "Список планшетов подписи и их учётные записи.",
     "clients.species": "Список видов животных.",
     "clients.breed": "Список пород.",
     "clients.color": "Список окрасов.",
@@ -358,6 +360,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "clients.pet": [_V, _E],
             "clients.clientcontract": [_V, _E],
             "clients.clientledger": [_V],
+            "clients.signaturerequest": [_V, _E],
             "clients.city": [_V, _E],
             "clients.street": [_V, _E],
             "clients.breed": [_V, _E],
@@ -415,6 +418,13 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
         "special": ["inventory.rollback_stockdocument", "catalog.view_cost"],
     },
     {
+        "code": "signing_station",
+        "name": "Планшет подписи",
+        "description": "Только экран подписи на планшете у стойки — без доступа к данным.",
+        "access": {},
+        "special": ["clients.sign_on_station"],
+    },
+    {
         "code": "manager",
         "name": "Руководитель",
         "description": "Всё: все разделы и справочники, особые права, настройка ролей.",
@@ -434,8 +444,9 @@ def role_templates() -> list[dict[str, Any]]:
             access = {code: [_V, _E, _D] for code in entities}
         else:
             access = {c: a for c, a in template["access"].items() if c in entities}
+        # «Всё» для руководителя — кроме права планшета: это отдельная учётная запись.
         special = (
-            sorted(specials)
+            sorted(specials - {"clients.sign_on_station"})
             if template["special"] == "all"
             else [c for c in template["special"] if c in specials]
         )

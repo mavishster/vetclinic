@@ -11,7 +11,7 @@ from typing import Any
 from django.apps import apps
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
-from django.core.files.uploadedfile import UploadedFile
+from django.core.files import File
 
 from core.models import Attachment, FileCategory
 
@@ -36,7 +36,7 @@ def owner_content_type(label: str) -> ContentType:
 def attach(
     owner_label: str,
     owner_id: Any,
-    file: UploadedFile,
+    file: "File[Any]",  # загруженный файл или созданный системой (ContentFile)
     name: str = "",
     category: FileCategory | None = None,
 ) -> Attachment:

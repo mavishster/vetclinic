@@ -5,7 +5,9 @@ from typing import Any
 from django.db.models import QuerySet
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.parsers import MultiPartParser
 from rest_framework.request import Request
 from rest_framework.response import Response
 
@@ -37,9 +39,10 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "discount_percent", "journal_number", "discount_card",
             "client_type", "client_type_name", "source", "source_name",
             "no_mailing", "in_blacklist", "description", "status", "phones", "pet_names",
-            "has_contract",
+            "has_contract", "photo", "photo_consent_at",
             "created_at", "updated_at",
         ]  # fmt: skip
+        read_only_fields = ["photo", "photo_consent_at"]
 
     def get_has_contract(self, client: Client) -> bool:
         flag = getattr(client, "has_contract", None)  # в списке — посчитан одним запросом
@@ -98,6 +101,19 @@ class ClientViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         if (contract := params.get("contract")) in {"yes", "no"}:
             queryset = queryset.filter(has_contract=contract == "yes")
         return queryset
+
+    @action(detail=True, methods=["post"], parser_classes=[MultiPartParser])
+    def photo(self, request: Request, pk: str | None = None) -> Response:
+        """Фото владельца с камеры (multipart: file). Только с согласием клиента."""
+        client = self.get_object()
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError({"file": ["Нет снимка."]})
+        try:
+            services.save_photo(client, upload)
+        except services.ClientError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+        return Response(self.get_serializer(client).data)
 
     @action(detail=False, methods=["get"])
     def duplicates(self, request: Request) -> Response:
