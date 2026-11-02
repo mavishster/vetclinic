@@ -44,10 +44,15 @@ def visit(db):
     return medical.start_visit(pet, doctor)
 
 
-def test_visit_gets_lab_code(visit) -> None:
+def test_visit_gets_lab_code_from_50000_skipping_taken(visit) -> None:
+    from medical.models import Visit
+
+    Visit.objects.create(lab_code=visit.lab_code + 1, pet=visit.pet, client=visit.client, doctor=visit.doctor,
+                         date=visit.date, purpose=visit.purpose)  # как перенесённая из VetManager  # fmt: skip
     second = medical.start_visit(visit.pet, visit.doctor)
 
-    assert visit.lab_code and second.lab_code == visit.lab_code + 1
+    assert visit.lab_code >= 50000
+    assert second.lab_code == visit.lab_code + 2  # занятый номер пропущен
 
 
 def test_flags() -> None:

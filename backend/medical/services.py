@@ -41,6 +41,17 @@ def mentioned_units(html: str) -> Counter[str]:
 # --- Запись медкарты ---------------------------------------------------------------
 
 
+def next_lab_code() -> int:
+    """Следующий номер для анализатора: с VISIT_LAB_CODE_START, пропуская занятые
+    (например, номера медкарт, перенесённых из VetManager)."""
+    from django.conf import settings
+
+    while True:
+        code = core.next_value("visit_lab_code") + settings.VISIT_LAB_CODE_START - 1
+        if not Visit.objects.filter(lab_code=code).exists():
+            return code
+
+
 def start_visit(pet: Any, doctor: Any, appointment: Any = None) -> Visit:
     """Новая запись медкарты. По записи на приём — с её целью, а приём становится «у врача»."""
     purpose = (appointment.purpose if appointment else None) or scheduling.default_purpose()
@@ -48,7 +59,7 @@ def start_visit(pet: Any, doctor: Any, appointment: Any = None) -> Visit:
         raise MedicalError("Нет ни одной цели обращения — добавьте их в справочник.")
     with transaction.atomic():
         visit = Visit.objects.create(
-            lab_code=core.next_value("visit_lab_code"),
+            lab_code=next_lab_code(),
             pet=pet, client=clients.current_owner(pet), doctor=doctor, date=timezone.now(),
             purpose=purpose, appointment=appointment,
             weight=_last_weight(pet),
