@@ -187,6 +187,13 @@ class Clinic(BaseModel):
     name = models.CharField("название", max_length=200)
     address = models.CharField("адрес", max_length=300, blank=True)
     phone = models.CharField("телефон", max_length=50, blank=True)
+    # Предельные скидки в счёте (в процентах); цена со скидкой к тому же не ниже себестоимости.
+    max_discount_goods = models.DecimalField(
+        "макс. скидка на товары, %", max_digits=5, decimal_places=2, default=5
+    )
+    max_discount_services = models.DecimalField(
+        "макс. скидка на услуги, %", max_digits=5, decimal_places=2, default=10
+    )
 
     class Meta:
         verbose_name = "клиника"

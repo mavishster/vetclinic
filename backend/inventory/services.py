@@ -680,3 +680,16 @@ def turnover(
              "closing": opening + incoming - outgoing}
         )  # fmt: skip
     return result
+
+
+def expected_cost(item: Any, warehouse: Any = None) -> Decimal | None:
+    """Ожидаемая себестоимость единицы учёта при продаже: партия, которая спишется первой;
+    нет остатка — последняя закупочная цена; товар ни разу не приходовали — None."""
+    stock = batch_stock(item, warehouse)
+    last = (
+        stock[0].batch
+        if stock
+        else Batch.objects.filter(item=item).order_by("-received_at").first()
+    )
+    cost: Decimal | None = last.cost_per_base if last else None
+    return cost

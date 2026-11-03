@@ -98,34 +98,64 @@ def test_price_within_min_max_only(client_, visit_service) -> None:
         make(client_, [{"item_unit": visit_service, "price": D("500")}])
 
 
-def test_discount_percent_skips_manual_price_and_client_card_discount(
+def test_line_discounts_within_limits(client_, visit_service, vial) -> None:
+    invoice = make(client_, [{"item_unit": visit_service, "discount_percent": D("10")},
+                             {"item_unit": vial, "quantity": D("2"), "discount_percent": D("5")}])  # fmt: skip
+
+    service, goods = invoice.lines.all()
+    assert (service.discount, goods.discount) == (D("100.00"), D("70.00"))
+    with pytest.raises(InvoiceError, match="больше допустимой на товар \\(5 %\\)"):
+        make(client_, [{"item_unit": vial, "discount_percent": D("6")}])
+    with pytest.raises(InvoiceError, match="больше допустимой на услугу \\(10 %\\)"):
+        make(client_, [{"item_unit": visit_service, "discount_percent": D("11")}])
+
+
+def test_discount_never_below_cost(client_, vial) -> None:
+    clinic = core.current_clinic()
+    clinic.max_discount_goods = D("50")
+    clinic.save()
+
+    # цена 700, себестоимость 400 (упаковка 2000 / 5 фл.) → не больше 42,85 %
+    with pytest.raises(InvoiceError, match="ниже себестоимости — не больше 42,85 %"):
+        make(client_, [{"item_unit": vial, "discount_percent": D("45")}])
+    assert make(client_, [{"item_unit": vial, "discount_percent": D("42")}]).total == D("406.00")
+    fresh = vial.__class__.objects.select_related("item").get(pk=vial.pk)
+    assert services.discount_limit(fresh, D("700"))["percent"] == D("42.85")
+
+
+def test_manual_price_has_no_discount_and_client_card_discount_respects_limits(
     client_, visit_service, vial
 ) -> None:
     invoice = make(
-        client_,
-        [{"item_unit": visit_service, "price": D("900")}, {"item_unit": vial, "quantity": D("2")}],
-        discount_percent=D("10"),
+        client_, [{"item_unit": visit_service, "price": D("900"), "discount_percent": D("10")}]
     )
+    assert invoice.lines.get().discount == D("0")
 
-    manual, goods = invoice.lines.all()
-    assert (manual.discount, goods.discount) == (D("0"), D("140.00"))
-    assert invoice.total == D("2160.00")
-
-    client_.discount_percent = D("5")
+    client_.discount_percent = D("8")
     client_.save()
-    invoice = make(client_, [{"item_unit": vial, "quantity": D("2")}])
-    assert invoice.discount_total == D("70.00")
+    invoice = make(client_, [{"item_unit": visit_service}, {"item_unit": vial}])
+    service, goods = invoice.lines.all()
+    assert (service.discount_percent, goods.discount_percent) == (D("8"), None)  # товару 8 % нельзя
 
 
-def test_discount_amount_is_spread_with_cents(client_, visit_service, vial) -> None:
+def test_discount_amount_spreads_over_lines_without_own_discount(
+    client_, visit_service, vial
+) -> None:
     invoice = make(
-        client_, [{"item_unit": visit_service}, {"item_unit": vial}], discount_amount=D("100")
+        client_, [{"item_unit": visit_service}, {"item_unit": vial}], discount_amount=D("50")
     )
 
-    assert sum(line.discount for line in invoice.lines.all()) == D("100")
-    assert invoice.total == D("1600.00")
+    assert sum(line.discount for line in invoice.lines.all()) == D("50")
+    assert invoice.total == D("1650.00")
+    with pytest.raises(
+        InvoiceError, match="скидка суммой даёт 5,88 % — больше допустимой на товар"
+    ):
+        make(client_, [{"item_unit": visit_service}, {"item_unit": vial}], discount_amount=D("100"))
     with pytest.raises(InvoiceError, match="больше суммы"):
         make(client_, [{"item_unit": vial}], discount_amount=D("1000"))
+    own = make(client_, [{"item_unit": visit_service, "discount_percent": D("10")}, {"item_unit": vial}],
+               discount_amount=D("20"))  # fmt: skip
+    assert [line.discount for line in own.lines.all()] == [D("100.00"), D("20.00")]
 
 
 def test_combo_one_line_with_composition(client_, visit_service, vial) -> None:
@@ -138,6 +168,21 @@ def test_combo_one_line_with_composition(client_, visit_service, vial) -> None:
     assert header.item == combo and header.amount == D("1400.00")
     assert [c.item.name for c in header.children.all()] == ["Приём", "Фелиферон"]
     assert invoice.total == D("1400.00")
+
+
+def test_combo_discount_by_composition(client_, visit_service, vial) -> None:
+    combo = catalog.save_combination(Item(name="Вакцинация+", group=ItemGroup.objects.get(name="Процедуры и манипуляции")),
+                                     [{"item_unit": visit_service}, {"item_unit": vial}])  # fmt: skip
+
+    invoice = make(client_, [{"item": combo, "discount_percent": D("8")}])
+
+    header = invoice.lines.get(parent=None)
+    service, goods = header.children.all()
+    assert (service.discount_percent, goods.discount_percent) == (
+        D("8"),
+        None,
+    )  # товару 8 % нельзя — без скидки
+    assert header.discount == D("80.00")
 
 
 def test_combo_only_item_not_alone(client_, vial) -> None:

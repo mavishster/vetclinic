@@ -7,7 +7,7 @@
 """
 
 from datetime import date, datetime, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any, TypedDict
 
 from django.db import transaction
@@ -19,6 +19,7 @@ from catalog import services as catalog
 from catalog.models import Item, Kind
 from clients import services as clients
 from core import printing
+from core import services as core
 from core.models import Document
 from inventory import services as inventory
 from staff import services as staff
@@ -45,6 +46,8 @@ class LineData(TypedDict, total=False):
     quantity: Decimal
     price: Decimal | None  # своя цена (в границах мин./макс.)
     performer: Any
+    discount_percent: Decimal | None  # скидка строки, %; ключа нет — скидка из карточки клиента
+    combo_discount: Decimal | None  # скидка на комбинацию — для позиции состава, если проходит
 
 
 def list_price(unit: Any, warehouse: Any = None) -> Decimal | None:
@@ -104,6 +107,7 @@ def _unit_line(
     if price < 0:
         raise InvoiceError(f"«{unit.item}»: цена не может быть отрицательной.")
     performer = data.get("performer") or default_performer(unit.item, invoice)
+    discount = _line_discount(invoice, unit, price, manual, data)
     return InvoiceLine(
         invoice=invoice,
         item=unit.item,
@@ -114,9 +118,92 @@ def _unit_line(
         list_price=base_price,
         price=price,
         manual_price=manual,
+        discount_percent=discount,
         performer_id=getattr(performer, "pk", performer),
         position=position,
     )
+
+
+# --- Пределы скидки ----------------------------------------------------------------
+
+
+def unit_cost(unit: Any, warehouse: Any = None) -> Decimal | None:
+    """Себестоимость единицы продажи: товар со складом — партия, которая спишется первой;
+    товар без учёта и услуга — себестоимость из карточки; неизвестна — None."""
+    item = unit.item
+    if item.kind == Kind.GOODS and item.stock_tracked:
+        cost = inventory.expected_cost(item, warehouse)
+    else:
+        cost = item.manual_cost
+    return None if cost is None else _money(cost * unit.ratio)
+
+
+class DiscountLimit(TypedDict):
+    percent: Decimal  # больше нельзя
+    reason: str  # "limit" — лимит по типу позиции, "cost" — дальше цена ниже себестоимости
+    cost: Decimal | None
+
+
+def discount_limit(unit: Any, price: Decimal, warehouse: Any = None) -> DiscountLimit:
+    """Предельная скидка строки: лимит клиники для товаров или услуг — и не ниже себестоимости."""
+    clinic = core.current_clinic()
+    kind_max = (
+        clinic.max_discount_goods if unit.item.kind == Kind.GOODS else clinic.max_discount_services
+    )
+    cost = unit_cost(unit, warehouse)
+    if cost is not None:
+        floor = ZERO if price <= 0 else max((price - cost) / price * 100, ZERO)
+        floor = floor.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+        if floor < kind_max:
+            return {"percent": floor, "reason": "cost", "cost": cost}
+    return {"percent": kind_max, "reason": "limit", "cost": cost}
+
+
+def _pct(value: Decimal) -> str:
+    """5.00 → «5», 42.85 → «42,85» — проценты в сообщениях."""
+    return format(value.normalize(), "f").replace(".", ",")
+
+
+def _limit_error(
+    item: Any, percent: Decimal, limit: DiscountLimit, what: str = "скидка"
+) -> InvoiceError:
+    if limit["reason"] == "cost":
+        return InvoiceError(
+            f"«{item}»: {what} {_pct(percent)} % опускает цену ниже себестоимости — "
+            f"не больше {_pct(limit['percent'])} %."
+        )
+    kind = "товар" if item.kind == Kind.GOODS else "услугу"
+    return InvoiceError(
+        f"«{item}»: {what} {_pct(percent)} % — больше допустимой на {kind} "
+        f"({_pct(limit['percent'])} %)."
+    )
+
+
+def _line_discount(
+    invoice: Invoice, unit: Any, price: Decimal, manual: bool, data: LineData
+) -> Decimal | None:
+    """Скидка новой строки: указанная явно — как есть (проверяется при пересчёте);
+    не указана — скидка из карточки клиента, если она в пределах для этой позиции."""
+    if manual:
+        return None  # своя цена — без скидки
+    if "combo_discount" in data:
+        value = data.get("combo_discount")
+        if value in (None, ""):
+            return None
+        percent = D(str(value))
+        return (
+            percent
+            if percent <= discount_limit(unit, price, invoice.warehouse_id)["percent"]
+            else None
+        )
+    if "discount_percent" in data:
+        value = data.get("discount_percent")
+        return None if value in (None, "") else D(str(value))
+    client_percent = invoice.client.discount_percent if invoice.client_id else None
+    if not client_percent:
+        return None
+    limit = discount_limit(unit, price, invoice.warehouse_id)
+    return client_percent if client_percent <= limit["percent"] else None
 
 
 def _add_lines(invoice: Invoice, lines: list[LineData]) -> None:
@@ -155,6 +242,13 @@ def _add_lines(invoice: Invoice, lines: list[LineData]) -> None:
                     "item_unit": part["item_unit"],
                     "quantity": part["quantity"] * times,
                     "performer": data.get("performer"),
+                    # Скидка на комбинацию — каждой позиции состава в её пределах
+                    # (товары и услуги — свои лимиты); где не проходит — без скидки.
+                    **(
+                        {"combo_discount": data["discount_percent"]}
+                        if "discount_percent" in data
+                        else {}
+                    ),
                 },
                 position,
                 parent=header,
@@ -168,30 +262,39 @@ def _add_lines(invoice: Invoice, lines: list[LineData]) -> None:
 
 
 def recalculate(invoice: Invoice) -> None:
-    """Скидки и суммы. Скидка — на строки без ручной цены (ADR: ручная цена — без скидки).
+    """Скидки и суммы.
 
-    Сумма скидки распределяется пропорционально; копейки остатка — на последнюю строку.
-    Скидка счёта не задана — действует скидка из карточки клиента.
+    - скидка строки в процентах — в пределах лимита клиники для товара или услуги и так,
+      чтобы цена не опустилась ниже себестоимости; иначе — понятная ошибка;
+    - скидка суммой на счёт делится пропорционально между строками без своей скидки
+      и без ручной цены (копейки остатка — на последнюю); на каждой из них она тоже
+      должна укладываться в предел;
+    - строка с ручной ценой — без скидки.
     """
-    lines = list(invoice.lines.all())
+    lines = list(invoice.lines.select_related("item", "item_unit"))
     leaves = [line for line in lines if not any(child.parent_id == line.pk for child in lines)]
     for line in leaves:
         line.discount = ZERO
-    eligible = [line for line in leaves if not line.manual_price]
+        if line.manual_price:
+            line.discount_percent = None
+    for line in leaves:
+        percent = line.discount_percent
+        if percent is None or line.item_unit is None:
+            continue
+        if not ZERO <= percent <= 100:
+            raise InvoiceError(f"«{line.item}»: скидка — от 0 до 100 %.")
+        limit = discount_limit(line.item_unit, line.price, invoice.warehouse_id)
+        if percent > limit["percent"]:
+            raise _limit_error(line.item, percent, limit)
+        line.discount = _money(line.price * line.quantity * percent / 100)
+    eligible = [line for line in leaves if not line.manual_price and line.discount_percent is None]
     eligible_gross = sum((line.price * line.quantity for line in eligible), ZERO)
-    percent = invoice.discount_percent
-    if percent is None and invoice.discount_amount is None:
-        percent = invoice.client.discount_percent or None
-    if percent is not None and not ZERO <= percent <= 100:
-        raise InvoiceError("Скидка в процентах — от 0 до 100.")
-    if invoice.discount_amount is not None:
-        if invoice.discount_amount < 0 or invoice.discount_amount > eligible_gross:
-            raise InvoiceError(
-                "Скидка суммой не может быть больше суммы строк, на которые она действует."
-            )
-        target = invoice.discount_amount
-    else:
-        target = _money(eligible_gross * (percent or ZERO) / 100)
+    target = invoice.discount_amount or ZERO
+    if target < 0 or target > eligible_gross:
+        raise InvoiceError(
+            "Скидка суммой не может быть больше суммы строк, на которые она действует "
+            "(строки без своей скидки и без ручной цены)."
+        )
     rest = target
     for index, line in enumerate(eligible):
         gross = line.price * line.quantity
@@ -204,9 +307,14 @@ def recalculate(invoice: Invoice) -> None:
         )
         line.discount = min(share, _money(gross))
         rest -= line.discount
+        if line.discount and line.item_unit is not None and gross:
+            effective = (line.discount / gross * 100).quantize(Decimal("0.01"))
+            limit = discount_limit(line.item_unit, line.price, invoice.warehouse_id)
+            if effective > limit["percent"]:
+                raise _limit_error(line.item, effective, limit, "скидка суммой даёт")
     for line in leaves:
         line.amount = _money(line.price * line.quantity - line.discount)
-        line.save(update_fields=["discount", "amount"])
+        line.save(update_fields=["discount", "discount_percent", "amount"])
     for header in (line for line in lines if line not in leaves):
         children = [line for line in leaves if line.parent_id == header.pk]
         header.amount = sum((c.amount for c in children), ZERO)
@@ -402,8 +510,12 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
             continue
         tracked = unit.item.kind == Kind.GOODS and unit.item.stock_tracked
         price = list_price(unit, warehouse)
+        limit = discount_limit(unit, price, warehouse) if price is not None else None
         result.append(
             {
+                "max_discount": str(limit["percent"]) if limit else None,
+                "max_reason": limit["reason"] if limit else None,
+                "unit_cost": str(limit["cost"]) if limit and limit["cost"] is not None else None,
                 "item_unit": str(unit.pk),
                 "item": str(unit.item_id),
                 "kind": unit.item.kind,
@@ -421,6 +533,9 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
         price = catalog.combination_price(combo)
         result.append(
             {
+                "max_discount": None,
+                "max_reason": None,
+                "unit_cost": None,
                 "item_unit": None,
                 "item": str(combo.pk),
                 "kind": "combo",
@@ -448,6 +563,7 @@ def print_context(invoice: Invoice) -> dict[str, Any]:
             "quantity": line.quantity,
             "price": line.price,
             "discount": line.discount,
+            "discount_percent": line.discount_percent,
             "amount": line.amount,
             "composition": [],
         }

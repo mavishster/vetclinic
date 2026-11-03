@@ -30,9 +30,12 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         data = super().to_representation(line)
         if not can_view_cost(self.context.get("request")):
             data.pop("cost", None)  # себестоимость — только с особым правом
+            data.pop("unit_cost", None)
         return data
 
     name = serializers.CharField(source="item.name", read_only=True)
+    max_discount = serializers.SerializerMethodField()
+    unit_cost = serializers.SerializerMethodField()
     kind = serializers.CharField(source="item.kind", read_only=True)
     unit_name = serializers.SerializerMethodField()
     performer_name = serializers.CharField(
@@ -57,12 +60,32 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "manual_price",
             "price_min",
             "price_max",
+            "discount_percent",
+            "max_discount",
+            "unit_cost",
             "discount",
             "amount",
             "performer",
             "performer_name",
             "cost",
         ]
+
+    def _limit(self, line: InvoiceLine) -> Any:
+        if line.item_unit is None:
+            return None
+        return services.discount_limit(line.item_unit, line.price, line.invoice.warehouse_id)
+
+    def get_max_discount(self, line: InvoiceLine) -> dict[str, str] | None:
+        """Предельная скидка строки и почему (лимит клиники или себестоимость)."""
+        limit = self._limit(line)
+        return (
+            None if limit is None else {"percent": str(limit["percent"]), "reason": limit["reason"]}
+        )
+
+    def get_unit_cost(self, line: InvoiceLine) -> str | None:
+        """Ожидаемая себестоимость единицы — для оператора с правом «Видеть себестоимость»."""
+        limit = self._limit(line)
+        return None if limit is None or limit["cost"] is None else str(limit["cost"])
 
     def get_unit_name(self, line: InvoiceLine) -> str:
         return line.item_unit.unit.name if line.item_unit else "компл."
@@ -269,11 +292,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     def lookup(self, request: Request) -> Response:
         """Позиции для счёта: ?search= или ?barcode=, ?warehouse=."""
         params = request.query_params
-        return Response(
-            services.lookup(
-                params.get("search", ""), params.get("barcode", ""), params.get("warehouse") or None
-            )
+        found = services.lookup(
+            params.get("search", ""), params.get("barcode", ""), params.get("warehouse") or None
         )
+        if not can_view_cost(request):
+            for row in found:
+                row.pop("unit_cost", None)  # себестоимость — только с особым правом
+        return Response(found)
 
     @action(detail=False, methods=["get"])
     def performers(self, request: Request) -> Response:

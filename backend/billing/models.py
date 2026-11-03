@@ -131,6 +131,11 @@ class InvoiceLine(models.Model):
     list_price = MoneyField("цена по прайсу", null=True, blank=True)
     price = MoneyField("цена")
     manual_price = models.BooleanField("цена изменена вручную", default=False)
+    # Скидка строки в процентах. Лимит — по типу позиции (настройки клиники), цена со
+    # скидкой — не ниже себестоимости. Пусто — без скидки (или доля скидки суммой на счёт).
+    discount_percent = models.DecimalField(
+        "скидка, %", max_digits=5, decimal_places=2, null=True, blank=True
+    )
     discount = MoneyField("скидка", default=Decimal("0"))
     amount = MoneyField("сумма", default=Decimal("0"))
     performer = models.ForeignKey(

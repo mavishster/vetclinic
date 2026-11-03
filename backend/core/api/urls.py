@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from core.api import attachments, auth, roles, views
+from core.api import attachments, auth, clinic, roles, views
 from core.api.printing import PrintTemplateViewSet
 
 router = DefaultRouter()
@@ -20,6 +20,7 @@ urlpatterns = [
     path("me/", views.me, name="core-me"),
     path("me/pin/", views.set_my_pin, name="core-me-pin"),
     path("me/ui/", views.my_ui_settings, name="core-me-ui"),
+    path("clinic/", clinic.ClinicView.as_view(), name="core-clinic"),
     path("backup-status/", views.backup_status, name="core-backup-status"),
     *router.urls,
 ]

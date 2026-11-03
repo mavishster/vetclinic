@@ -60,6 +60,7 @@ export default [
     title: 'Администрирование',
     items: [
       { title: 'Роли и права', icon: 'admin_panel_settings', to: '/roles', perm: 'auth.view_group' },
+      { title: 'Настройки клиники', icon: 'tune', to: '/clinic-settings', perm: 'core.view_clinic' },
       { title: 'Печатные формы', icon: 'description', to: '/print-templates', perm: 'core.view_printtemplate' },
       { title: 'Сотрудники', icon: 'badge', to: '/staff/employees', perm: 'staff.view_employee' },
     ],

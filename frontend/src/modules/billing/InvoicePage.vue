@@ -39,11 +39,14 @@
         <q-select v-model="form.doctor" :options="performers" option-value="id" option-label="name" emit-value map-options outlined dense
           clearable label="Врач" class="col-6 col-md-2" :readonly="executed && !canEdit" hint="По умолчанию — исполнитель строк"
           @update:model-value="(v) => executed && details({ doctor: v })" />
-        <q-input v-model="form.discount_percent" type="number" step="0.5" min="0" max="100" outlined dense clearable label="Скидка, %"
-          class="col-6 col-md-2" :readonly="executed" :disable="!!form.discount_amount"
-          :hint="!form.discount_percent && !form.discount_amount && Number(form.client_discount) ? `из карточки: ${Number(form.client_discount)} %` : ''" />
-        <q-input v-model="form.discount_amount" type="number" step="1" min="0" outlined dense clearable :label="`Скидка, ${currency()}`" class="col-6 col-md-2"
-          :readonly="executed" :disable="!!form.discount_percent" />
+        <!-- Скидка на все позиции: ставится в каждую строку, где укладывается в предел -->
+        <q-input v-if="!executed" v-model="allPercent" type="number" step="1" min="0" max="100" outlined dense label="Скидка на все позиции, %"
+          class="col-6 col-md-2" :hint="Number(form.client_discount) ? `в карточке клиента: ${Number(form.client_discount)} %` : 'Enter — применить'"
+          @keyup.enter="applyToAll">
+          <template #append><q-btn flat dense round icon="done_all" :disable="allPercent === ''" @click="applyToAll"><q-tooltip>Применить ко всем позициям</q-tooltip></q-btn></template>
+        </q-input>
+        <q-input v-model="form.discount_amount" type="number" step="1" min="0" outlined dense clearable :label="`Скидка суммой, ${currency()}`" class="col-6 col-md-2"
+          :readonly="executed" hint="Делится между строками без своей скидки" />
       </div>
 
       <div v-if="!executed" class="row q-col-gutter-sm items-center q-mb-sm">
@@ -56,7 +59,12 @@
 
       <q-markup-table flat bordered dense wrap-cells>
         <thead>
-          <tr><th class="text-left">Позиция</th><th>Кол-во</th><th>Цена</th><th>Скидка</th><th>Сумма</th><th class="text-left">Исполнитель</th><th /></tr>
+          <tr>
+            <th class="text-left">Позиция</th><th>Кол-во</th><th>Цена</th>
+            <th>Скидка, %<q-tooltip>Товары — не больше {{ Number(clinic.max_discount_goods) }} %, услуги — не больше {{ Number(clinic.max_discount_services) }} %, и цена со скидкой не ниже себестоимости</q-tooltip></th>
+            <th v-if="showCost">Себестоимость<q-tooltip>Видна только сотрудникам с правом «Видеть себестоимость»; в счёт и чек не печатается</q-tooltip></th>
+            <th>Сумма</th><th class="text-left">Исполнитель</th><th />
+          </tr>
         </thead>
         <tbody>
           <template v-for="(line, i) in form.lines" :key="i">
@@ -64,7 +72,7 @@
               <td>
                 <div class="text-weight-medium">{{ line.name }}</div>
                 <div class="text-caption text-grey-7">{{ line.unit_name }}<span v-if="line.stock !== undefined && line.stock !== null"> · на складе {{ Number(line.stock) }}</span></div>
-                <div v-for="(child, c) in line.children" :key="c" class="text-caption text-grey-7">— {{ child.name }} × {{ Number(child.quantity) }} = {{ money(child.amount) }}</div>
+                <div v-for="(child, c) in line.children" :key="c" class="text-caption text-grey-7">— {{ child.name }} × {{ Number(child.quantity) }} = {{ money(child.amount) }}<span v-if="child.discount_percent"> (−{{ Number(child.discount_percent) }} %)</span></div>
               </td>
               <td style="width: 90px"><q-input v-model="line.quantity" type="number" step="0.001" min="0" dense borderless input-class="text-right" :readonly="executed" /></td>
               <td style="width: 140px">
@@ -72,7 +80,19 @@
                   :readonly="executed" :error="outOfBounds(line)" :hint="bounds(line)" />
                 <div v-else class="text-right">{{ money(line.price) }}</div>
               </td>
-              <td class="text-right text-grey-8">{{ Number(line.discount) ? money(line.discount) : '' }}<q-badge v-if="line.manual" color="grey-6" label="своя цена" class="q-ml-xs"><q-tooltip>Цена изменена вручную — скидка счёта не применяется</q-tooltip></q-badge></td>
+              <td style="width: 120px">
+                <q-badge v-if="isManual(line)" color="grey-6" label="своя цена"><q-tooltip>Цена изменена вручную — без скидки</q-tooltip></q-badge>
+                <template v-else>
+                  <q-input v-model="line.discount_percent" type="number" step="1" min="0" dense borderless input-class="text-right" placeholder="—"
+                    :readonly="executed" :error="!!discountError(line)" :error-message="discountError(line)" no-error-icon
+                    :hint="line.item_unit && line.max_discount ? `до ${Number(line.max_discount.percent)} %` : (line.item_unit ? '' : 'по составу')" />
+                  <div v-if="Number(line.discount)" class="text-caption text-grey-7 text-right">−{{ money(line.discount) }}</div>
+                </template>
+              </td>
+              <td v-if="showCost" class="text-right text-grey-8">
+                <template v-if="line.unit_cost">{{ money(line.unit_cost) }}</template>
+                <span v-else-if="line.item_unit" class="text-caption">не задана</span>
+              </td>
               <td class="text-right text-weight-medium">{{ money(lineAmount(line)) }}</td>
               <td style="min-width: 150px">
                 <q-select v-model="line.performer" :options="performers" option-value="id" option-label="name" emit-value map-options dense
@@ -82,7 +102,7 @@
               <td class="text-right"><q-btn v-if="!executed" flat round dense size="sm" icon="close" @click="form.lines.splice(i, 1)" /></td>
             </tr>
           </template>
-          <tr v-if="!form.lines.length"><td colspan="7" class="text-grey-7">Добавьте позиции поиском или сканером</td></tr>
+          <tr v-if="!form.lines.length"><td :colspan="showCost ? 8 : 7" class="text-grey-7">Добавьте позиции поиском или сканером</td></tr>
         </tbody>
       </q-markup-table>
 
@@ -146,7 +166,49 @@ const PAY = {
 }
 const balance = computed(() => (form.value.client_balance === undefined ? null : Number(form.value.client_balance)))
 
-const lineAmount = (line) => (dirty.value || line.amount === undefined ? (Number(line.price) || 0) * (Number(line.quantity) || 0) : Number(line.amount))
+const lineAmount = (line) => {
+  if (!dirty.value && line.amount !== undefined) return Number(line.amount)
+  const gross = (Number(line.price) || 0) * (Number(line.quantity) || 0)
+  return isManual(line) ? gross : gross * (1 - (Number(line.discount_percent) || 0) / 100)
+}
+
+// --- Скидки: лимит по типу позиции и не ниже себестоимости (сервер проверяет то же) ---
+const showCost = can('catalog.view_cost')
+const clinic = ref({ max_discount_goods: 5, max_discount_services: 10 })
+const allPercent = ref('')
+const isManual = (line) => line.item_unit && line.list_price !== null && line.list_price !== undefined && Number(line.price) !== Number(line.list_price)
+
+function discountError(line) {
+  const value = line.discount_percent
+  if (value === null || value === undefined || value === '' || !line.item_unit || !line.max_discount) return ''
+  const max = Number(line.max_discount.percent)
+  if (Number(value) < 0) return 'Не меньше 0'
+  if (Number(value) <= max) return ''
+  return line.max_discount.reason === 'cost' ? `Не больше ${max} % — ниже себестоимости` : `Не больше ${max} %`
+}
+
+// «Скидка на все позиции»: ставим везде, где укладывается в предел; остальные — список.
+function applyToAll() {
+  const percent = allPercent.value === '' ? null : Number(allPercent.value)
+  const skipped = []
+  for (const line of form.value.lines) {
+    if (isManual(line)) continue
+    if (!line.item_unit) {
+      line.discount_percent = percent // комбинация — каждой позиции состава в её пределах
+      continue
+    }
+    const max = line.max_discount ? Number(line.max_discount.percent) : 100
+    if (percent === null || percent <= max) line.discount_percent = percent
+    else {
+      line.discount_percent = null
+      skipped.push(`${line.name} — не больше ${max} %${line.max_discount?.reason === 'cost' ? ' (себестоимость)' : ''}`)
+    }
+  }
+  if (skipped.length) {
+    $q.dialog({ title: `Скидка ${percent} % применена не ко всем позициям`,
+      message: `Без скидки остались:<br>• ${skipped.join('<br>• ')}`, html: true, ok: { label: 'Понятно', color: 'primary', flat: true } })
+  }
+}
 function bounds(line) {
   const low = line.price_min !== null && line.price_min !== undefined ? Number(line.price_min) : null
   const high = line.price_max !== null && line.price_max !== undefined ? Number(line.price_max) : null
@@ -161,6 +223,10 @@ function outOfBounds(line) {
 
 async function loadPets(clientId) {
   if (!clientId) return (pets.value = [])
+  if (!executed.value && form.value.client_discount === undefined) {
+    // Скидка из карточки клиента — подставляется в новые строки (в пределах лимитов).
+    apiGet(`clients/clients/${clientId}/`).then(({ ok, data }) => { if (ok) form.value.client_discount = data.discount_percent })
+  }
   const { data } = await apiGet(`clients/pets/?owner=${clientId}&status=active&page_size=100`)
   pets.value = (data?.results ?? []).map((p) => ({ id: p.id, label: `${p.name} (${p.species_name})` }))
   if (!form.value.pet && pets.value.length === 1) form.value.pet = pets.value[0].id
@@ -171,7 +237,17 @@ function addLine(option) {
     item_unit: option.item_unit, item: option.item, name: option.name, unit_name: option.unit, quantity: '1',
     price: option.price, list_price: option.price, price_min: option.price_min, price_max: option.price_max,
     stock: option.stock, performer: form.value.doctor || null, children: [],
+    max_discount: option.max_discount ? { percent: option.max_discount, reason: option.max_reason } : null,
+    unit_cost: option.unit_cost ?? null,
+    discount_percent: defaultDiscount(option),
   })
+}
+
+// Скидка из карточки клиента — если укладывается в предел этой позиции.
+function defaultDiscount(option) {
+  const client = Number(form.value.client_discount) || 0
+  if (!client || !option.item_unit) return client || null
+  return option.max_discount && client > Number(option.max_discount) ? null : client
 }
 
 async function scan() {
@@ -204,14 +280,20 @@ function addFromSearch(key) {
 function body() {
   return {
     client: form.value.client, pet: form.value.pet || null, doctor: form.value.doctor || null,
-    discount_percent: form.value.discount_percent === '' ? null : form.value.discount_percent ?? null,
     discount_amount: form.value.discount_amount === '' ? null : form.value.discount_amount ?? null,
     comment: form.value.comment || '', appointment: form.value.appointment || null, visit: form.value.visit || null,
     is_quick: !!form.value.is_quick,
     input_lines: form.value.lines.map((l) => (l.item_unit
-      ? { item_unit: l.item_unit, quantity: l.quantity, price: Number(l.price) === Number(l.list_price) ? null : l.price, performer: l.performer || null }
-      : { item: l.item, quantity: l.quantity, performer: l.performer || null })),
+      ? { item_unit: l.item_unit, quantity: l.quantity, price: Number(l.price) === Number(l.list_price) ? null : l.price, performer: l.performer || null,
+          discount_percent: l.discount_percent === '' || l.discount_percent === undefined ? null : l.discount_percent }
+      : { item: l.item, quantity: l.quantity, performer: l.performer || null,
+          discount_percent: l.discount_percent === '' || l.discount_percent === undefined ? null : l.discount_percent })),
   }
+}
+
+function commonChildDiscount(children) {
+  const values = [...new Set(children.map((c) => c.discount_percent).filter((v) => v !== null))]
+  return values.length === 1 ? values[0] : null
 }
 
 // Строки с сервера: заголовки комбинаций со своим составом; строки состава — внутри заголовка.
@@ -221,7 +303,9 @@ function applyInvoice(data) {
     ...data,
     lines: data.lines.filter((l) => !l.parent).map((l) => ({
       ...l, manual: l.manual_price, list_price: l.manual_price ? l.list_price : l.price,
-      children: children.filter((c) => c.parent === l.id).map((c) => ({ name: c.name, quantity: c.quantity, amount: c.amount })),
+      // У заголовка комбинации — скидка, общая для состава (если у всех позиций одна).
+      discount_percent: l.item_unit ? l.discount_percent : commonChildDiscount(children.filter((c) => c.parent === l.id)),
+      children: children.filter((c) => c.parent === l.id).map((c) => ({ name: c.name, quantity: c.quantity, amount: c.amount, discount_percent: c.discount_percent })),
     })),
   }
   // Замена формы сама вызовет наблюдатель изменений — сбрасываем «есть изменения» после него.
@@ -296,13 +380,14 @@ async function print() {
   window.open(`/api/billing/invoices/${form.value.id}/print/`, '_blank')
 }
 
-watch(() => [form.value.lines, form.value.discount_percent, form.value.discount_amount], () => { if (!loading.value) dirty.value = true }, { deep: true })
+watch(() => [form.value.lines, form.value.discount_amount], () => { if (!loading.value) dirty.value = true }, { deep: true })
 
 onMounted(async () => {
   performers.value = (await apiGet('billing/invoices/performers/')).data ?? []
+  apiGet('core/clinic/').then(({ ok, data }) => { if (ok) clinic.value = data })
   if (props.id === 'new') {
     form.value = { client: route.query.client || null, client_name: route.query.client_name || '', pet: route.query.pet || null,
-      doctor: null, discount_percent: null, discount_amount: null, comment: '', lines: [], subtotal: 0, discount_total: 0, total: 0 }
+      doctor: null, discount_amount: null, comment: '', lines: [], subtotal: 0, discount_total: 0, total: 0 }
     if (route.query.quick === '1') {
       // Быстрый счёт: клиент — служебный «Гость», оплата сразу.
       const guest = (await apiGet('billing/invoices/guest/')).data

@@ -38,8 +38,8 @@ def test_invoice_flow(api, service) -> None:
     owner = clients.save_client(Client(last_name="Петров"))
     found = api.get(f"{URL}lookup/?search=первичный").json()
 
-    created = api.post(URL, {"client": str(owner.pk), "discount_percent": "10",
-                             "input_lines": [{"item_unit": found[0]["item_unit"], "quantity": "2"}]}, format="json")  # fmt: skip
+    created = api.post(URL, {"client": str(owner.pk),
+                             "input_lines": [{"item_unit": found[0]["item_unit"], "quantity": "2", "discount_percent": "10"}]}, format="json")  # fmt: skip
     invoice = created.json()
     executed = api.post(f"{URL}{invoice['id']}/execute/").json()
     report = api.get("/api/billing/reports/performers/").json()
@@ -69,3 +69,39 @@ def test_readable_errors_and_permissions(api, service, db) -> None:
     assert "больше нуля" in bad.json()["non_field_errors"][0]
     assert plain.get(URL).status_code == 403
     assert plain.get("/api/billing/reports/performers/").status_code == 403
+
+
+def test_line_limits_cost_visibility_and_clinic_settings(api, service, db) -> None:
+    from django.contrib.auth import get_user_model
+    from django.contrib.auth.models import Group
+
+    from core import services as core
+
+    owner = clients.save_client(Client(last_name="Петров"))
+    invoice = api.post(
+        URL,
+        {"client": str(owner.pk), "input_lines": [{"item_unit": str(service.pk)}]},
+        format="json",
+    ).json()
+    line = invoice["lines"][0]
+    assert line["max_discount"] == {"percent": "10.00", "reason": "limit"}
+
+    settings = api.patch("/api/core/clinic/", {"max_discount_services": "7"}, format="json")
+    again = api.get(f"{URL}{invoice['id']}/").json()
+    bad = api.patch("/api/core/clinic/", {"max_discount_goods": "150"}, format="json")
+    assert settings.json()["max_discount_services"] == "7.00"
+    assert again["lines"][0]["max_discount"]["percent"] == "7.00"
+    assert bad.status_code == 400
+
+    role = Group.objects.create(name="Оператор без себестоимости")
+    core.set_entity_permissions(role, "billing.invoice", {"view", "edit"})
+    user = get_user_model().objects.create_user(username="op", password="x")
+    user.groups.add(role)
+    operator = APIClient()
+    operator.force_authenticate(user)
+    seen = operator.get(f"{URL}{invoice['id']}/").json()["lines"][0]
+    assert "unit_cost" not in seen and seen["max_discount"]["percent"] == "7.00"
+    assert (
+        operator.patch("/api/core/clinic/", {"max_discount_goods": "3"}, format="json").status_code
+        == 403
+    )
