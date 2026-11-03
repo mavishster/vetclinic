@@ -26,7 +26,7 @@ def test_booking_with_quick_client_and_warning_flow(api, doctor) -> None:
     body = {
         "new_client": {"last_name": "Смирнова", "phone": "+7 912 000-11-22"},
         "doctor": str(doctor.pk), "purpose": str(purpose.pk), "pet_note": "кот",
-        "start": "2026-11-02T10:00:00+03:00",
+        "start": "2026-11-02T10:00:00+06:00",
     }  # fmt: skip
 
     warned = api.post(URL, body, format="json")
@@ -48,7 +48,7 @@ def test_status_endpoint_and_errors(api) -> None:
     client = clients.save_client(Client(last_name="Петров"))
     created = api.post(
         f"{URL}?force=1",
-        {"client": str(client.pk), "start": "2026-11-02T10:00:00+03:00"},
+        {"client": str(client.pk), "start": "2026-11-02T10:00:00+06:00"},
         format="json",
     ).json()
 
@@ -80,7 +80,7 @@ def test_filters_and_permissions(api, db) -> None:
     client = clients.save_client(Client(last_name="Петров"))
     api.post(
         f"{URL}?force=1",
-        {"client": str(client.pk), "start": "2026-11-02T10:00:00+03:00"},
+        {"client": str(client.pk), "start": "2026-11-02T10:00:00+06:00"},
         format="json",
     )
     plain = APIClient()

@@ -6,6 +6,7 @@
 
 import csv
 import io
+import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -74,10 +75,11 @@ def text(row: list[Any], mapping: dict[str, int], key: str) -> str:
 
 
 def decimal(value: Any) -> Decimal | None:
-    """Число из ячейки: «1 100,50», «1100.5 ₽». Пусто — None; не число — ValueError."""
+    """Число из ячейки: «1 100,50», «1100.5 сом». Пусто — None; не число — ValueError."""
     if value in (None, ""):
         return None
-    cleaned = str(value).replace("\u00a0", "").replace(" ", "").replace("₽", "").replace(",", ".")
+    # Пробелы и обозначение валюты (сом, с, ₽, $…) отбрасываются.
+    cleaned = re.sub(r"[^\d,.\-+eE]", "", str(value).replace("сом", "")).replace(",", ".")
     try:
         return Decimal(cleaned)
     except InvalidOperation:

@@ -18,6 +18,7 @@ from billing.models import Invoice, InvoiceLine, InvoiceLineBatch, InvoicePaymen
 from catalog import services as catalog
 from catalog.models import Item, Kind
 from clients import services as clients
+from core import printing
 from core.models import Document
 from inventory import services as inventory
 from staff import services as staff
@@ -92,12 +93,14 @@ def _unit_line(
         bounds = " ".join(
             p
             for p in (
-                f"от {low}" if low is not None else "",
-                f"до {high}" if high is not None else "",
+                f"от {printing.money(low)}" if low is not None else "",
+                f"до {printing.money(high)}" if high is not None else "",
             )
             if p
         )
-        raise InvoiceError(f"«{unit.item}»: цена {price} ₽ вне допустимых границ ({bounds} ₽).")
+        raise InvoiceError(
+            f"«{unit.item}»: цена {printing.money(price)} вне допустимых границ ({bounds})."
+        )
     if price < 0:
         raise InvoiceError(f"«{unit.item}»: цена не может быть отрицательной.")
     performer = data.get("performer") or default_performer(unit.item, invoice)

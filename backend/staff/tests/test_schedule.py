@@ -10,7 +10,7 @@ from staff import services
 from staff.models import Employee, IntervalTemplate, IntervalType, WorkInterval
 from staff.services import StaffError
 
-MSK = ZoneInfo("Europe/Moscow")
+MSK = ZoneInfo("Asia/Bishkek")
 
 
 def at(day: int, hour: int, month: int = 11) -> datetime:

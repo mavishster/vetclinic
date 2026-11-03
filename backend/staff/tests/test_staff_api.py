@@ -98,7 +98,7 @@ def test_schedule_api_fill_list_copy_and_on_shift(admin_api) -> None:
     )
     clash = admin_api.post(
         "/api/staff/intervals/",
-        {"user": employee["user_id"], "start": "2026-11-02T10:00:00+03:00", "end": "2026-11-02T11:00:00+03:00",
+        {"user": employee["user_id"], "start": "2026-11-02T10:00:00+06:00", "end": "2026-11-02T11:00:00+06:00",
          "interval_type": str(IntervalType.objects.get(name="Приём").pk)},
         format="json",
     )  # fmt: skip

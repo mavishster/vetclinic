@@ -154,7 +154,7 @@ def test_execute_writes_off_stock_records_cost_and_debt(client_, vial, visit_ser
     core.execute_document(invoice)
 
     goods = invoice.lines.get(item=vial.item)
-    assert goods.cost == D("1200.00")  # 3 фл. × 400 (2000 ₽ за упаковку из 5 фл.)
+    assert goods.cost == D("1200.00")  # 3 фл. × 400 (2000 сом за упаковку из 5 фл.)
     assert goods.batches.get().qty_base == D("3")
     assert inventory.available(vial.item) == D("7")
     assert clients.balance(client_) == D("-3100.00")

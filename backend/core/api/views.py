@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -32,6 +33,7 @@ def me(request: Request) -> Response:
             "clinic": services.current_clinic().name,
             "permissions": sorted(user.get_all_permissions()),
             "ui_settings": user.ui_settings or {},
+            "currency": settings.CURRENCY,
         }
     )
 

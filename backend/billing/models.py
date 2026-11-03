@@ -66,7 +66,7 @@ class Invoice(Document):
     discount_percent = models.DecimalField(
         "скидка, %", max_digits=5, decimal_places=2, null=True, blank=True
     )
-    discount_amount = MoneyField("скидка, ₽", null=True, blank=True)
+    discount_amount = MoneyField("скидка, сумма", null=True, blank=True)
     subtotal = MoneyField("сумма без скидки", default=Decimal("0"))
     discount_total = MoneyField("скидка итого", default=Decimal("0"))
     total = MoneyField("к оплате", default=Decimal("0"))

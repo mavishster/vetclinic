@@ -42,7 +42,7 @@
         <q-input v-model="form.discount_percent" type="number" step="0.5" min="0" max="100" outlined dense clearable label="Скидка, %"
           class="col-6 col-md-2" :readonly="executed" :disable="!!form.discount_amount"
           :hint="!form.discount_percent && !form.discount_amount && Number(form.client_discount) ? `из карточки: ${Number(form.client_discount)} %` : ''" />
-        <q-input v-model="form.discount_amount" type="number" step="1" min="0" outlined dense clearable label="Скидка, ₽" class="col-6 col-md-2"
+        <q-input v-model="form.discount_amount" type="number" step="1" min="0" outlined dense clearable :label="`Скидка, ${currency()}`" class="col-6 col-md-2"
           :readonly="executed" :disable="!!form.discount_percent" />
       </div>
 
@@ -116,7 +116,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
-import { money } from '@/modules/catalog/money'
+import { currency, money } from '@/modules/catalog/money'
 import ClientSelect from '@/modules/clients/ClientSelect.vue'
 // Окно оплаты — модуль «Касса».
 import PaymentDialog from '@/modules/cash/PaymentDialog.vue'

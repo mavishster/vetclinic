@@ -108,7 +108,7 @@ const signOpen = ref(false)
 const filesVersion = ref(0) // подписанный PDF и фото появляются в «Файлах» сразу
 const photoOpen = ref(false)
 
-// Фото — только с согласием клиента на обработку ПДн и фотографирование (152-ФЗ).
+// Фото — только с согласием клиента на обработку ПДн и фотографирование (закон о персональных данных).
 function openPhoto() {
   if (!can('clients.change_client')) return
   if (!client.value.photo_consent_at) {

@@ -9,7 +9,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-vetclinic}
       POSTGRES_USER: ${POSTGRES_USER:-vetclinic}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD в файле .env}
-      TZ: ${TZ:-Europe/Moscow}
+      TZ: ${TZ:-Asia/Bishkek}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -78,7 +78,7 @@ services:
       PGHOST: db
       BACKUP_DIR: /backups
       MEDIA_DIR: /media
-      TZ: ${TZ:-Europe/Moscow}
+      TZ: ${TZ:-Asia/Bishkek}
     volumes:
       - ./deploy/backup:/scripts:ro
       - ${BACKUP_HOST_DIR:-./backups}:/backups

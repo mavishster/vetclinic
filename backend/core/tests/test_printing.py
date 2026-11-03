@@ -18,10 +18,10 @@ NBSP = "\u00a0"
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        (Decimal("1234.5"), f"1{NBSP}234,50{NBSP}₽"),
-        (Decimal("1234567.891"), f"1{NBSP}234{NBSP}567,89{NBSP}₽"),
-        (0, f"0,00{NBSP}₽"),
-        (Decimal("-50"), f"−50,00{NBSP}₽"),
+        (Decimal("1234.5"), f"1{NBSP}234,50{NBSP}сом"),
+        (Decimal("1234567.891"), f"1{NBSP}234{NBSP}567,89{NBSP}сом"),
+        (0, f"0,00{NBSP}сом"),
+        (Decimal("-50"), f"−50,00{NBSP}сом"),
         (None, ""),
     ],
 )
@@ -38,12 +38,12 @@ def test_qty_filter(value, expected) -> None:
 
 
 def test_date_filters_use_local_time(settings) -> None:
-    settings.TIME_ZONE = "Europe/Moscow"
+    settings.TIME_ZONE = "Asia/Bishkek"
     moment = datetime(2026, 10, 28, 21, 30, tzinfo=ZoneInfo("UTC"))
 
     assert printing.format_date(date(2026, 1, 5)) == "05.01.2026"
     assert printing.format_date(moment) == "29.10.2026"
-    assert printing.format_datetime(moment) == "29.10.2026 00:30"
+    assert printing.format_datetime(moment) == "29.10.2026 03:30"  # UTC+6
     assert printing.format_date(None) == ""
 
 
@@ -112,7 +112,7 @@ def test_sample_template_from_migration_renders() -> None:
     html = services.render_print_sample(template, as_pdf=False)
 
     assert "Пример печатной формы" in html
-    assert f"1{NBSP}234,50{NBSP}₽" in html
+    assert f"1{NBSP}234,50{NBSP}сом" in html
 
 
 @pytest.mark.django_db
@@ -128,3 +128,9 @@ def test_invalid_template_fails_model_validation() -> None:
 
     with pytest.raises(Exception, match="Ошибка в шаблоне"):
         template.full_clean()
+
+
+def test_currency_is_a_setting(settings) -> None:
+    settings.CURRENCY = "₸"
+
+    assert printing.money(Decimal("10")) == f"10,00{NBSP}₸"

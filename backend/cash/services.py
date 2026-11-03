@@ -16,6 +16,7 @@ from django.utils import timezone
 from billing import services as billing
 from cash.models import CashMovement, CashOperation, CashRegister, CashShift, Payment
 from clients import services as clients
+from core import printing
 from core import services as core
 
 ZERO = Decimal("0")
@@ -224,7 +225,7 @@ def execute_operation(operation: CashOperation) -> None:
         # Вернуть можно только чистый аванс: долги по счетам сначала гасятся им.
         advance = max(clients.balance(operation.client_id), ZERO)
         if operation.amount > advance:
-            raise CashError(f"У клиента аванс {advance} ₽ — вернуть больше нельзя.")
+            raise CashError(f"У клиента аванс {printing.money(advance)} — вернуть больше нельзя.")
         _check_enough(operation.register, operation.amount)
         _move(operation, operation.register, -operation.amount, "возврат аванса")
         clients.charge(operation.client_id, operation.amount, operation)
@@ -235,7 +236,9 @@ def execute_operation(operation: CashOperation) -> None:
 def _check_enough(register: Any, amount: Decimal) -> None:
     left = balance(register)
     if amount > left:
-        raise CashError(f"В кассе только {left} ₽ — выдать {amount} ₽ нельзя.")
+        raise CashError(
+            f"В кассе только {printing.money(left)} — выдать {printing.money(amount)} нельзя."
+        )
 
 
 def rollback_cash_document(document: Any) -> None:

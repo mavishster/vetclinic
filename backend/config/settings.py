@@ -116,7 +116,10 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Язык и время (ADR-011: время всегда с часовым поясом).
 LANGUAGE_CODE = "ru"
-TIME_ZONE = os.environ.get("TIME_ZONE", "Europe/Moscow")
+TIME_ZONE = os.environ.get("TIME_ZONE", "Asia/Bishkek")
+
+# Валюта клиники — в суммах на экране, в печатных формах и сообщениях.
+CURRENCY = os.environ.get("CURRENCY", "сом")
 USE_I18N = True
 USE_TZ = True
 

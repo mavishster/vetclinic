@@ -15,7 +15,7 @@ from scheduling.services import AppointmentError, AppointmentWarning
 from staff import services as staff
 from staff.models import IntervalType, WorkInterval
 
-MSK = ZoneInfo("Europe/Moscow")
+MSK = ZoneInfo("Asia/Bishkek")
 S = Appointment.Status
 
 

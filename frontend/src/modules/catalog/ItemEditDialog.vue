@@ -64,7 +64,7 @@
                   :options="[{ label: 'Цена', value: 'fixed' }, { label: 'Наценка', value: 'markup' }]" />
               </div>
               <q-input v-if="unit.pricing === 'fixed'" v-model="unit.price" type="number" step="0.01" min="0" outlined
-                dense label="Цена, ₽" class="col-6 col-sm-2" />
+                dense :label="`Цена, ${currency()}`" class="col-6 col-sm-2" />
               <q-input v-else v-model="unit.markup_percent" type="number" step="0.01" min="0" outlined dense clearable
                 label="Наценка, %" :placeholder="groupMarkupHint" stack-label class="col-6 col-sm-2"
                 hint="Пусто — как у группы" />
@@ -96,7 +96,7 @@
           </div>
           <q-btn v-if="isGoods" flat dense no-caps color="primary" icon="add" label="Добавить единицу" @click="addUnit" />
           <div v-if="isGoods" class="text-caption text-grey-7 q-mt-sm">
-            Пример: единица учёта — «таб.»; «упак.» = 216 таб. по 600 ₽ и «таб.» = 1 по 3 ₽. Остаток ведётся в таблетках.
+            Пример: единица учёта — «таб.»; «упак.» = 216 таб. по 600 {{ currency() }} и «таб.» = 1 по 3 {{ currency() }}. Остаток ведётся в таблетках.
             Цена по наценке считается от закупочной цены партии; мин. и макс. цена позволяют менять цену в счёте.
           </div>
         </q-card-section>
@@ -169,7 +169,7 @@ import { computed, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { apiGet, apiPatch, apiPost, existingByName, fieldErrors, openPostedFile } from '@/api'
 import { can } from '@/session'
-import { money } from './money'
+import { currency, money } from './money'
 import { PREVENTION_KINDS } from './routes'
 
 const props = defineProps({
@@ -182,8 +182,8 @@ const $q = useQuasar()
 const ROUNDING = [
   { label: 'копеек', value: '0.01' },
   { label: 'рубля', value: '1.00' },
-  { label: '5 ₽', value: '5.00' },
-  { label: '10 ₽', value: '10.00' },
+  { label: `5 ${currency()}`, value: '5.00' },
+  { label: `10 ${currency()}`, value: '10.00' },
 ]
 
 const form = ref({ units: [] })
@@ -218,7 +218,7 @@ const groupMarkupHint = computed(() => {
   return markup ? `как у группы: ${Number(markup)}` : 'у группы нет наценки'
 })
 
-// Расшифровка строки: «1 упак. = 5 фл. · 700 ₽ за фл.» — сразу видно, что получается.
+// Расшифровка строки: «1 упак. = 5 фл. · 700 сом за фл.» — сразу видно, что получается.
 function unitSummary(unit) {
   const name = units.value.find((u) => u.id === unit.unit)?.name
   const base = baseUnitName.value

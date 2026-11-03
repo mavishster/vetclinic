@@ -150,7 +150,7 @@ class Client(ClinicScopedModel):
     # Служебный клиент «Гость» — для быстрых счетов без карточки (один на клинику).
     is_guest = models.BooleanField("гость", default=False, editable=False)
     # Фото владельца (снимок с камеры) и согласие на фотографирование и обработку ПДн:
-    # без согласия фото не делается (152-ФЗ).
+    # без согласия фото не делается (закон о персональных данных).
     photo = models.ForeignKey(
         Attachment,
         verbose_name="фото",

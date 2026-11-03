@@ -36,7 +36,7 @@ COMMON_VARIABLES = {
 }
 
 FILTERS_HELP = {
-    "money": "Деньги: {{ 1234.5|money }} → 1 234,50 ₽",
+    "money": "Деньги: {{ 1234.5|money }} → 1 234,50 сом",
     "qty": "Количество без лишних нулей: {{ 1.500|qty }} → 1,5",
     "date": "Дата: {{ today|date }} → 28.10.2026",
     "datetime": "Дата и время: {{ now|datetime }} → 28.10.2026 14:30",
@@ -102,7 +102,9 @@ def money(value: Any) -> str:
     amount = Decimal(str(value)).quantize(Decimal("0.01"))
     sign = "−" if amount < 0 else ""
     integer, fraction = f"{abs(amount):.2f}".split(".")
-    return f"{sign}{_group_thousands(integer)},{fraction}{NBSP}₽"
+    from django.conf import settings
+
+    return f"{sign}{_group_thousands(integer)},{fraction}{NBSP}{settings.CURRENCY}"
 
 
 def qty(value: Any) -> str:

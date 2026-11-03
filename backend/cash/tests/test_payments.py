@@ -238,7 +238,7 @@ def test_cash_operations_and_summary(cash, card, user) -> None:
         CashOperation(kind="expense", register=cash, amount=D("500"), purpose="Хозрасходы"), user
     )
 
-    with pytest.raises(CashError, match="только 3500"):
+    with pytest.raises(CashError, match="только 3\u00a0500,00\u00a0сом"):
         services.operate(CashOperation(kind="expense", register=cash, amount=D("9999")), user)
     rows = {r["name"]: r for r in services.summary()}
     assert rows["Наличные"]["balance"] == D("3500.00")
