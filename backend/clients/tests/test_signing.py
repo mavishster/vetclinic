@@ -148,3 +148,82 @@ def test_station_api_and_isolation(admin, station, client_) -> None:
         tablet.get(f"/api/clients/clients/{client_.pk}/").status_code == 403
     )  # планшету данные клиентов не видны
     assert staff.get("/api/clients/signing/current/").status_code == 403  # не планшет
+
+
+def test_photo_on_station(admin, station, client_) -> None:
+    from clients.models import PhotoRequest
+
+    with pytest.raises(services.ClientError, match="согласия"):
+        services.request_photo(client_, station, admin)
+    sign = services.send_for_signature(client_, template("Согласие"), station, admin, "consent")
+    services.sign(sign, station, png_data_url())
+    client_.refresh_from_db()
+
+    photo = services.request_photo(client_, station, admin)
+    assert services.pending_photo_for(station) == photo
+    services.take_photo_on_station(photo, station, jpeg())
+
+    photo.refresh_from_db()
+    client_.refresh_from_db()
+    assert photo.status == PhotoRequest.Status.DONE and client_.photo == photo.result
+    with pytest.raises(services.SigningError, match="уже сделан"):
+        services.take_photo_on_station(photo, station, jpeg())
+
+
+def test_photo_on_station_api(admin, station, client_) -> None:
+    client_.photo_consent_at = timezone.now()
+    client_.save()
+    staff = APIClient()
+    staff.force_authenticate(admin)
+    tablet = APIClient()
+    tablet.force_authenticate(station.user)
+
+    asked = staff.post(
+        "/api/clients/photo-requests/",
+        {"client": str(client_.pk), "station": str(station.pk)},
+        format="json",
+    ).json()
+    task = tablet.get("/api/clients/signing/current/").json()
+    taken = tablet.post(
+        "/api/clients/signing/photo/", {"id": task["id"], "file": jpeg()}, format="multipart"
+    )
+    status = staff.get(f"/api/clients/photo-requests/{asked['id']}/").json()
+
+    assert task["task"] == "photo" and task["client_name"] == "Петров Пётр"
+    assert taken.status_code == 200 and status["status"] == "done" and status["result"]
+    assert (
+        tablet.post(
+            "/api/clients/photo-requests/",
+            {"client": str(client_.pk), "station": str(station.pk)},
+            format="json",
+        ).status_code
+        == 403
+    )
+
+
+def test_uploaded_html_is_never_shown_inline(admin, client_) -> None:
+    api = APIClient()
+    api.force_authenticate(admin)
+    evil = SimpleUploadedFile("page.html", b"<script>alert(1)</script>", content_type="text/html")
+    attachment = api.post(
+        "/api/core/attachments/",
+        {"owner_type": "clients.client", "owner_id": str(client_.pk), "file": evil},
+        format="multipart",
+    ).json()
+    image = jpeg()
+    picture = api.post(
+        "/api/core/attachments/",
+        {"owner_type": "clients.client", "owner_id": str(client_.pk), "file": image},
+        format="multipart",
+    ).json()
+
+    html = api.get(f"/api/core/attachments/{attachment['id']}/download/")
+    jpg = api.get(f"/api/core/attachments/{picture['id']}/download/")
+
+    assert html["Content-Type"] == "application/octet-stream" and html[
+        "Content-Disposition"
+    ].startswith("attachment")
+    assert (
+        html["X-Content-Type-Options"] == "nosniff" and "sandbox" in html["Content-Security-Policy"]
+    )
+    assert jpg["Content-Type"] == "image/jpeg" and jpg["Content-Disposition"].startswith("inline")

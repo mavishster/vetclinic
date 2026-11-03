@@ -477,6 +477,11 @@ def send_for_signature(
     SignatureRequest.objects.filter(station=station, status=SignatureRequest.Status.PENDING).update(
         status=SignatureRequest.Status.CANCELLED
     )
+    from clients.models import PhotoRequest
+
+    PhotoRequest.objects.filter(station=station, status=PhotoRequest.Status.PENDING).update(
+        status=PhotoRequest.Status.CANCELLED
+    )
     return SignatureRequest.objects.create(
         client=client,
         station=station,
@@ -633,3 +638,72 @@ def save_photo(client: Client, file: Any) -> Any:
     client.photo = attachment
     client.save(update_fields=["photo"])
     return attachment
+
+
+# --- Фото камерой планшета ---------------------------------------------------------
+
+
+@transaction.atomic
+def request_photo(client: Client, station: Any, user: Any) -> Any:
+    """Попросить планшет сделать снимок клиента. Только с согласием клиента.
+
+    На планшете одно задание за раз: прежние неподписанные документы и снимки отменяются.
+    """
+    from clients.models import PhotoRequest, SignatureRequest
+
+    if client.photo_consent_at is None:
+        raise ClientError("Нет согласия клиента на фотографирование — сначала подпишите согласие.")
+    PhotoRequest.objects.filter(station=station, status=PhotoRequest.Status.PENDING).update(
+        status=PhotoRequest.Status.CANCELLED
+    )
+    SignatureRequest.objects.filter(station=station, status=SignatureRequest.Status.PENDING).update(
+        status=SignatureRequest.Status.CANCELLED
+    )
+    return PhotoRequest.objects.create(
+        client=client,
+        station=station,
+        sent_by=user,
+        expires_at=timezone.now() + timedelta(minutes=SIGN_WAIT_MINUTES),
+    )
+
+
+def pending_photo_for(station: Any) -> Any:
+    from clients.models import PhotoRequest
+
+    return (
+        PhotoRequest.objects.filter(
+            station=station, status=PhotoRequest.Status.PENDING, expires_at__gt=timezone.now()
+        )
+        .select_related("client")
+        .first()
+    )
+
+
+@transaction.atomic
+def take_photo_on_station(request: Any, station: Any, file: Any) -> Any:
+    """Снимок с планшета: проверки — как у подписи, сохранение — как у фото с компьютера."""
+    from clients.models import PhotoRequest
+
+    request = PhotoRequest.objects.select_for_update().select_related("client").get(pk=request.pk)
+    if request.station_id != station.pk:
+        raise SigningError("Этот снимок запрошен на другом планшете.")
+    if request.status != PhotoRequest.Status.PENDING:
+        raise SigningError("Снимок уже сделан или отменён.")
+    if request.expires_at <= timezone.now():
+        raise SigningError("Время ожидания истекло — попросите запросить снимок снова.")
+    try:
+        attachment = save_photo(request.client, file)
+    except ClientError as error:
+        raise SigningError(str(error)) from error
+    request.status = PhotoRequest.Status.DONE
+    request.result = attachment
+    request.save()
+    return request
+
+
+def cancel_photo(request: Any) -> None:
+    from clients.models import PhotoRequest
+
+    if request.status == PhotoRequest.Status.PENDING:
+        request.status = PhotoRequest.Status.CANCELLED
+        request.save(update_fields=["status"])

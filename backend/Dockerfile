@@ -39,5 +39,6 @@ RUN useradd --create-home --uid 1000 vetclinic \
     && chown -R vetclinic /app/media /app/staticfiles
 USER vetclinic
 EXPOSE 8000
-# Миграции → статика для админки → gunicorn (3 процесса хватает клинике на одном сервере).
-CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput -v0 && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120 --access-logfile -"]
+# Миграции → статика для админки → gunicorn. Число процессов — GUNICORN_WORKERS
+# (по умолчанию 5; правило — 2 × ядра процессора + 1, см. docs/INSTALL.md «Нагрузка»).
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput -v0 && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-5} --timeout 120 --access-logfile -"]

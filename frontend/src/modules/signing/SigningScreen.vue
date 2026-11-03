@@ -14,7 +14,25 @@
     <div v-else-if="thanks" class="idle column flex-center">
       <q-icon name="task_alt" size="96px" color="positive" />
       <div class="text-h4 q-mt-md">Спасибо!</div>
-      <div class="text-subtitle1 text-grey-7 q-mt-sm">Документ подписан</div>
+      <div class="text-subtitle1 text-grey-7 q-mt-sm">{{ thanksText }}</div>
+    </div>
+
+    <!-- Снимок клиента камерой планшета -->
+    <div v-else-if="doc.task === 'photo'" class="column no-wrap full-height q-pa-md">
+      <div class="text-h6 text-center q-mb-sm">{{ doc.client_name }}, посмотрите, пожалуйста, в камеру</div>
+      <div class="col column flex-center">
+        <video v-show="!shot" ref="video" autoplay playsinline muted class="camera mirror" />
+        <img v-if="shot" :src="shot" class="camera" alt="Снимок" />
+        <canvas ref="snap" style="display: none" />
+      </div>
+      <div v-if="error" class="text-negative text-center q-mt-sm">{{ error }}</div>
+      <div class="row justify-center q-gutter-md q-mt-md">
+        <q-btn v-if="!shot" color="primary" unelevated size="xl" icon="photo_camera" label="Снять" :disable="!cameraReady" @click="takeShot" />
+        <template v-else>
+          <q-btn outline size="lg" icon="replay" label="Переснять" @click="shot = null" />
+          <q-btn color="primary" unelevated size="lg" icon="check" label="Сохранить" :loading="sending" @click="sendShot" />
+        </template>
+      </div>
     </div>
 
     <!-- Документ и подпись -->
@@ -40,7 +58,7 @@
 // Экран подписи на планшете у стойки. Раз в 2 секунды спрашивает сервер, нет ли документа;
 // клиент читает его, расписывается пальцем или стилусом и нажимает «Подписать».
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { apiGet, apiPost, fieldErrors } from '@/api'
+import { apiGet, apiPost, apiUpload, fieldErrors } from '@/api'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { logout, session } from '@/session'
@@ -48,6 +66,12 @@ import { logout, session } from '@/session'
 const router = useRouter()
 const $q = useQuasar()
 const doc = ref(null)
+const thanksText = ref('')
+const video = ref(null)
+const snap = ref(null)
+const shot = ref(null)
+const cameraReady = ref(false)
+let stream = null
 const thanks = ref(false)
 const station = ref('')
 const clinic = ref(session.user?.clinic_name || 'Ветеринарная клиника')
@@ -66,12 +90,63 @@ async function poll() {
   const { ok, data } = await apiGet('clients/signing/current/')
   if (!ok) return
   station.value = data.station
-  if (!data.id) return (doc.value = null)
+  if (!data.id) {
+    stopCamera()
+    return (doc.value = null)
+  }
   if (doc.value?.id === data.id) return
+  stopCamera()
   doc.value = data
   error.value = ''
+  shot.value = null
   await nextTick()
-  setupPad()
+  if (data.task === 'photo') startCamera()
+  else setupPad()
+}
+
+// --- Камера планшета (фронтальная — смотрит на клиента) ---
+async function startCamera() {
+  cameraReady.value = false
+  if (!navigator.mediaDevices?.getUserMedia) {
+    error.value = 'Камера недоступна: нужен защищённый адрес (https).'
+    return
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 } }, audio: false })
+    video.value.srcObject = stream
+    cameraReady.value = true
+  } catch {
+    error.value = 'Не удалось включить камеру — разрешите доступ к ней в браузере.'
+  }
+}
+function stopCamera() {
+  stream?.getTracks().forEach((t) => t.stop())
+  stream = null
+}
+function takeShot() {
+  const v = video.value
+  snap.value.width = v.videoWidth
+  snap.value.height = v.videoHeight
+  snap.value.getContext('2d').drawImage(v, 0, 0)
+  shot.value = snap.value.toDataURL('image/jpeg', 0.9)
+}
+async function sendShot() {
+  sending.value = true
+  const blob = await new Promise((resolve) => snap.value.toBlob(resolve, 'image/jpeg', 0.9))
+  const form = new FormData()
+  form.append('id', doc.value.id)
+  form.append('file', blob, 'photo.jpg')
+  const { ok, data } = await apiUpload('clients/signing/photo/', form)
+  sending.value = false
+  if (!ok) return (error.value = Object.values(fieldErrors(data))[0] || 'Не удалось сохранить снимок')
+  finish('Фото сохранено')
+}
+function finish(text) {
+  stopCamera()
+  doc.value = null
+  thanksText.value = text
+  thanks.value = true
+  setTimeout(() => (thanks.value = false), 4000)
 }
 
 // --- Поле подписи (canvas): линия по точкам касания ---
@@ -128,9 +203,7 @@ async function sign() {
   const { ok, data } = await apiPost('clients/signing/sign/', { id: doc.value.id, signature: pad.value.toDataURL('image/png') })
   sending.value = false
   if (!ok) return (error.value = Object.values(fieldErrors(data))[0] || 'Не удалось подписать')
-  doc.value = null
-  thanks.value = true
-  setTimeout(() => (thanks.value = false), 4000)
+  finish('Документ подписан')
 }
 
 function exit() {
@@ -150,6 +223,7 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   clearInterval(timer)
+  stopCamera()
   wakeLock?.release?.()
 })
 </script>
@@ -179,6 +253,15 @@ onUnmounted(() => {
   border-bottom: 1px solid #ddd;
   width: 100%;
   background: #fff;
+}
+.camera {
+  max-width: 100%;
+  max-height: 60vh;
+  border-radius: 12px;
+  background: #000;
+}
+.mirror {
+  transform: scaleX(-1); /* живая картинка — как в зеркале, клиенту привычнее; снимок сохраняется как есть */
 }
 .pad {
   width: 100%;

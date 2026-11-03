@@ -440,3 +440,49 @@ class SignatureRequest(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.title} — {self.client}"
+
+
+class PhotoRequest(BaseModel):
+    """Снимок клиента камерой планшета: запрос с компьютера, съёмка — на планшете."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "ждёт снимка"
+        DONE = "done", "снято"
+        CANCELLED = "cancelled", "отменено"
+
+    client = models.ForeignKey(
+        Client, verbose_name="клиент", on_delete=models.CASCADE, related_name="+"
+    )
+    station = models.ForeignKey(
+        SigningStation,
+        verbose_name="планшет",
+        on_delete=models.PROTECT,
+        related_name="photo_requests",
+    )
+    status = models.CharField(
+        "статус", max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="кто запросил",
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    expires_at = models.DateTimeField("ждёт до")
+    result = models.ForeignKey(
+        Attachment,
+        verbose_name="снимок",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "снимок на планшете"
+        verbose_name_plural = "снимки на планшете"
+        ordering = ["-created_at"]
+        default_permissions = ()  # права — как на изменение клиента
+
+    def __str__(self) -> str:
+        return f"Фото {self.client} — {self.get_status_display()}"

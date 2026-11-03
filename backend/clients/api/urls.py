@@ -16,9 +16,11 @@ router.register("pets", pets.PetViewSet, basename="pet")
 router.register("contracts", contracts.ContractViewSet, basename="contract")
 router.register("signing-stations", signing.SigningStationViewSet, basename="signing-station")
 router.register("signatures", signing.SignatureRequestViewSet, basename="signature")
+router.register("photo-requests", signing.PhotoRequestViewSet, basename="photo-request")
 
 urlpatterns = [
     path("signing/current/", signing.StationCurrentView.as_view(), name="signing-current"),
     path("signing/sign/", signing.StationSignView.as_view(), name="signing-sign"),
+    path("signing/photo/", signing.StationPhotoView.as_view(), name="signing-photo"),
     *router.urls,
 ]

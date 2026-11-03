@@ -79,12 +79,24 @@ class AttachmentViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     def download(self, request: Request, pk: str | None = None) -> FileResponse:
         """Файл: картинки и PDF открываются в браузере, ?download=1 — скачать."""
         attachment = self.get_object()
-        return FileResponse(
+        content_type = (attachment.content_type or "").lower()
+        # В браузере открываются только картинки и PDF. Остальное (HTML, SVG, неизвестное)
+        # только скачивается: загруженная «страница» не должна выполниться внутри системы.
+        inline = content_type in SAFE_INLINE_TYPES and request.query_params.get("download") != "1"
+        response = FileResponse(
             attachment.file.open("rb"),
-            as_attachment=request.query_params.get("download") == "1",
+            as_attachment=not inline,
             filename=attachment.name,
-            content_type=attachment.content_type or None,
+            content_type=content_type if inline else "application/octet-stream",
         )
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Content-Security-Policy"] = (
+            "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+        )
+        return response
+
+
+SAFE_INLINE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"}
 
 
 class FileCategoryViewSet(DirectoryViewSet):

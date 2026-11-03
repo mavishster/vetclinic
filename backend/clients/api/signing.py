@@ -7,13 +7,14 @@ from django.shortcuts import get_object_or_404
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from clients import services
-from clients.models import SignatureRequest, SigningStation
+from clients.models import PhotoRequest, SignatureRequest, SigningStation
 from core.api.directories import DirectoryViewSet
 from core.models import PrintTemplate
 
@@ -110,16 +111,27 @@ class _StationView(APIView):
 
 
 class StationCurrentView(_StationView):
-    """GET — документ, ждущий подписи на этом планшете (или пусто)."""
+    """GET — задание для этого планшета: документ на подпись или снимок (или пусто)."""
 
     def get(self, request: Request) -> Response:
         station = self.station(request)
+        photo = services.pending_photo_for(station)
+        if photo is not None:
+            return Response(
+                {
+                    "station": station.name,
+                    "task": "photo",
+                    "id": str(photo.pk),
+                    "client_name": photo.client.full_name,
+                }
+            )
         pending = services.pending_for(station)
         if pending is None:
             return Response({"station": station.name})
         return Response(
             {
                 "station": station.name,
+                "task": "sign",
                 "id": str(pending.pk),
                 "title": pending.title,
                 "client_name": pending.client.full_name,
@@ -141,3 +153,62 @@ class StationSignView(_StationView):
         except services.SigningError as error:
             raise ValidationError({"non_field_errors": [str(error)]}) from error
         return Response({"status": "signed"})
+
+
+class StationPhotoView(_StationView):
+    """POST multipart {id, file} — снимок, сделанный камерой планшета."""
+
+    parser_classes = [MultiPartParser]
+
+    def post(self, request: Request) -> Response:
+        station = self.station(request)
+        photo = get_object_or_404(PhotoRequest, pk=request.data.get("id"))
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError({"file": ["Нет снимка."]})
+        try:
+            services.take_photo_on_station(photo, station, upload)
+        except services.SigningError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+        return Response({"status": "done"})
+
+
+class PhotoRequestSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+    station_name = serializers.CharField(source="station.name", read_only=True)
+
+    class Meta:
+        model = PhotoRequest
+        fields = ["id", "client", "station", "station_name", "status", "result", "created_at"]
+        read_only_fields = ["status", "result", "created_at"]
+
+
+class PhotoRequestViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
+    """Снимок на планшете: запросить (POST), статус (GET /{id}/), отменить (POST /{id}/cancel/).
+
+    Права — как на изменение клиента: фото — часть его карточки.
+    """
+
+    serializer_class = PhotoRequestSerializer
+    queryset = PhotoRequest.objects.select_related("station")
+    http_method_names = ["get", "post", "head", "options"]
+    permission_classes = [IsAuthenticated]
+
+    def initial(self, request: Request, *args: Any, **kwargs: Any) -> None:
+        super().initial(request, *args, **kwargs)
+        if not request.user.has_perm("clients.change_client"):
+            raise PermissionDenied("Нет права изменять карточку клиента.")
+
+    def perform_create(self, serializer: Any) -> None:
+        data = serializer.validated_data
+        try:
+            serializer.instance = services.request_photo(
+                data["client"], data["station"], self.request.user
+            )
+        except services.ClientError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request: Request, pk: str | None = None) -> Response:
+        photo = self.get_object()
+        services.cancel_photo(photo)
+        return Response(self.get_serializer(photo).data)
