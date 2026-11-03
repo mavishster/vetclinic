@@ -227,6 +227,10 @@ function unitSummary(unit) {
   if (unit.unit === form.value.base_unit && ratio !== 1) {
     return { wrong: true, text: `«${base}» — единица учёта, в ней всегда 1 ${base}. Для упаковки выберите «упак.»` }
   }
+  if (ratio === 1 && unit.unit !== form.value.base_unit) {
+    // Частая ошибка: «фл.» = 1 «упак.» — тогда себестоимость и остаток считаются упаковками.
+    return { wrong: true, text: `1 ${name} = 1 ${base}? Если в ${base} несколько ${name}, сделайте единицей учёта «${name}», а «${base}» — с количеством ${name} в ней` }
+  }
   const perBase = unit.pricing === 'fixed' && Number(unit.price) && ratio !== 1 ? ` · ${money(Number(unit.price) / ratio)} за ${base}` : ''
   return { wrong: false, text: ratio === 1 && unit.unit === form.value.base_unit ? `1 ${base} — единица учёта` : `1 ${name} = ${ratio} ${base}${perBase}` }
 }

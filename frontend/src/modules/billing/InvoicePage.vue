@@ -39,12 +39,19 @@
         <q-select v-model="form.doctor" :options="performers" option-value="id" option-label="name" emit-value map-options outlined dense
           clearable label="Врач" class="col-6 col-md-2" :readonly="executed && !canEdit" hint="По умолчанию — исполнитель строк"
           @update:model-value="(v) => executed && details({ doctor: v })" />
-        <!-- Скидка на все позиции: ставится в каждую строку, где укладывается в предел -->
-        <q-input v-if="!executed" v-model="allPercent" type="number" step="1" min="0" max="100" outlined dense label="Скидка на все позиции, %"
-          class="col-6 col-md-2" :hint="Number(form.client_discount) ? `в карточке клиента: ${Number(form.client_discount)} %` : 'Enter — применить'"
-          @keyup.enter="applyToAll">
-          <template #append><q-btn flat dense round icon="done_all" :disable="allPercent === ''" @click="applyToAll"><q-tooltip>Применить ко всем позициям</q-tooltip></q-btn></template>
-        </q-input>
+        <!-- Скидка на все товары / на все услуги: у них разные лимиты; ставится, где укладывается в предел -->
+        <template v-if="!executed">
+          <q-input v-model="kindPercent.goods" type="number" step="1" min="0" max="100" outlined dense class="col-6 col-md-2"
+            :label="`На все товары, % (до ${Number(clinic.max_discount_goods)})`" hint="Enter — применить" @keyup.enter="applyToKind('goods')">
+            <template #append><q-btn flat dense round icon="done_all" :disable="kindPercent.goods === ''" @click="applyToKind('goods')"><q-tooltip>Применить ко всем товарам</q-tooltip></q-btn></template>
+          </q-input>
+          <q-input v-model="kindPercent.service" type="number" step="1" min="0" max="100" outlined dense class="col-6 col-md-2"
+            :label="`На все услуги, % (до ${Number(clinic.max_discount_services)})`"
+            :hint="Number(form.client_discount) ? `в карточке клиента: ${Number(form.client_discount)} %` : 'Enter — применить'"
+            @keyup.enter="applyToKind('service')">
+            <template #append><q-btn flat dense round icon="done_all" :disable="kindPercent.service === ''" @click="applyToKind('service')"><q-tooltip>Применить ко всем услугам</q-tooltip></q-btn></template>
+          </q-input>
+        </template>
         <q-input v-model="form.discount_amount" type="number" step="1" min="0" outlined dense clearable :label="`Скидка суммой, ${currency()}`" class="col-6 col-md-2"
           :readonly="executed" hint="Делится между строками без своей скидки" />
       </div>
@@ -82,15 +89,23 @@
               </td>
               <td style="width: 120px">
                 <q-badge v-if="isManual(line)" color="grey-6" label="своя цена"><q-tooltip>Цена изменена вручную — без скидки</q-tooltip></q-badge>
-                <template v-else>
+                <template v-else-if="line.item_unit">
                   <q-input v-model="line.discount_percent" type="number" step="1" min="0" dense borderless input-class="text-right" placeholder="—"
                     :readonly="executed" :error="!!discountError(line)" :error-message="discountError(line)" no-error-icon
-                    :hint="line.item_unit && line.max_discount ? `до ${Number(line.max_discount.percent)} %` : (line.item_unit ? '' : 'по составу')" />
+                    :hint="line.max_discount ? `до ${Number(line.max_discount.percent)} %` : ''" />
+                  <div v-if="Number(line.discount)" class="text-caption text-grey-7 text-right">−{{ money(line.discount) }}</div>
+                </template>
+                <!-- Комбинация: товарам состава и услугам — каждым свои проценты -->
+                <template v-else>
+                  <q-input v-model="line.goods_discount" type="number" step="1" min="0" dense borderless input-class="text-right" placeholder="—"
+                    prefix="товары" :readonly="executed" />
+                  <q-input v-model="line.services_discount" type="number" step="1" min="0" dense borderless input-class="text-right" placeholder="—"
+                    prefix="услуги" :readonly="executed" />
                   <div v-if="Number(line.discount)" class="text-caption text-grey-7 text-right">−{{ money(line.discount) }}</div>
                 </template>
               </td>
               <td v-if="showCost" class="text-right text-grey-8">
-                <template v-if="line.unit_cost">{{ money(line.unit_cost) }}</template>
+                <template v-if="line.unit_cost">{{ money(line.unit_cost) }}<q-tooltip v-if="line.cost_source">{{ line.cost_source }}</q-tooltip></template>
                 <span v-else-if="line.item_unit" class="text-caption">не задана</span>
               </td>
               <td class="text-right text-weight-medium">{{ money(lineAmount(line)) }}</td>
@@ -175,7 +190,7 @@ const lineAmount = (line) => {
 // --- Скидки: лимит по типу позиции и не ниже себестоимости (сервер проверяет то же) ---
 const showCost = can('catalog.view_cost')
 const clinic = ref({ max_discount_goods: 5, max_discount_services: 10 })
-const allPercent = ref('')
+const kindPercent = ref({ goods: '', service: '' })
 const isManual = (line) => line.item_unit && line.list_price !== null && line.list_price !== undefined && Number(line.price) !== Number(line.list_price)
 
 function discountError(line) {
@@ -187,16 +202,19 @@ function discountError(line) {
   return line.max_discount.reason === 'cost' ? `Не больше ${max} % — ниже себестоимости` : `Не больше ${max} %`
 }
 
-// «Скидка на все позиции»: ставим везде, где укладывается в предел; остальные — список.
-function applyToAll() {
-  const percent = allPercent.value === '' ? null : Number(allPercent.value)
+// «Скидка на все товары» / «на все услуги»: ставим, где укладывается в предел; остальные — список.
+function applyToKind(kind) {
+  const raw = kindPercent.value[kind]
+  const percent = raw === '' ? null : Number(raw)
   const skipped = []
   for (const line of form.value.lines) {
     if (isManual(line)) continue
     if (!line.item_unit) {
-      line.discount_percent = percent // комбинация — каждой позиции состава в её пределах
+      // комбинация: процент — товарам или услугам состава (каждой позиции в её пределах)
+      line[kind === 'goods' ? 'goods_discount' : 'services_discount'] = percent
       continue
     }
+    if (line.kind !== kind) continue
     const max = line.max_discount ? Number(line.max_discount.percent) : 100
     if (percent === null || percent <= max) line.discount_percent = percent
     else {
@@ -205,7 +223,7 @@ function applyToAll() {
     }
   }
   if (skipped.length) {
-    $q.dialog({ title: `Скидка ${percent} % применена не ко всем позициям`,
+    $q.dialog({ title: `Скидка ${percent} % применена не ко всем ${kind === 'goods' ? 'товарам' : 'услугам'}`,
       message: `Без скидки остались:<br>• ${skipped.join('<br>• ')}`, html: true, ok: { label: 'Понятно', color: 'primary', flat: true } })
   }
 }
@@ -238,9 +256,17 @@ function addLine(option) {
     price: option.price, list_price: option.price, price_min: option.price_min, price_max: option.price_max,
     stock: option.stock, performer: form.value.doctor || null, children: [],
     max_discount: option.max_discount ? { percent: option.max_discount, reason: option.max_reason } : null,
-    unit_cost: option.unit_cost ?? null,
-    discount_percent: defaultDiscount(option),
+    unit_cost: option.unit_cost ?? null, cost_source: option.cost_source || '', kind: option.kind,
+    discount_percent: option.item_unit ? defaultDiscount(option) : null,
+    // комбинация: скидка из карточки клиента — товарам и услугам состава в пределах лимитов
+    goods_discount: option.item_unit ? undefined : clientWithin(Number(clinic.value.max_discount_goods)),
+    services_discount: option.item_unit ? undefined : clientWithin(Number(clinic.value.max_discount_services)),
   })
+}
+
+function clientWithin(max) {
+  const client = Number(form.value.client_discount) || 0
+  return client && client <= max ? client : null
 }
 
 // Скидка из карточки клиента — если укладывается в предел этой позиции.
@@ -287,7 +313,8 @@ function body() {
       ? { item_unit: l.item_unit, quantity: l.quantity, price: Number(l.price) === Number(l.list_price) ? null : l.price, performer: l.performer || null,
           discount_percent: l.discount_percent === '' || l.discount_percent === undefined ? null : l.discount_percent }
       : { item: l.item, quantity: l.quantity, performer: l.performer || null,
-          discount_percent: l.discount_percent === '' || l.discount_percent === undefined ? null : l.discount_percent })),
+          goods_discount: l.goods_discount === '' || l.goods_discount === undefined ? null : l.goods_discount,
+          services_discount: l.services_discount === '' || l.services_discount === undefined ? null : l.services_discount })),
   }
 }
 
@@ -303,8 +330,9 @@ function applyInvoice(data) {
     ...data,
     lines: data.lines.filter((l) => !l.parent).map((l) => ({
       ...l, manual: l.manual_price, list_price: l.manual_price ? l.list_price : l.price,
-      // У заголовка комбинации — скидка, общая для состава (если у всех позиций одна).
-      discount_percent: l.item_unit ? l.discount_percent : commonChildDiscount(children.filter((c) => c.parent === l.id)),
+      // У заголовка комбинации — скидки товарам и услугам состава (общие для каждой группы).
+      goods_discount: l.item_unit ? undefined : commonChildDiscount(children.filter((c) => c.parent === l.id && c.kind === 'goods')),
+      services_discount: l.item_unit ? undefined : commonChildDiscount(children.filter((c) => c.parent === l.id && c.kind === 'service')),
       children: children.filter((c) => c.parent === l.id).map((c) => ({ name: c.name, quantity: c.quantity, amount: c.amount, discount_percent: c.discount_percent })),
     })),
   }

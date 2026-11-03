@@ -31,11 +31,13 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         if not can_view_cost(self.context.get("request")):
             data.pop("cost", None)  # себестоимость — только с особым правом
             data.pop("unit_cost", None)
+            data.pop("cost_source", None)
         return data
 
     name = serializers.CharField(source="item.name", read_only=True)
     max_discount = serializers.SerializerMethodField()
     unit_cost = serializers.SerializerMethodField()
+    cost_source = serializers.SerializerMethodField()
     kind = serializers.CharField(source="item.kind", read_only=True)
     unit_name = serializers.SerializerMethodField()
     performer_name = serializers.CharField(
@@ -63,6 +65,7 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "discount_percent",
             "max_discount",
             "unit_cost",
+            "cost_source",
             "discount",
             "amount",
             "performer",
@@ -86,6 +89,10 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         """Ожидаемая себестоимость единицы — для оператора с правом «Видеть себестоимость»."""
         limit = self._limit(line)
         return None if limit is None or limit["cost"] is None else str(limit["cost"])
+
+    def get_cost_source(self, line: InvoiceLine) -> str:
+        limit = self._limit(line)
+        return "" if limit is None else limit["cost_source"]
 
     def get_unit_name(self, line: InvoiceLine) -> str:
         return line.item_unit.unit.name if line.item_unit else "компл."
@@ -298,6 +305,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         if not can_view_cost(request):
             for row in found:
                 row.pop("unit_cost", None)  # себестоимость — только с особым правом
+                row.pop("cost_source", None)
         return Response(found)
 
     @action(detail=False, methods=["get"])

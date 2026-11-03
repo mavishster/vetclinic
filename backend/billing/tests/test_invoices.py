@@ -298,3 +298,28 @@ def test_rollback_of_negative_sale_returns_stock(client_, vial) -> None:
     core.rollback_document(invoice)
 
     assert inventory.available(vial.item) == D("10")
+
+
+def test_cost_source_explains_unit_conversion(client_, vial) -> None:
+    pack = vial.__class__.objects.select_related("item__base_unit", "unit").get(
+        item_id=vial.item_id, unit__name="упак."
+    )
+    fresh = vial.__class__.objects.select_related("item__base_unit", "unit").get(pk=vial.pk)
+
+    cost, source = services.unit_cost_info(fresh)
+    pack_cost, pack_source = services.unit_cost_info(pack)
+
+    assert cost == D("400.00") and "400,00" in source and "за 1 фл." in source
+    assert pack_cost == D("2000.00") and "1 упак. = 5 фл." in pack_source
+
+
+def test_combo_separate_discounts_for_goods_and_services(client_, visit_service, vial) -> None:
+    combo = catalog.save_combination(Item(name="Вакцинация++", group=ItemGroup.objects.get(name="Процедуры и манипуляции")),
+                                     [{"item_unit": visit_service}, {"item_unit": vial}])  # fmt: skip
+
+    invoice = make(
+        client_, [{"item": combo, "goods_discount": D("5"), "services_discount": D("10")}]
+    )
+
+    service, goods = invoice.lines.get(parent=None).children.all()
+    assert (service.discount_percent, goods.discount_percent) == (D("10"), D("5"))

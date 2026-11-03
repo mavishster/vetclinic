@@ -47,7 +47,9 @@ class LineData(TypedDict, total=False):
     price: Decimal | None  # своя цена (в границах мин./макс.)
     performer: Any
     discount_percent: Decimal | None  # скидка строки, %; ключа нет — скидка из карточки клиента
-    combo_discount: Decimal | None  # скидка на комбинацию — для позиции состава, если проходит
+    combo_discount: Decimal | str | None  # скидка на комбинацию — позиции состава, если проходит
+    goods_discount: Decimal | None  # комбинация: скидка товарам состава
+    services_discount: Decimal | None  # комбинация: скидка услугам состава
 
 
 def list_price(unit: Any, warehouse: Any = None) -> Decimal | None:
@@ -130,18 +132,40 @@ def _unit_line(
 def unit_cost(unit: Any, warehouse: Any = None) -> Decimal | None:
     """Себестоимость единицы продажи: товар со складом — партия, которая спишется первой;
     товар без учёта и услуга — себестоимость из карточки; неизвестна — None."""
+    return unit_cost_info(unit, warehouse)[0]
+
+
+def unit_cost_info(unit: Any, warehouse: Any = None) -> tuple[Decimal | None, str]:
+    """Себестоимость единицы продажи и откуда она взялась — чтобы оператор мог проверить
+    (например, что закупочная цена упаковки не попала в цену одной штуки)."""
     item = unit.item
+    base = item.base_unit.name
     if item.kind == Kind.GOODS and item.stock_tracked:
-        cost = inventory.expected_cost(item, warehouse)
+        batch = inventory.expected_batch(item, warehouse)
+        if batch is None:
+            return None, ""
+        cost = batch.cost_per_base
+        series = f", серия {batch.series}" if batch.series else ""
+        source = (
+            f"партия от {batch.received_at:%d.%m.%Y}{series}: {printing.money(cost)} за 1 {base}"
+        )
     else:
         cost = item.manual_cost
-    return None if cost is None else _money(cost * unit.ratio)
+        if cost is None:
+            return None, ""
+        source = f"из карточки товара: {printing.money(cost)} за 1 {base}"
+    if unit.ratio != 1 or unit.unit_id != item.base_unit_id:
+        source += (
+            f"; 1 {unit.unit.name} = {format(unit.ratio.normalize(), 'f').replace('.', ',')} {base}"
+        )
+    return _money(cost * unit.ratio), source
 
 
 class DiscountLimit(TypedDict):
     percent: Decimal  # больше нельзя
     reason: str  # "limit" — лимит по типу позиции, "cost" — дальше цена ниже себестоимости
     cost: Decimal | None
+    cost_source: str  # откуда себестоимость — для подсказки оператору
 
 
 def discount_limit(unit: Any, price: Decimal, warehouse: Any = None) -> DiscountLimit:
@@ -150,13 +174,27 @@ def discount_limit(unit: Any, price: Decimal, warehouse: Any = None) -> Discount
     kind_max = (
         clinic.max_discount_goods if unit.item.kind == Kind.GOODS else clinic.max_discount_services
     )
-    cost = unit_cost(unit, warehouse)
+    cost, source = unit_cost_info(unit, warehouse)
     if cost is not None:
         floor = ZERO if price <= 0 else max((price - cost) / price * 100, ZERO)
         floor = floor.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
         if floor < kind_max:
-            return {"percent": floor, "reason": "cost", "cost": cost}
-    return {"percent": kind_max, "reason": "limit", "cost": cost}
+            return {"percent": floor, "reason": "cost", "cost": cost, "cost_source": source}
+    return {"percent": kind_max, "reason": "limit", "cost": cost, "cost_source": source}
+
+
+def _combo_discount_for(item_unit: Any, data: LineData) -> Decimal | str | None:
+    """Скидка позиции состава комбинации: товарам — «скидка на товары», услугам — «на услуги»
+    (или общая discount_percent на всю комбинацию). Не задана — None (тогда — из карточки
+    клиента); задана пустой — "" (без скидки)."""
+    unit = catalog.get_item_unit(getattr(item_unit, "pk", item_unit))
+    goods = unit is not None and unit.item.kind == Kind.GOODS
+    for key in ("goods_discount" if goods else "services_discount", "discount_percent"):
+        if key in data:
+            value: Any = data.get(key)
+            result: Decimal | str = "" if value in (None, "") else value
+            return result
+    return None
 
 
 def _pct(value: Decimal) -> str:
@@ -236,20 +274,19 @@ def _add_lines(invoice: Invoice, lines: list[LineData]) -> None:
             header.save()
             position += 1
         for part in parts:
+            child: LineData = {
+                "item_unit": part["item_unit"],
+                "quantity": part["quantity"] * times,
+                "performer": data.get("performer"),
+            }
+            # Скидка на комбинацию — каждой позиции состава в её пределах
+            # (товары и услуги — свои лимиты); где не проходит — без скидки.
+            discount = _combo_discount_for(part["item_unit"], data)
+            if discount is not None:
+                child["combo_discount"] = discount
             line = _unit_line(
                 invoice,
-                {
-                    "item_unit": part["item_unit"],
-                    "quantity": part["quantity"] * times,
-                    "performer": data.get("performer"),
-                    # Скидка на комбинацию — каждой позиции состава в её пределах
-                    # (товары и услуги — свои лимиты); где не проходит — без скидки.
-                    **(
-                        {"combo_discount": data["discount_percent"]}
-                        if "discount_percent" in data
-                        else {}
-                    ),
-                },
+                child,
                 position,
                 parent=header,
                 override=part["price"],
@@ -516,6 +553,7 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
                 "max_discount": str(limit["percent"]) if limit else None,
                 "max_reason": limit["reason"] if limit else None,
                 "unit_cost": str(limit["cost"]) if limit and limit["cost"] is not None else None,
+                "cost_source": limit["cost_source"] if limit else "",
                 "item_unit": str(unit.pk),
                 "item": str(unit.item_id),
                 "kind": unit.item.kind,
@@ -536,6 +574,7 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
                 "max_discount": None,
                 "max_reason": None,
                 "unit_cost": None,
+                "cost_source": "",
                 "item_unit": None,
                 "item": str(combo.pk),
                 "kind": "combo",

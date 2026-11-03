@@ -682,6 +682,17 @@ def turnover(
     return result
 
 
+def expected_batch(item: Any, warehouse: Any = None) -> Batch | None:
+    """Партия, по которой оценивается себестоимость продажи: та, что спишется первой;
+    нет остатка — последняя приходованная."""
+    stock = batch_stock(item, warehouse)
+    return (
+        stock[0].batch
+        if stock
+        else Batch.objects.filter(item=item).order_by("-received_at").first()
+    )
+
+
 def expected_cost(item: Any, warehouse: Any = None) -> Decimal | None:
     """Ожидаемая себестоимость единицы учёта при продаже: партия, которая спишется первой;
     нет остатка — последняя закупочная цена; товар ни разу не приходовали — None."""
