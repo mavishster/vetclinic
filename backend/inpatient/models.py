@@ -57,6 +57,13 @@ class Hospitalization(ClinicScopedModel):
         on_delete=models.PROTECT,
         related_name="+",
     )
+    # Кто ведёт пациента: врачи и ассистенты. Им приходят напоминания о назначениях.
+    staff = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        verbose_name="ответственные (врачи, ассистенты)",
+        blank=True,
+        related_name="+",
+    )
     visit = models.ForeignKey(
         "medical.Visit",
         verbose_name="приём-основание",

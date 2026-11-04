@@ -98,6 +98,7 @@ class HospitalizationSerializer(serializers.ModelSerializer):  # type: ignore[ty
     days = serializers.SerializerMethodField()
     last_observation = serializers.SerializerMethodField()
     tasks_today = serializers.SerializerMethodField()
+    staff_names = serializers.SerializerMethodField()
 
     class Meta:
         model = Hospitalization
@@ -125,6 +126,8 @@ class HospitalizationSerializer(serializers.ModelSerializer):  # type: ignore[ty
             "days",
             "last_observation",
             "tasks_today",
+            "staff",
+            "staff_names",
         ]
         read_only_fields = [
             "client",
@@ -134,6 +137,9 @@ class HospitalizationSerializer(serializers.ModelSerializer):  # type: ignore[ty
             "invoice_id",
             "outcome",
         ]
+
+    def get_staff_names(self, h: Hospitalization) -> list[str]:
+        return [u.short_name or u.username for u in h.staff.all()]
 
     def get_days(self, h: Hospitalization) -> int:
         return services.days_count(h)
@@ -161,6 +167,7 @@ class HospitalizationSerializer(serializers.ModelSerializer):  # type: ignore[ty
                 validated_data.get("visit"),
                 validated_data.get("place"),
                 validated_data.get("planned_discharge"),
+                validated_data.get("staff"),
             )
         except services.InpatientError as error:
             raise ValidationError({"non_field_errors": [str(error)]}) from error
@@ -176,7 +183,7 @@ class HospitalizationViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     def get_queryset(self) -> QuerySet[Hospitalization]:
         queryset = Hospitalization.objects.select_related(
             "pet__species", "client", "ward", "doctor"
-        )
+        ).prefetch_related("staff")
         params = self.request.query_params
         if pet := params.get("pet"):
             return queryset.filter(pet=pet)
@@ -193,6 +200,31 @@ class HospitalizationViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             )
         except ValueError:
             raise ValidationError({"date": ["Дата в формате ГГГГ-ММ-ДД."]}) from None
+
+    @action(detail=False, methods=["get"], url_path="my-tasks")
+    def my_tasks(self, request: Request) -> Response:
+        """Пора выполнить: просроченные и на ближайшие 30 минут — у моих пациентов
+        (?all=1 — у всех пациентов стационара)."""
+        everyone = request.query_params.get("all") == "1"
+        tasks = services.my_tasks(request.user, everyone)
+        now = timezone.now()
+        return Response(
+            [
+                {
+                    "id": t.pk,
+                    "hospitalization": str(t.hospitalization_id),
+                    "pet_name": t.hospitalization.pet.name,
+                    "ward": t.hospitalization.ward.name,
+                    "place": t.hospitalization.place,
+                    "title": t.plan.title,
+                    "dose": t.plan.dose,
+                    "route_label": t.plan.get_route_display(),
+                    "scheduled_at": t.scheduled_at,
+                    "overdue": t.scheduled_at < now,
+                }
+                for t in tasks
+            ]
+        )
 
     @action(detail=True, methods=["get"])
     def sheet(self, request: Request, pk: str | None = None) -> Response:

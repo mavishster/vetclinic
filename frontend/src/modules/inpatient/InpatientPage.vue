@@ -21,6 +21,7 @@
             <div class="q-mt-sm">
               <q-icon name="meeting_room" size="16px" /> {{ h.ward_name }}{{ h.place ? `, место ${h.place}` : '' }}
               · <b>{{ h.status === 'active' ? `${h.days}-е сутки` : `${h.days} сут.` }}</b> · {{ h.doctor_name }}
+              <div v-if="h.staff_names?.length" class="text-caption"><q-icon name="groups" size="16px" /> {{ h.staff_names.join(', ') }}</div>
             </div>
             <div v-if="h.reason" class="text-caption ellipsis-2-lines q-mt-xs">{{ h.reason }}</div>
             <div v-if="h.status === 'active'" class="row items-center q-mt-sm q-gutter-x-md text-caption">

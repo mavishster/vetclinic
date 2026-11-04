@@ -10,13 +10,18 @@
             <q-badge :color="h.status === 'active' ? 'primary' : 'grey-6'" :label="h.status_label" class="q-ml-sm" />
           </div>
           <div class="text-caption text-grey-7">
-            {{ h.client_name }} · {{ h.ward_name }}{{ h.place ? `, место ${h.place}` : '' }} · {{ h.doctor_name }} ·
+            {{ h.client_name }} · {{ h.ward_name }}{{ h.place ? `, место ${h.place}` : '' }} · врач {{ h.doctor_name }} ·
             поступил {{ fmtDate(h.admitted_at) }} · {{ h.status === 'active' ? `${h.days}-е сутки` : `${h.days} сут.` }}
           </div>
         </div>
         <q-btn flat icon="print" label="Лист" @click="printSheet" />
         <q-btn v-if="can('billing.add_invoice')" outline color="primary" icon="receipt_long" label="Счёт" @click="invoice" />
         <q-btn v-if="h.status === 'active' && canEdit" color="positive" unelevated icon="logout" label="Выписать" @click="discharge" />
+      </div>
+      <div class="q-mb-sm row items-center q-gutter-x-sm">
+        <q-icon name="groups" />
+        <span><b>Ответственные:</b> {{ h.staff_names?.length ? h.staff_names.join(', ') : 'не назначены' }}</span>
+        <q-btn v-if="canEdit && h.status === 'active'" flat dense round size="sm" icon="edit" @click="editStaff"><q-tooltip>Изменить ответственных</q-tooltip></q-btn>
       </div>
       <div v-if="h.reason" class="q-mb-md"><b>Причина:</b> {{ h.reason }}</div>
       <div v-if="h.outcome" class="q-mb-md"><b>Итог:</b> {{ h.outcome }}</div>
@@ -132,7 +137,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
-import { apiGet, apiPost, fieldErrors } from '@/api'
+import { apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 
 const props = defineProps({ id: { type: String, required: true } })
@@ -238,6 +243,20 @@ function discharge() {
     h.value = data
     $q.notify({ type: 'positive', message: 'Выписан. Не забудьте выставить счёт за стационар.' })
     load()
+  })
+}
+
+// Ответственные врачи и ассистенты — им приходят напоминания о назначениях.
+async function editStaff() {
+  const employees = (await apiGet('billing/invoices/performers/')).data ?? []
+  $q.dialog({
+    title: 'Ответственные', message: 'Врачи и ассистенты, которым приходят напоминания о назначениях этого пациента',
+    options: { type: 'checkbox', model: [...(h.value.staff || [])], items: employees.map((e) => ({ label: e.name, value: e.id })) },
+    cancel: { label: 'Отмена', flat: true }, ok: { label: 'Сохранить', color: 'primary', unelevated: true },
+  }).onOk(async (staff) => {
+    const { ok, data } = await apiPatch(`${base.value}/`, { staff })
+    if (!ok) return notify(data, 'Не удалось сохранить')
+    h.value = data
   })
 }
 

@@ -4,6 +4,8 @@
       <q-toolbar>
         <q-btn flat round dense icon="menu" aria-label="Меню" @click="drawerOpen = !drawerOpen" />
         <q-toolbar-title>{{ clinicTitle }}</q-toolbar-title>
+        <!-- Стационар: напоминания о назначениях моим пациентам -->
+        <TasksBell v-if="can('inpatient.view_hospitalization')" />
         <q-btn flat no-caps icon="account_circle" :label="$q.screen.gt.xs ? session.user?.short_name || session.user?.username : ''">
           <q-menu anchor="bottom right" self="top right">
             <q-list style="min-width: 200px">
@@ -55,6 +57,7 @@
 </template>
 
 <script setup>
+import TasksBell from '@/modules/inpatient/TasksBell.vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import sections from '@/modules/registry'

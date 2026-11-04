@@ -17,6 +17,8 @@
           </div>
           <q-select v-model="form.doctor" :options="doctors" option-value="id" option-label="name" emit-value map-options outlined dense
             label="Лечащий врач *" />
+          <q-select v-model="form.staff" :options="employees" option-value="id" option-label="name" emit-value map-options outlined dense
+            multiple use-chips label="Ответственные (врачи, ассистенты)" hint="Им будут приходить напоминания о назначениях" />
           <q-input v-model="form.reason" type="textarea" autogrow outlined dense label="Причина госпитализации, диагноз" />
           <q-input v-model="form.planned_discharge" type="date" stack-label outlined dense label="Плановая выписка" />
           <div v-if="error" class="text-negative">{{ error }}</div>
@@ -49,6 +51,7 @@ const client = ref(null)
 const pets = ref([])
 const wards = ref([])
 const doctors = ref([])
+const employees = ref([])
 const form = ref({})
 const error = ref('')
 const saving = ref(false)
@@ -65,12 +68,13 @@ watch(() => props.modelValue, async (open) => {
   error.value = ''
   client.value = null
   form.value = { pet: props.preset.pet || null, visit: props.preset.visit || null, ward: null, place: null,
-    doctor: props.preset.doctor || session.user?.id, reason: '', planned_discharge: null }
+    doctor: props.preset.doctor || session.user?.id, staff: [], reason: '', planned_discharge: null }
   const [w, board, d] = await Promise.all([apiGet('inpatient/wards/?active=true'), apiGet('inpatient/hospitalizations/'), apiGet('medical/visits/doctors/')])
   const busy = {}
   for (const h of board.data ?? []) busy[h.ward] = (busy[h.ward] || 0) + 1
   wards.value = (w.data ?? []).map((x) => ({ ...x, label: `${x.name} — свободно ${Math.max(x.places - (busy[x.id] || 0), 0)} из ${x.places}` }))
   doctors.value = d.data ?? []
+  employees.value = (await apiGet('billing/invoices/performers/')).data ?? []
 }, { immediate: true })
 
 async function save() {

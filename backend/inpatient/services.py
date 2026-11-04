@@ -45,6 +45,7 @@ def admit(
     visit: Any = None,
     place: int | None = None,
     planned_discharge: date | None = None,
+    staff: list[Any] | None = None,
 ) -> Hospitalization:
     """Принять питомца в стационар. Мест в палате должно хватать; дважды — нельзя."""
     if Hospitalization.objects.filter(pet=pet, status=H.ACTIVE).exists():
@@ -55,7 +56,7 @@ def admit(
         )
     if place is not None and ward.hospitalizations.filter(status=H.ACTIVE, place=place).exists():
         raise InpatientError(f"Место {place} в палате «{ward}» занято.")
-    return Hospitalization.objects.create(
+    hospitalization = Hospitalization.objects.create(
         pet=pet,
         client=clients.current_owner(pet),
         ward=ward,
@@ -66,6 +67,9 @@ def admit(
         planned_discharge=planned_discharge,
         admitted_at=timezone.now(),
     )
+    if staff:
+        hospitalization.staff.set(staff)
+    return hospitalization
 
 
 def days_count(hospitalization: Hospitalization) -> int:
@@ -338,3 +342,28 @@ def sample_sheet_context() -> dict[str, Any]:
             },
         ],
     }
+
+
+# --- Напоминания персоналу -----------------------------------------------------------
+
+REMIND_AHEAD_MINUTES = 30
+
+
+def my_tasks(user: Any, everyone: bool = False) -> QuerySet[TreatmentTask]:
+    """Назначения, которые пора выполнить: просроченные и на ближайшие 30 минут —
+    у пациентов, за которых сотрудник отвечает (ответственный или лечащий врач).
+    everyone — у всех пациентов стационара (для старшего врача, руководителя)."""
+    from django.db.models import Q
+
+    tasks = TreatmentTask.objects.filter(
+        status=T.PLANNED,
+        scheduled_at__lte=timezone.now() + timedelta(minutes=REMIND_AHEAD_MINUTES),
+        hospitalization__status=H.ACTIVE,
+    )
+    if not everyone:
+        tasks = tasks.filter(
+            Q(hospitalization__staff=user) | Q(hospitalization__doctor=user)
+        ).distinct()
+    return tasks.select_related("plan", "hospitalization__pet", "hospitalization__ward").order_by(
+        "scheduled_at"
+    )

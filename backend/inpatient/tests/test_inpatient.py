@@ -196,3 +196,43 @@ def test_api_flow(pet, doctor, ward, drug) -> None:
     )
     assert pdf["Content-Type"] == "application/pdf"
     assert "уже в стационаре" in full.json()["non_field_errors"][0]
+
+
+def test_staff_and_my_tasks(pet, doctor, ward) -> None:
+
+    assistant = get_user_model().objects.create_user(
+        username="asst", password="x", last_name="Сидорова"
+    )
+    stranger = get_user_model().objects.create_user(username="other", password="x")
+    h = services.admit(pet, ward, doctor, staff=[assistant])
+    now = timezone.localtime()
+    soon = (now + timedelta(minutes=10)).strftime("%H:%M")
+    later = (now + timedelta(hours=3)).strftime("%H:%M") if now.hour < 20 else soon
+    services.add_plan(h, "Церукал", [soon, later], now.date(), dose="0,3 мл")
+
+    mine = list(services.my_tasks(assistant))
+
+    assert list(h.staff.all()) == [assistant]
+    assert [t.plan.title for t in mine] == ["Церукал"]  # только ближайшее — через 10 минут
+    assert list(services.my_tasks(doctor)) == mine  # лечащий врач тоже получает
+    assert list(services.my_tasks(stranger)) == []
+    assert list(services.my_tasks(stranger, everyone=True)) == mine
+
+
+def test_my_tasks_api_and_staff_names(pet, doctor, ward) -> None:
+    assistant = get_user_model().objects.create_user(
+        username="asst", password="x", last_name="Сидорова", first_name="Ольга"
+    )
+    api = APIClient()
+    api.force_authenticate(assistant)
+    admin = APIClient()
+    admin.force_authenticate(get_user_model().objects.create_superuser(username="a", password="x"))
+    h = admin.post("/api/inpatient/hospitalizations/", {"pet": str(pet.pk), "ward": str(ward.pk), "doctor": str(doctor.pk),
+                   "staff": [assistant.pk]}, format="json").json()  # fmt: skip
+    now = timezone.localtime() - timedelta(minutes=5)
+    admin.post(f"/api/inpatient/hospitalizations/{h['id']}/plans/", {"title": "Осмотр", "times": [now.strftime("%H:%M")],
+               "start_date": now.date().isoformat()}, format="json")  # fmt: skip
+
+    tasks = admin.get("/api/inpatient/hospitalizations/my-tasks/?all=1").json()
+    assert h["staff_names"] == ["Сидорова О."]
+    assert tasks[0]["pet_name"] == "Барсик" and tasks[0]["overdue"] is True
