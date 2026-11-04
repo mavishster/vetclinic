@@ -13,6 +13,7 @@ export default [
       { title: 'Приёмы сегодня', icon: 'groups', to: '/appointments/today', perm: 'scheduling.view_appointment' },
       { title: 'Календарь', icon: 'event', to: '/calendar', perm: 'scheduling.view_appointment' },
       { title: 'Напоминания', icon: 'notifications_active', to: '/reminders', perm: 'reminders.view_reminder' },
+      { title: 'Подписанные документы', icon: 'history_edu', to: '/signed-documents', perm: 'clients.view_signaturerequest' },
       { title: 'Медкарта', icon: 'medical_information', to: '/medical', perm: 'medical.view_visit' },
       { title: 'Профилактика', icon: 'health_and_safety', to: '/medical/prevention', perm: 'medical.view_prevention' },
       { title: 'Счета', icon: 'receipt_long', to: '/invoices', perm: 'billing.view_invoice' },

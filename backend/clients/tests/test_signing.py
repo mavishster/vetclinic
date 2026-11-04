@@ -253,3 +253,27 @@ def test_deleted_photo_file_is_not_shown(admin, station, client_) -> None:
     photo.delete()  # удалили файл фото из «Файлов»
 
     assert api.get(f"/api/clients/clients/{client_.pk}/").json()["photo"] is None
+
+
+def test_signed_documents_journal_filters(admin, station, client_) -> None:
+    other = services.save_client(Client(last_name="Сидорова", first_name="Анна"))
+    contract = services.send_for_signature(client_, template("Договор"), station, admin, "contract")
+    services.sign(contract, station, png_data_url())
+    services.send_for_signature(
+        other, template("Согласие"), station, admin, "consent"
+    )  # ждёт подписи
+    api = APIClient()
+    api.force_authenticate(admin)
+
+    signed = api.get("/api/clients/signatures/?status=signed").json()
+    consents = api.get("/api/clients/signatures/?purpose=consent").json()
+    found = api.get("/api/clients/signatures/?search=сидор").json()
+
+    assert [(r["client_name"], r["purpose_label"], r["status"]) for r in signed] == [
+        ("Петров Пётр", "договор", "signed")
+    ]
+    assert (
+        signed[0]["result"] and signed[0]["sent_by_name"] and len(signed[0]["content_hash"]) == 64
+    )
+    assert [r["client_name"] for r in consents] == ["Сидорова Анна"]
+    assert [r["status"] for r in found] == ["pending"]

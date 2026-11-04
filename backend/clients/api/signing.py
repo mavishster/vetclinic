@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from django.shortcuts import get_object_or_404
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
@@ -30,12 +30,19 @@ class SignatureRequestSerializer(serializers.ModelSerializer):  # type: ignore[t
     )
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     station_name = serializers.CharField(source="station.name", read_only=True)
+    client_name = serializers.CharField(source="client.full_name", read_only=True)
+    purpose_label = serializers.CharField(source="get_purpose_display", read_only=True)
+    sent_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = SignatureRequest
         fields = [
             "id",
             "client",
+            "client_name",
+            "purpose_label",
+            "sent_by_name",
+            "content_hash",
             "station",
             "station_name",
             "template",
@@ -49,7 +56,19 @@ class SignatureRequestSerializer(serializers.ModelSerializer):  # type: ignore[t
             "expires_at",
             "result",
         ]
-        read_only_fields = ["title", "status", "created_at", "signed_at", "expires_at", "result"]
+        read_only_fields = [
+            "title",
+            "status",
+            "created_at",
+            "signed_at",
+            "expires_at",
+            "result",
+            "content_hash",
+        ]
+
+    def get_sent_by_name(self, request: SignatureRequest) -> str:
+        user = request.sent_by
+        return (user.short_name or user.username) if user else ""
 
     def create(self, validated_data: dict[str, Any]) -> SignatureRequest:
         try:
@@ -76,10 +95,33 @@ class SignatureRequestViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self) -> QuerySet[SignatureRequest]:
-        queryset = SignatureRequest.objects.select_related("station")
-        if client := self.request.query_params.get("client"):
+        """Фильтры журнала «Подписанные документы»: ?client=, ?status=signed|pending|cancelled,
+        ?purpose=contract|consent|other, ?from=&to= (дата отправки), ?search= (клиент, документ)."""
+        queryset = SignatureRequest.objects.select_related("station", "client", "sent_by")
+        params = self.request.query_params
+        if client := params.get("client"):
             queryset = queryset.filter(client=client)
-        return queryset
+        if status := params.get("status"):
+            queryset = queryset.filter(status=status)
+        if purpose := params.get("purpose"):
+            queryset = queryset.filter(purpose=purpose)
+        if date_from := params.get("from"):
+            queryset = queryset.filter(created_at__date__gte=date_from)
+        if date_to := params.get("to"):
+            queryset = queryset.filter(created_at__date__lte=date_to)
+        for word in params.get("search", "").split():
+            queryset = queryset.filter(
+                Q(client__last_name__icontains=word)
+                | Q(client__first_name__icontains=word)
+                | Q(client__middle_name__icontains=word)
+                | Q(title__icontains=word)
+            )
+        return queryset.order_by("-created_at")
+
+    def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Журнал — последние 500 документов по фильтрам (новые сверху)."""
+        rows = self.filter_queryset(self.get_queryset())[:500]
+        return Response(self.get_serializer(rows, many=True).data)
 
     @action(detail=False, methods=["get"])
     def templates(self, request: Request) -> Response:

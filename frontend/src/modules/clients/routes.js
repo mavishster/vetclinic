@@ -14,6 +14,7 @@ export default [
       hint: 'Отдельный пользователь с ролью «Планшет подписи» — создайте его в «Сотрудниках»' },
   ]),
   { path: 'clients', component: () => import('./ClientsPage.vue'), meta: { perm: 'clients.view_client' } },
+  { path: 'signed-documents', component: () => import('@/modules/signing/SignedDocumentsPage.vue'), meta: { perm: 'clients.view_signaturerequest' } },
   { path: 'clients/:id', component: () => import('./ClientPage.vue'), props: true, meta: { perm: 'clients.view_client' } },
   { path: 'pets', component: () => import('./PetsPage.vue'), meta: { perm: 'clients.view_pet' } },
   { path: 'pets/:id', component: () => import('./PetPage.vue'), props: true, meta: { perm: 'clients.view_pet' } },
