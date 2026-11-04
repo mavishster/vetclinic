@@ -25,7 +25,7 @@
           <div class="text-subtitle1">{{ line.item_name }} <span class="text-caption text-grey-7">· {{ line.unit }}</span></div>
           <div class="text-caption text-grey-7">
             <template v-if="!department">На «{{ warehouseName(to) }}» сейчас: {{ qty(line.on_target) }} {{ line.base_unit }}</template>
-            <span v-if="line.ratio !== '1.000'"> · 1 {{ line.unit }} = {{ qty(line.ratio) }} {{ line.base_unit }}</span>
+            <span v-if="Number(line.ratio) !== 1"> · 1 {{ line.unit }} = {{ qty(line.ratio) }} {{ line.base_unit }}</span>
           </div>
         </div>
         <q-input v-model.number="line.quantity" type="number" min="0" step="1" outlined dense style="width: 120px" :suffix="line.unit"

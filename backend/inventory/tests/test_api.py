@@ -43,7 +43,7 @@ def test_receipt_flow_lookup_balances_and_rollback(api, drug) -> None:
     locked = api.patch(f"{URL}{draft['id']}/", {"comment": "x"}, format="json")
     rolled = api.post(f"{URL}{draft['id']}/rollback/").json()
 
-    assert found[0]["unit_name"] == "упак." and found[0]["ratio"] == "100.000"
+    assert found[0]["unit_name"] == "упак." and found[0]["ratio"] == "100.000000"
     assert draft["total"] == "360.00"
     assert executed["status"] == "executed"
     assert balances["rows"][0]["qty"] == "200.000"

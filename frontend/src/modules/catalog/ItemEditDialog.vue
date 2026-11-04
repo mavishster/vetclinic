@@ -57,8 +57,18 @@
               <q-select v-if="isGoods" v-model="unit.unit" :options="units" option-value="id" option-label="name"
                 emit-value map-options outlined dense use-input input-debounce="0" new-value-mode="add-unique"
                 label="Единица" class="col-6 col-sm-2" @new-value="createUnit" />
-              <q-input v-if="isGoods" v-model="unit.ratio" type="number" step="0.001" min="0" outlined dense
-                :label="`${baseUnitName || 'баз. ед.'} в одной`" class="col-6 col-sm-2" />
+              <!-- Размер единицы — словами, без двусмысленности:
+                   больше единицы учёта: «1 упак. = 5 фл.»; меньше: «в 1 упак. — 8 таб.» -->
+              <div v-if="isGoods" class="col-12 col-sm-3">
+                <div v-if="unit.unit === form.base_unit" class="text-caption text-grey-7 q-pt-sm">единица учёта — остаток ведётся в ней</div>
+                <template v-else>
+                  <q-btn-toggle v-model="unit.size" no-caps unelevated dense toggle-color="primary" spread class="q-mb-xs"
+                    :options="[{ label: `больше ${baseUnitName || 'ед. учёта'}`, value: 'bigger' }, { label: `меньше ${baseUnitName || 'ед. учёта'}`, value: 'smaller' }]" />
+                  <q-input v-model="unit.count" type="number" step="1" min="0" outlined dense
+                    :prefix="unit.size === 'smaller' ? `в 1 ${baseUnitName} —` : `1 ${unitName(unit)} =`"
+                    :suffix="unit.size === 'smaller' ? unitName(unit) : baseUnitName" />
+                </template>
+              </div>
               <div v-if="isGoods" class="col-12 col-sm-2">
                 <q-btn-toggle v-model="unit.pricing" no-caps unelevated dense toggle-color="primary" spread
                   :options="[{ label: 'Цена', value: 'fixed' }, { label: 'Наценка', value: 'markup' }]" />
@@ -96,8 +106,7 @@
           </div>
           <q-btn v-if="isGoods" flat dense no-caps color="primary" icon="add" label="Добавить единицу" @click="addUnit" />
           <div v-if="isGoods" class="text-caption text-grey-7 q-mt-sm">
-            Пример: единица учёта — «таб.»; «упак.» = 216 таб. по 600 {{ currency() }} и «таб.» = 1 по 3 {{ currency() }}. Остаток ведётся в таблетках.
-            Цена по наценке считается от закупочной цены партии; мин. и макс. цена позволяют менять цену в счёте.
+            Примеры: учёт в «таб.», «упак.» — больше таб.: 1 упак. = 216 таб. Или учёт в «упак.», «таб.» — меньше упак.: в 1 упак. — 8 таб. Цена по наценке считается от закупочной цены партии; мин. и макс. цена позволяют менять цену в счёте.
           </div>
         </q-card-section>
 
@@ -230,21 +239,39 @@ const groupMarkupHint = computed(() => {
   return markup ? `как у группы: ${Number(markup)}` : 'у группы нет наценки'
 })
 
+// Сколько единиц учёта в одной этой: «больше» — как введено, «меньше» — доля (8 таб. в упак. → 1/8).
+const unitName = (unit) => units.value.find((u) => u.id === unit.unit)?.name || ''
+function ratioOf(unit) {
+  if (!isGoods.value || unit.unit === form.value.base_unit) return 1
+  const count = Number(unit.count)
+  if (!count) return 0
+  return unit.size === 'smaller' ? 1 / count : count
+}
+// Из сохранённого коэффициента — в понятную форму: 0,125 → «меньше», 8 шт. в единице учёта.
+function withSize(unit) {
+  const ratio = Number(unit.ratio) || 1
+  const smaller = ratio < 1
+  return { ...unit, size: smaller ? 'smaller' : 'bigger', count: smaller ? Math.round((1 / ratio) * 1000) / 1000 : ratio }
+}
+
 // Расшифровка строки: «1 упак. = 5 фл. · 700 сом за фл.» — сразу видно, что получается.
 function unitSummary(unit) {
   const name = units.value.find((u) => u.id === unit.unit)?.name
   const base = baseUnitName.value
-  const ratio = Number(unit.ratio)
+  const ratio = ratioOf(unit)
   if (!name || !base || !ratio) return null
   if (unit.unit === form.value.base_unit && ratio !== 1) {
     return { wrong: true, text: `«${base}» — единица учёта, в ней всегда 1 ${base}. Для упаковки выберите «упак.»` }
   }
   if (ratio === 1 && unit.unit !== form.value.base_unit) {
     // «таб.» = 1 «упак.» — система не сохранит: продажа 1 таб. списывала бы целую упаковку.
-    return { wrong: true, text: `1 ${name} не может равняться 1 ${base}. Если в ${base} несколько ${name}, укажите долю (при 8 ${name} — 0,125)` }
+    return { wrong: true, text: `1 ${name} не может равняться 1 ${base}. Если ${name} меньше ${base}, выберите «меньше ${base}» и укажите, сколько ${name} в одной ${base}` }
   }
   const perBase = unit.pricing === 'fixed' && Number(unit.price) && ratio !== 1 ? ` · ${money(Number(unit.price) / ratio)} за ${base}` : ''
-  return { wrong: false, text: ratio === 1 && unit.unit === form.value.base_unit ? `1 ${base} — единица учёта` : `1 ${name} = ${ratio} ${base}${perBase}` }
+  if (ratio === 1 && unit.unit === form.value.base_unit) return { wrong: false, text: `1 ${base} — единица учёта` }
+  // Меньше единицы учёта: «8 таб. в 1 упак. · 100 сом за таб. = 800 сом за упак.»
+  const shown = ratio < 1 ? `в 1 ${base} — ${Math.round(1 / ratio * 1000) / 1000} ${name}` : `1 ${name} = ${ratio} ${base}`
+  return { wrong: false, text: `${shown}${perBase}` }
 }
 
 // Себестоимость хранится за единицу учёта (флакон), а вводить её можно за любую
@@ -253,8 +280,8 @@ const costUnitId = ref(null)
 const costUnits = computed(() => {
   const base = { unit: form.value.base_unit, name: baseUnitName.value, ratio: 1 }
   const others = (form.value.units || [])
-    .filter((u) => u.unit && u.unit !== form.value.base_unit && Number(u.ratio) > 0)
-    .map((u) => ({ unit: u.unit, name: units.value.find((x) => x.id === u.unit)?.name, ratio: Number(u.ratio) }))
+    .filter((u) => u.unit && u.unit !== form.value.base_unit && ratioOf(u) > 0)
+    .map((u) => ({ unit: u.unit, name: units.value.find((x) => x.id === u.unit)?.name, ratio: ratioOf(u) }))
   return base.name ? [base, ...others] : others
 })
 const costRatio = computed(() => costUnits.value.find((u) => u.unit === costUnitId.value)?.ratio || 1)
@@ -277,7 +304,7 @@ const costHint = computed(() => {
 })
 
 const newUnit = (unitId, ratio = '1') => ({
-  unit: unitId, ratio, pricing: 'fixed', price: null, markup_percent: null, price_min: null, price_max: null,
+  unit: unitId, ratio, size: 'bigger', count: Number(ratio) === 1 ? null : Number(ratio), pricing: 'fixed', price: null, markup_percent: null, price_min: null, price_max: null,
   rounding: '0.01', barcode: '', for_sale: true, for_purchase: false,
 })
 
@@ -299,7 +326,7 @@ watch(
     units.value = u.data ?? []
     users.value = (people.data ?? []).map((p) => ({ id: p.id, label: p.full_name || p.username }))
     if (props.item) {
-      form.value = { ...props.item, units: props.item.units.map((x) => ({ ...x })) }
+      form.value = { ...props.item, units: props.item.units.map(withSize) }
       const purchase = form.value.units.find((u) => u.for_purchase && Number(u.ratio) > 1)
       costUnitId.value = purchase ? purchase.unit : form.value.base_unit
       return
@@ -339,7 +366,8 @@ async function save() {
     units: form.value.units.map((u) => ({
       ...(u.id ? { id: u.id } : {}),
       unit: isGoods.value ? u.unit : form.value.base_unit,
-      ratio: u.ratio || '1', pricing: u.pricing, price: clean(u.price), markup_percent: clean(u.markup_percent),
+      // Доля хранится с шестью знаками: 1/8 = 0,125; 1/3 = 0,333333.
+      ratio: String(Math.round(ratioOf(u) * 1e6) / 1e6), pricing: u.pricing, price: clean(u.price), markup_percent: clean(u.markup_percent),
       price_min: clean(u.price_min), price_max: clean(u.price_max), rounding: u.rounding || '0.01',
       barcode: u.barcode || '', for_sale: u.for_sale, for_purchase: u.for_purchase,
     })),

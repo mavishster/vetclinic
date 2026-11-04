@@ -177,3 +177,26 @@ def test_rolled_back_documents_vanish_from_turnover(main, operative, drug) -> No
     rows = {r["name"]: r for r in inventory.turnover(today, today, operative)}
 
     assert "Фелиферон" not in rows  # перемещение откатили — в обороте его нет
+
+
+def test_tablets_smaller_than_pack_base(operative) -> None:
+    """Учёт в упаковках, таблетка — 1/8 упаковки: 2 таблетки списывают 0,25 упак."""
+    item = catalog.save_item(
+        Item(kind=Kind.GOODS, name="Тразапентин", group=ItemGroup.objects.get(name="Препараты"), base_unit=Unit.objects.get(name="упак.")),
+        [{"unit": Unit.objects.get(name="упак."), "price": D("600")},
+         {"unit": Unit.objects.get(name="таб."), "ratio": D("0.125"), "price": D("100")}],
+    )  # fmt: skip
+    core.execute_document(inventory.save_document(StockDocument(kind="receipt", warehouse=operative),
+                                                  [{"item_unit": item.units.get(unit__name="упак."), "quantity": D("1"), "price": D("320")}]))  # fmt: skip
+    owner = clients.save_client(Client(last_name="Пушкин"))
+
+    invoice = core.execute_document(
+        billing.save_invoice(
+            Invoice(client=owner),
+            [{"item_unit": item.units.get(unit__name="таб."), "quantity": D("2")}],
+        )
+    )
+
+    line = invoice.lines.get()
+    assert line.qty_base == D("0.250") and line.cost == D("80.00")
+    assert inventory.available(item, operative) == D("0.750")

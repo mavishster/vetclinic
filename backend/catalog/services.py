@@ -149,8 +149,8 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
             name = Unit.objects.filter(pk=_unit_id(data)).values_list("name", flat=True).first()
             raise CatalogError(
                 f"«{name}» не может быть равна 1 {base}: тогда продажа 1 {name} списывала бы "
-                f"1 {base}. Если в «{base}» несколько «{name}», укажите долю — например, "
-                f"при 8 {name} в одной {base} поставьте «{base} в одной» = 0,125. "
+                f"1 {base}. Если «{name}» меньше «{base}», выберите «меньше {base}» "
+                f"и укажите, сколько {name} в одной {base}. "
                 f"Для нового товара проще сделать единицей учёта «{name}», "
                 f"а «{base}» — с количеством {name} в ней."
             )

@@ -152,8 +152,14 @@ class ItemUnit(BaseModel):
 
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name="units")
     unit = models.ForeignKey(Unit, verbose_name="единица", on_delete=models.PROTECT)
+    # Сколько единиц учёта в одной этой: упак. = 5 фл. → 5; таб. при 8 таб. в упак. → 0,125.
+    # Шесть знаков — чтобы доли вида 1/3 или 1/216 хранились достаточно точно.
     ratio = QuantityField(
-        "базовых единиц в одной", default=Decimal("1"), validators=[MinValueValidator(0)]
+        "базовых единиц в одной",
+        default=Decimal("1"),
+        validators=[MinValueValidator(0)],
+        max_digits=18,
+        decimal_places=6,
     )
     for_sale = models.BooleanField("для продажи", default=True)
     for_purchase = models.BooleanField("для закупки", default=False)
