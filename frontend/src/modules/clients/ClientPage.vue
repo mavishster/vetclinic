@@ -21,6 +21,7 @@
         <q-badge v-else color="warning" outline label="договора нет" />
         <q-badge v-if="client.photo_consent_at" color="positive" outline label="согласие на ПДн и фото" />
         <q-space />
+        <q-btn v-if="can('scheduling.add_appointment')" color="primary" unelevated icon="event" label="Записать на приём" @click="appointmentOpen = true" />
         <q-btn v-if="can('clients.add_signaturerequest')" outline color="primary" icon="draw" label="На подпись" @click="signOpen = true" />
         <q-btn v-if="can('clients.change_client')" flat color="primary" icon="photo_camera" label="Фото" @click="openPhoto" />
         <q-btn v-if="can('clients.change_client')" outline color="primary" icon="edit" label="Изменить"
@@ -30,9 +31,17 @@
         <q-btn v-if="can('clients.delete_client')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
       </div>
 
-      <div class="row q-col-gutter-md">
+      <q-tabs v-model="tab" dense align="left" no-caps active-color="primary" indicator-color="primary" class="q-mb-md">
+        <q-tab name="overview" label="Обзор" />
+        <q-tab v-if="can('scheduling.view_appointment')" name="appointments" label="Записи на приём" />
+        <q-tab v-if="can('clients.view_clientcontract') || can('core.view_attachment')" name="documents" label="Договоры и файлы" />
+      </q-tabs>
+
+      <!-- Обзор: слева — о клиенте (контакты, питомцы, напоминания), справа — счета и медкарты -->
+      <div v-if="tab === 'overview'" class="row q-col-gutter-md">
         <div class="col-12 col-md-5">
-          <q-card flat bordered>
+          <div class="q-gutter-y-md">
+            <q-card flat bordered>
             <q-list dense>
               <q-item v-for="phone in client.phones" :key="phone.number">
                 <q-item-section avatar><q-icon :name="phone.is_primary ? 'phone' : 'phone_in_talk'" color="primary" /></q-item-section>
@@ -54,19 +63,24 @@
               {{ client.description }}
             </q-card-section>
           </q-card>
+            <ClientPets v-if="can('clients.view_pet')" :client="client" />
+            <ClientReminders v-if="can('reminders.view_reminder')" :client="client" />
+          </div>
         </div>
-
         <div class="col-12 col-md-7">
           <div class="q-gutter-y-md">
             <ClientInvoices v-if="can('billing.view_invoice')" :client="client" />
-            <ClientAppointments v-if="can('scheduling.view_appointment')" :client="client" />
-            <ClientReminders v-if="can('reminders.view_reminder')" :client="client" />
-            <ClientPets v-if="can('clients.view_pet')" :client="client" />
-            <ClientContracts v-if="can('clients.view_clientcontract')" :client-id="client.id" @changed="reloadClient" />
-            <AttachmentsBlock :key="`${client.photo}-${client.photo_consent_at}-${filesVersion}`" v-if="can('core.view_attachment')" ref="files" owner-type="clients.client"
-              :owner-id="client.id" />
+            <ClientVisits v-if="can('medical.view_visit')" :client="client" />
           </div>
         </div>
+      </div>
+
+      <ClientAppointments v-else-if="tab === 'appointments'" :key="appointmentsVersion" :client="client" history />
+
+      <div v-else-if="tab === 'documents'" class="q-gutter-y-md">
+        <ClientContracts v-if="can('clients.view_clientcontract')" :client-id="client.id" @changed="reloadClient" />
+        <AttachmentsBlock :key="`${client.photo}-${client.photo_consent_at}-${filesVersion}`" v-if="can('core.view_attachment')" ref="files" owner-type="clients.client"
+          :owner-id="client.id" />
       </div>
 
       <ClientEditDialog v-model="editorOpen" :client="client" @saved="(data) => (client = data)" />
@@ -74,6 +88,8 @@
     <template v-if="client">
       <SendForSignatureDialog v-model="signOpen" :client="client" @signed="load(); filesVersion++" />
       <PhotoDialog v-model="photoOpen" :client-id="client.id" @saved="(data) => (client = data)" />
+      <AppointmentDialog v-model="appointmentOpen" :preset="{ client: client.id, clientName: client.full_name }"
+        @saved="appointmentsVersion++; tab = 'appointments'" />
     </template>
   </q-page>
 </template>
@@ -93,6 +109,9 @@ import ClientAppointments from '@/modules/scheduling/ClientAppointments.vue'
 import ClientReminders from '@/modules/reminders/ClientReminders.vue'
 // Счета и баланс — блок модуля «Счета».
 import ClientInvoices from '@/modules/billing/ClientInvoices.vue'
+// Медкарты клиента — блок модуля «Медкарта»; запись на приём — окно модуля «Календарь».
+import ClientVisits from '@/modules/medical/ClientVisits.vue'
+import AppointmentDialog from '@/modules/scheduling/AppointmentDialog.vue'
 import ClientContracts from './ClientContracts.vue'
 import ClientEditDialog from './ClientEditDialog.vue'
 import ClientPets from './ClientPets.vue'
@@ -105,6 +124,9 @@ const client = ref(null)
 const loading = ref(true)
 const editorOpen = ref(false)
 const signOpen = ref(false)
+const tab = ref('overview')
+const appointmentOpen = ref(false)
+const appointmentsVersion = ref(0)
 const filesVersion = ref(0) // подписанный PDF и фото появляются в «Файлах» сразу
 const photoOpen = ref(false)
 const photoBroken = ref(false) // файл фото не открылся — показываем значок, а не текст поверх ФИО
