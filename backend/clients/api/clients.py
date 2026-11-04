@@ -30,6 +30,7 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     source_name = serializers.CharField(source="source.name", read_only=True, default="")
     pet_names = serializers.SerializerMethodField()
     has_contract = serializers.SerializerMethodField()
+    photo = serializers.SerializerMethodField()
 
     class Meta:
         model = Client
@@ -43,6 +44,11 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "created_at", "updated_at",
         ]  # fmt: skip
         read_only_fields = ["photo", "photo_consent_at"]
+
+    def get_photo(self, client: Client) -> str | None:
+        """Фото — только если его файл не удалён из «Файлов» клиента."""
+        photo = client.photo
+        return str(photo.pk) if photo is not None and not photo.is_deleted else None
 
     def get_has_contract(self, client: Client) -> bool:
         flag = getattr(client, "has_contract", None)  # в списке — посчитан одним запросом

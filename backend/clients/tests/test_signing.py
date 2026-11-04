@@ -227,3 +227,29 @@ def test_uploaded_html_is_never_shown_inline(admin, client_) -> None:
         html["X-Content-Type-Options"] == "nosniff" and "sandbox" in html["Content-Security-Policy"]
     )
     assert jpg["Content-Type"] == "image/jpeg" and jpg["Content-Disposition"].startswith("inline")
+
+
+def test_signed_contract_without_existing_one_creates_contract(admin, station, client_) -> None:
+    assert not services.has_active_contract(client_)
+    request = services.send_for_signature(client_, template("Договор"), station, admin, "contract")
+
+    services.sign(request, station, png_data_url())
+
+    request.refresh_from_db()
+    contract = ClientContract.objects.get(client=client_)
+    assert request.contract == contract and contract.attachment_id == request.result_id
+    assert contract.number and contract.date == timezone.localdate()
+    assert services.has_active_contract(client_)
+
+
+def test_deleted_photo_file_is_not_shown(admin, station, client_) -> None:
+    client_.photo_consent_at = timezone.now()
+    client_.save()
+    photo = services.save_photo(client_, jpeg())
+    api = APIClient()
+    api.force_authenticate(admin)
+    assert api.get(f"/api/clients/clients/{client_.pk}/").json()["photo"] == str(photo.pk)
+
+    photo.delete()  # удалили файл фото из «Файлов»
+
+    assert api.get(f"/api/clients/clients/{client_.pk}/").json()["photo"] is None

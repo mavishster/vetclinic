@@ -596,6 +596,18 @@ def sign(request: Any, station: Any, signature_data_url: str, signed_from: str =
     if request.contract_id:
         request.contract.attachment = attachment
         request.contract.save(update_fields=["attachment"])
+    elif request.purpose == SignatureRequest.Purpose.CONTRACT:
+        # Договор подписали без заранее заведённого договора — заводим его сами:
+        # номер — следующий по порядку, дата — сегодня, скан — подписанный PDF.
+        request.contract = save_contract(
+            ClientContract(
+                client_id=request.client_id,
+                number="",
+                date=timezone.localdate(now),
+                attachment=attachment,
+            )
+        )
+        request.save(update_fields=["contract"])
     if request.purpose == SignatureRequest.Purpose.CONSENT:
         Client.objects.filter(pk=request.client_id).update(photo_consent_at=now)
     return request

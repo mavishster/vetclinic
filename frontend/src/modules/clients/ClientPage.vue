@@ -11,7 +11,7 @@
         <!-- Фото владельца: снимок с камеры (нужно согласие клиента). -->
         <q-avatar size="56px" :color="client.photo ? undefined : 'grey-3'" :text-color="client.photo ? undefined : 'grey-7'"
           class="cursor-pointer" @click="openPhoto">
-          <img v-if="client.photo" :src="`/api/core/attachments/${client.photo}/download/`" alt="Фото владельца">
+          <img v-if="client.photo && !photoBroken" :src="`/api/core/attachments/${client.photo}/download/`" alt="" @error="photoBroken = true">
           <q-icon v-else name="person" />
           <q-tooltip>{{ client.photo ? 'Фото владельца — нажмите, чтобы переснять' : client.photo_consent_at ? 'Сделать фото' : 'Фото — после согласия клиента' }}</q-tooltip>
         </q-avatar>
@@ -107,6 +107,7 @@ const editorOpen = ref(false)
 const signOpen = ref(false)
 const filesVersion = ref(0) // подписанный PDF и фото появляются в «Файлах» сразу
 const photoOpen = ref(false)
+const photoBroken = ref(false) // файл фото не открылся — показываем значок, а не текст поверх ФИО
 
 // Фото — только с согласием клиента на обработку ПДн и фотографирование (закон о персональных данных).
 function openPhoto() {
