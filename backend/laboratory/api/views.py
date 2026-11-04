@@ -132,8 +132,8 @@ class IngestView(APIView):
             return Response({"detail": "Неверный ключ."}, status=status.HTTP_403_FORBIDDEN)
         data = request.data
         values = data.get("values") or []
-        if not isinstance(values, list):
-            raise ValidationError({"values": ["Ожидается список показателей."]})
+        if not isinstance(values, list) or len(values) > 500:
+            raise ValidationError({"values": ["Ожидается список показателей (не больше 500)."]})
         try:
             result = services.ingest(
                 str(data.get("device") or "Прибор"),

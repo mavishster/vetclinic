@@ -283,7 +283,8 @@ def execute_stock_document(document: StockDocument) -> None:
         raise StockError("В документе нет строк.")
     if document.kind == K.RECEIPT:
         for line in lines:
-            assert line.price is not None
+            if line.price is None:
+                raise StockError(f"«{line.item}»: в приходе не указана цена.")
             batch = Batch.objects.create(
                 item=line.item,
                 receipt_line=line,

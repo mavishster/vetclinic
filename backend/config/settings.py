@@ -5,7 +5,11 @@
 """
 
 import os
+import sys
+import tempfile
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -20,6 +24,13 @@ def env_list(name: str, default: str = "") -> list[str]:
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-insecure-key-change-me")
 DEBUG = env_bool("DJANGO_DEBUG", default=False)
+# В рабочем режиме без настоящего ключа сервер не запускается: со стандартным ключом
+# любой, кто читал код, смог бы подделать вход под любым сотрудником.
+_TESTING = "pytest" in sys.modules
+if not DEBUG and not _TESTING and (SECRET_KEY.startswith("dev-only") or len(SECRET_KEY) < 40):
+    raise ImproperlyConfigured(
+        "Задайте DJANGO_SECRET_KEY в .env: случайная строка не короче 40 символов."
+    )
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
 CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 
@@ -182,3 +193,44 @@ Q_CLUSTER = {
     "catch_up": False,  # пропущенные из-за выключения расписания не догоняются пачкой
     "label": "Фоновые задачи",
 }
+
+
+# --- Безопасность входа и сессий ------------------------------------------------------
+
+AUTHENTICATION_BACKENDS = ["core.auth.ThrottledModelBackend"]
+LOGIN_MAX_ATTEMPTS = int(os.environ.get("LOGIN_MAX_ATTEMPTS", "10"))  # подряд под одним логином
+LOGIN_MAX_ATTEMPTS_PER_IP = int(
+    os.environ.get("LOGIN_MAX_ATTEMPTS_PER_IP", "30")
+)  # с одного адреса
+LOGIN_LOCK_MINUTES = int(os.environ.get("LOGIN_LOCK_MINUTES", "15"))
+
+# Общий кэш для всех процессов сервера (счётчики неверных входов).
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+        "LOCATION": os.environ.get(
+            "CACHE_DIR", os.path.join(tempfile.gettempdir(), "vetclinic-cache")
+        ),
+    }
+}
+
+# Сессия: 12 часов без активности — и нужно войти снова (общие компьютеры на ресепшене);
+# пока сотрудник работает (или планшет ждёт документы), срок продлевается сам.
+SESSION_COOKIE_AGE = int(os.environ.get("SESSION_HOURS", "12")) * 3600
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+
+# https в клинике: USE_HTTPS=1 — куки только по защищённому соединению, перенаправление
+# с http, HSTS. Включается вместе с сертификатом (см. docs/INSTALL.md).
+if env_bool("USE_HTTPS", default=False):
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = True
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_HSTS_SECONDS = 60 * 60 * 24 * 30
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+
+# В рабочем режиме API отдаёт только JSON — без отладочных HTML-страниц и форм DRF.
+if not DEBUG:
+    REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = ["rest_framework.renderers.JSONRenderer"]

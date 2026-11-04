@@ -161,6 +161,9 @@ def pay(data: PaymentData) -> Payment:
     due = max(due - billing.client_credit(client), ZERO)  # аванс уже покрывает часть
     received = _money(Decimal(str(data.get("cash_received") or 0)))
     card = _money(Decimal(str(data.get("card_amount") or 0)))
+    if received < 0 or card < 0:
+        # Иначе «оплата» с отрицательными наличными вывела бы деньги из кассы в обход выдачи.
+        raise CashError("Суммы оплаты не могут быть отрицательными.")
     if card > due and invoice_ids:
         raise CashError("Безналом нельзя заплатить больше, чем к оплате — сдачу с карты не выдают.")
     guest = clients.is_guest(client)

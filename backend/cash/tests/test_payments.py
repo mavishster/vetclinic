@@ -292,3 +292,15 @@ def test_guest_quick_invoice_must_be_paid_in_full(service, cash) -> None:
 
     assert payment.change_given == D("1000.00")
     assert refresh(inv).payment_status == "paid"
+
+
+def test_negative_cash_in_payment_is_refused(db) -> None:
+    from cash import services as cash
+    from cash.models import CashRegister
+    from clients import services as clients
+    from clients.models import Client
+
+    owner = clients.save_client(Client(last_name="Петров"))
+    with pytest.raises(cash.CashError, match="отрицательными"):
+        cash.pay({"client": owner, "invoice_ids": [], "cash_register": CashRegister.objects.get(name="Наличные"),
+                  "cash_received": Decimal("-500"), "card_amount": Decimal("600")})  # fmt: skip
