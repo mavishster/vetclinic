@@ -137,11 +137,22 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
         raise CatalogError("Добавьте хотя бы одну единицу для продажи.")
     unit_ids = [_unit_id(u) for u in units]
     for data in units if item.kind == Kind.GOODS else []:  # у услуги коэффициент всегда 1
-        if str(_unit_id(data)) == str(item.base_unit_id) and D(str(data.get("ratio", 1))) != 1:
-            base = item.base_unit.name
+        ratio = D(str(data.get("ratio", 1)))
+        base = item.base_unit.name
+        if str(_unit_id(data)) == str(item.base_unit_id) and ratio != 1:
             raise CatalogError(
                 f"Единица учёта «{base}» всегда равна 1 {base}. Для упаковки выберите "
                 f"другую единицу — например, «упак.» — и укажите, сколько в ней {base}."
+            )
+        if str(_unit_id(data)) != str(item.base_unit_id) and ratio == 1:
+            # «таб.» = 1 «упак.» — почти всегда ошибка: 2 таблетки списались бы как 2 упаковки.
+            name = Unit.objects.filter(pk=_unit_id(data)).values_list("name", flat=True).first()
+            raise CatalogError(
+                f"«{name}» не может быть равна 1 {base}: тогда продажа 1 {name} списывала бы "
+                f"1 {base}. Если в «{base}» несколько «{name}», укажите долю — например, "
+                f"при 8 {name} в одной {base} поставьте «{base} в одной» = 0,125. "
+                f"Для нового товара проще сделать единицей учёта «{name}», "
+                f"а «{base}» — с количеством {name} в ней."
             )
     if len(set(map(str, unit_ids))) != len(unit_ids):
         repeated = next(u for u in unit_ids if list(map(str, unit_ids)).count(str(u)) > 1)

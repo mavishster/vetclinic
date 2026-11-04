@@ -52,7 +52,7 @@ def test_round_price(value, step, expected) -> None:
 def test_fixed_price_and_floating_range() -> None:
     item = make_goods(
         units=[
-            {"unit": unit("упак."), "ratio": D("1"), "price": D("600"),
+            {"unit": unit("таб."), "ratio": D("1"), "price": D("600"),
              "price_min": D("450"), "price_max": D("750")},
         ]
     )  # fmt: skip
@@ -70,7 +70,7 @@ def test_markup_own_or_from_group_and_zero_is_real_zero() -> None:
         units=[
             {"unit": unit("упак."), "ratio": D("10"), "pricing": "markup", "markup_percent": None},
             {"unit": unit("таб."), "ratio": D("1"), "pricing": "markup", "markup_percent": D("0")},
-            {"unit": unit("шт."), "ratio": D("1"), "pricing": "markup", "markup_percent": D("100")},
+            {"unit": unit("шт."), "ratio": D("2"), "pricing": "markup", "markup_percent": D("100")},
         ],
     )
     pack, tablet, piece = (item.units.get(unit__name=n) for n in ("упак.", "таб.", "шт."))
@@ -78,13 +78,13 @@ def test_markup_own_or_from_group_and_zero_is_real_zero() -> None:
     assert services.effective_markup(pack) == D("25")
     assert services.price_of(pack, cost_per_base=D("10")) == D("125.00")
     assert services.price_of(tablet, cost_per_base=D("10")) == D("10.00")
-    assert services.price_of(piece, cost_per_base=D("10")) == D("20.00")
+    assert services.price_of(piece, cost_per_base=D("10")) == D("40.00")  # 2 таб. × 10 × 2
 
 
 @pytest.mark.django_db
 def test_markup_uses_manual_cost_and_rounding_or_unknown() -> None:
     item = make_goods(
-        units=[{"unit": unit("упак."), "ratio": D("1"), "pricing": "markup", "markup_percent": D("33"),
+        units=[{"unit": unit("таб."), "ratio": D("1"), "pricing": "markup", "markup_percent": D("33"),
                 "rounding": D("10")}],
     )  # fmt: skip
     pack = item.units.get()
@@ -101,14 +101,14 @@ def test_markup_uses_manual_cost_and_rounding_or_unknown() -> None:
     ("units", "message"),
     [
         ([{"unit": "упак.", "ratio": D("0"), "price": D("1")}], "больше нуля"),
-        ([{"unit": "упак.", "ratio": D("1")}], "укажите цену"),
-        ([{"unit": "упак.", "ratio": D("1"), "price": D("5"), "price_min": D("10")}], "вне диапазона"),
-        ([{"unit": "упак.", "ratio": D("1"), "price": D("5"), "price_min": D("9"), "price_max": D("8")}],
+        ([{"unit": "таб.", "ratio": D("1")}], "укажите цену"),
+        ([{"unit": "таб.", "ratio": D("1"), "price": D("5"), "price_min": D("10")}], "вне диапазона"),
+        ([{"unit": "таб.", "ratio": D("1"), "price": D("5"), "price_min": D("9"), "price_max": D("8")}],
          "минимальная цена больше"),
-        ([{"unit": "упак.", "ratio": D("1"), "price": D("1")}, {"unit": "упак.", "ratio": D("2"),
+        ([{"unit": "упак.", "ratio": D("3"), "price": D("1")}, {"unit": "упак.", "ratio": D("2"),
           "price": D("2")}], "«упак.» указана в двух строках"),
         ([{"unit": "таб.", "ratio": D("5"), "price": D("1")}], "всегда равна 1 таб."),
-        ([{"unit": "упак.", "ratio": D("1"), "price": D("1"), "for_sale": False}], "хотя бы одну"),
+        ([{"unit": "таб.", "ratio": D("1"), "price": D("1"), "for_sale": False}], "хотя бы одну"),
     ],
 )  # fmt: skip
 def test_unit_rules(units, message) -> None:
@@ -173,15 +173,35 @@ def test_price_history_shows_only_price_changes_with_author() -> None:
         username="manager", password="x", last_name="Орлова"
     )
     with acting_user(user):
-        item = make_goods(units=[{"unit": unit("упак."), "ratio": D("1"), "price": D("600")}])
+        item = make_goods(units=[{"unit": unit("таб."), "ratio": D("1"), "price": D("600")}])
         pack = item.units.get()
         pack.barcode = "123"  # не цена — в историю цен не попадает
         pack.save()
         services.save_item(
-            item, [{"id": pack.pk, "unit": unit("упак."), "ratio": D("1"), "price": D("650")}]
+            item, [{"id": pack.pk, "unit": unit("таб."), "ratio": D("1"), "price": D("650")}]
         )
 
     history = services.price_history(item)
 
     assert [h["price"] for h in history] == ["650.00", "600.00"]
     assert history[0]["user"] == "Орлова"
+
+
+def test_non_base_unit_equal_to_base_is_rejected(db) -> None:
+    from decimal import Decimal
+
+    from catalog import services
+    from catalog.models import Item, ItemGroup, Kind, Unit
+
+    with pytest.raises(services.CatalogError, match="не может быть равна 1 упак."):
+        services.save_item(
+            Item(kind=Kind.GOODS, name="Тразапентин", group=ItemGroup.objects.get(name="Препараты"), base_unit=Unit.objects.get(name="упак.")),
+            [{"unit": Unit.objects.get(name="упак."), "price": Decimal("600")},
+             {"unit": Unit.objects.get(name="таб."), "ratio": Decimal("1"), "price": Decimal("100")}],
+        )  # fmt: skip
+    item = services.save_item(
+        Item(kind=Kind.GOODS, name="Тразапентин", group=ItemGroup.objects.get(name="Препараты"), base_unit=Unit.objects.get(name="упак.")),
+        [{"unit": Unit.objects.get(name="упак."), "price": Decimal("600")},
+         {"unit": Unit.objects.get(name="таб."), "ratio": Decimal("0.125"), "price": Decimal("100")}],
+    )  # fmt: skip
+    assert item.units.get(unit__name="таб.").ratio == Decimal("0.125")  # доля упаковки — можно
