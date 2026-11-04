@@ -23,6 +23,7 @@ from core.excel import xlsx_response
 from core.models import DocumentError, PrintTemplate
 from inventory import importing, labels, services
 from inventory.models import (
+    Department,
     Manufacturer,
     MinStock,
     StockDocument,
@@ -48,6 +49,11 @@ class WarehouseViewSet(DirectoryViewSet):
         if self.request.user.has_perm("inventory.change_warehouse"):
             return queryset
         return queryset.filter(pk__in=services.visible_warehouses(self.request.user).values("pk"))
+
+
+class DepartmentViewSet(DirectoryViewSet):
+    model = Department
+    extra_fields = ("responsible",)
 
 
 class ManufacturerViewSet(DirectoryViewSet):
@@ -101,6 +107,7 @@ class DocumentSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     counterparty_name = serializers.CharField(
         source="counterparty.name", read_only=True, default=""
     )
+    department_name = serializers.CharField(source="department.name", read_only=True, default="")
     total = serializers.SerializerMethodField()
 
     class Meta:
@@ -122,6 +129,8 @@ class DocumentSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "supplier_number",
             "supplier_date",
             "reason",
+            "department",
+            "department_name",
             "comment",
             "lines",
             "total",
@@ -521,10 +530,9 @@ class TransferView(APIView):
 
     def get(self, request: Request) -> Response:
         params = request.query_params
-        source, target = (
-            self._warehouse(request, params.get("from")),
-            self._warehouse(request, params.get("to")),
-        )
+        source = self._warehouse(request, params.get("from"))
+        # Списание на отделение — без склада-получателя.
+        target = self._warehouse(request, params.get("to")) if params.get("to") else None
         found = services.scan_for_transfer(params.get("code", ""), source, target)
         if found is None:
             raise ValidationError({"code": ["Товар с таким кодом не найден в прайсе."]})
@@ -553,3 +561,76 @@ class TransferView(APIView):
         except (services.StockError, DocumentError) as error:
             raise ValidationError({"non_field_errors": [str(error)]}) from error
         return Response({"id": str(document.pk), "number": document.number}, status=201)
+
+
+class DepartmentWriteOffView(TransferView):
+    """Списание расходных материалов со склада на отделение (по сканеру).
+
+    POST {"from", "department", "reason", "lines": [{"item_unit", "quantity", "batch"}]}.
+    Сканирование — тот же GET, что у перемещения (без склада-получателя).
+    """
+
+    def post(self, request: Request) -> Response:
+        source = self._warehouse(request, request.data.get("from"))
+        department = Department.objects.filter(
+            pk=request.data.get("department"), is_active=True
+        ).first()
+        lines = [
+            {
+                "item_unit": line.get("item_unit"),
+                "quantity": Decimal(str(line.get("quantity") or 0)),
+                "batch": line.get("batch") or None,
+            }
+            for line in request.data.get("lines") or []
+        ]
+        try:
+            document = services.department_writeoff(
+                source, department, lines, str(request.data.get("reason") or "")
+            )  # type: ignore[arg-type]
+        except (services.StockError, DocumentError) as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+        return Response({"id": str(document.pk), "number": document.number}, status=201)
+
+
+class DepartmentsReportView(APIView):
+    """Расход по отделениям: ?from=&to=&department= (&export=xlsx).
+
+    Суммы — только с правом «Видеть себестоимость».
+    """
+
+    queryset = StockMovement.objects.none()  # права — как на остатки
+
+    def get_queryset(self) -> QuerySet[StockMovement]:
+        return StockMovement.objects.none()
+
+    def get(self, request: Request) -> HttpResponse:
+        date_from, date_to = reports.period(request)
+        rows = services.department_consumption(
+            date_from, date_to, request.query_params.get("department") or None
+        )
+        hide = set() if can_view_cost(request) else {"cost"}
+        if reports.wants_excel(request):
+            columns = [
+                ("department_name", "Отделение", 18),
+                ("item_name", "Материал", 40),
+                ("qty", "Количество", 12),
+                ("unit", "Ед.", 8),
+            ]
+            if not hide:
+                columns.append(("cost", "Сумма", 14))
+            return xlsx_response("departments.xlsx", "Расход по отделениям", columns, rows)
+        return Response(reports.as_text(rows, hide))  # type: ignore[arg-type]
+
+
+class WarehouseTotalsView(APIView):
+    """Остатки по складам: позиций в наличии и сумма по себестоимости (с правом)."""
+
+    queryset = StockMovement.objects.none()
+
+    def get_queryset(self) -> QuerySet[StockMovement]:
+        return StockMovement.objects.none()
+
+    def get(self, request: Request) -> Response:
+        rows = services.warehouse_totals(services.visible_warehouses(request.user))
+        hide = set() if can_view_cost(request) else {"cost"}
+        return Response(reports.as_text(rows, hide))  # type: ignore[arg-type]

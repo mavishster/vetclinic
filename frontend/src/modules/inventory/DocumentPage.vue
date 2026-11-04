@@ -32,6 +32,9 @@
           <q-input v-if="form.kind === 'receipt'" v-model="form.supplier_number" label="№ накладной поставщика" outlined dense class="col-6 col-sm-2" :readonly="executed" />
           <q-input v-if="form.kind === 'receipt'" v-model="form.supplier_date" type="date" label="от" stack-label outlined dense class="col-6 col-sm-2" :readonly="executed" />
         </template>
+        <q-select v-if="form.kind === 'write_off'" v-model="form.department" :options="departments" option-value="id" option-label="name"
+          emit-value map-options clearable outlined dense label="На отделение" class="col-12 col-sm-3" :readonly="executed"
+          hint="Расходники — для отчёта «Расход по отделениям»" />
         <q-input v-if="form.kind === 'write_off'" v-model="form.reason" label="Причина списания" outlined dense class="col-12 col-sm-4"
           :readonly="executed" />
         <q-input v-model="form.comment" label="Комментарий" outlined dense class="col-12" :readonly="executed" />
@@ -311,7 +314,9 @@ function applyDocument(data) {
   }
 }
 
+const departments = ref([])
 onMounted(async () => {
+  apiGet('inventory/departments/?active=true').then(({ data }) => (departments.value = data ?? []))
   const [w, c, g] = await Promise.all([
     apiGet('inventory/warehouses/?active=true'), apiGet('core/counterparties/?active=true&use=receipt'),
     apiGet('catalog/groups/?active=true&kind=goods'),
@@ -321,7 +326,7 @@ onMounted(async () => {
   groups.value = g.data ?? []
   if (props.id === 'new') {
     form.value = { kind: route.query.kind || 'receipt', date: new Date().toISOString(), warehouse: warehouses.value[0]?.id ?? null,
-      target_warehouse: null, counterparty: null, supplier_number: '', supplier_date: null, reason: '', comment: '', lines: [] }
+      target_warehouse: null, counterparty: null, supplier_number: '', supplier_date: null, reason: '', department: null, comment: '', lines: [] }
   } else {
     const { ok, data } = await apiGet(`inventory/documents/${props.id}/`)
     if (ok) applyDocument(data)

@@ -5,6 +5,7 @@ from inventory.api import views
 
 router = DefaultRouter()
 router.register("warehouses", views.WarehouseViewSet, basename="warehouse")
+router.register("departments", views.DepartmentViewSet, basename="department")
 router.register("manufacturers", views.ManufacturerViewSet, basename="manufacturer")
 router.register("documents", views.DocumentViewSet, basename="stock-document")
 router.register("stock", views.StockViewSet, basename="stock")
@@ -14,6 +15,11 @@ urlpatterns = [
     path("labels/", views.LabelsView.as_view(), name="stock-labels"),
     path("reports/turnover/", views.TurnoverReportView.as_view(), name="report-turnover"),
     path("transfer/", views.TransferView.as_view(), name="stock-transfer"),
+    path(
+        "department-writeoff/", views.DepartmentWriteOffView.as_view(), name="department-writeoff"
+    ),
+    path("reports/departments/", views.DepartmentsReportView.as_view(), name="report-departments"),
+    path("reports/warehouses/", views.WarehouseTotalsView.as_view(), name="report-warehouses"),
     path("import/<str:step>/", views.StockImportView.as_view(), name="stock-import"),
     *router.urls,
 ]

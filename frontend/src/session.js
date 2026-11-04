@@ -26,7 +26,10 @@ export async function logout() {
 }
 
 // can('clients.view_species') — есть ли право. Администратору можно всё.
+// Право или список прав (достаточно любого из них — например, раздел «Отчёты»).
 export function can(permission) {
   const user = session.user
-  return Boolean(user && (user.is_superuser || user.permissions.includes(permission)))
+  if (!user) return false
+  if (Array.isArray(permission)) return permission.some((p) => can(p))
+  return Boolean(user.is_superuser || user.permissions.includes(permission))
 }

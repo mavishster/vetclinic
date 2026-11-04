@@ -20,7 +20,15 @@ from django.utils import timezone
 from catalog import services as catalog
 from catalog.models import Kind
 from core import services as core
-from inventory.models import Batch, MinStock, StockDocument, StockLine, StockMovement, Warehouse
+from inventory.models import (
+    Batch,
+    Department,
+    MinStock,
+    StockDocument,
+    StockLine,
+    StockMovement,
+    Warehouse,
+)
 
 D = Decimal
 ZERO = D("0")
@@ -889,7 +897,7 @@ def scan_for_transfer(code: str, source: Any, target: Any) -> ScanResult | None:
         "recommended": batches[0]["batch"] if batches else None,
         "scanned_batch": scanned,
         "scanned_series": gs1["batch"] if gs1 else "",
-        "on_target": available(unit.item, target),
+        "on_target": available(unit.item, target) if target is not None else ZERO,
     }
 
 
@@ -909,3 +917,121 @@ def quick_transfer(source: Any, target: Any, lines: list[LineData]) -> StockDocu
         lines,
     )
     return core.execute_document(document)
+
+
+# --- Списание на отделения ----------------------------------------------------------
+
+
+@transaction.atomic
+def department_writeoff(
+    source: Any, department: Any, lines: list[LineData], reason: str = ""
+) -> StockDocument:
+    """Списать расходные материалы со склада на отделение: документ «Списание» с отделением —
+    создать и провести (по партиям, ранний срок первым)."""
+    if department is None:
+        raise StockError("Выберите отделение.")
+    if not lines:
+        raise StockError("Нечего списывать — отсканируйте или добавьте материалы.")
+    document = save_document(
+        StockDocument(
+            kind=K.WRITE_OFF,
+            warehouse_id=getattr(source, "pk", source),
+            department_id=getattr(department, "pk", department),
+            reason=reason.strip() or f"на отделение «{department}»",
+        ),
+        lines,
+    )
+    return core.execute_document(document)
+
+
+class ConsumptionRow(TypedDict):
+    department: str
+    department_name: str
+    item: str
+    item_name: str
+    unit: str
+    qty: Decimal
+    cost: Decimal
+
+
+def department_consumption(
+    date_from: date, date_to: date, department: Any = None
+) -> list[ConsumptionRow]:
+    """Расход по отделениям за период: что и сколько списано на каждое отделение
+    (по выполненным документам «Списание на отделение»), по себестоимости партий."""
+    from datetime import datetime, time
+
+    from django.contrib.contenttypes.models import ContentType
+
+    zone = timezone.get_current_timezone()
+    start = datetime.combine(date_from, time.min, zone)
+    end = datetime.combine(date_to, time.min, zone) + timedelta(days=1)
+    documents = StockDocument.objects.filter(
+        kind=K.WRITE_OFF,
+        status=StockDocument.Status.EXECUTED,
+        department__isnull=False,
+        date__gte=start,
+        date__lt=end,
+    )
+    if department:
+        documents = documents.filter(department=department)
+    departments = dict(documents.values_list("pk", "department_id"))
+    names = {d.pk: d.name for d in Department.objects.filter(pk__in=set(departments.values()))}
+    movements = StockMovement.objects.filter(
+        document_type=ContentType.objects.get_for_model(StockDocument),
+        document_id__in=list(departments),
+        reversal_of=None,
+    ).select_related("item__base_unit")
+    totals: dict[tuple[Any, Any], ConsumptionRow] = {}
+    for m in movements:
+        dep = departments[m.document_id]
+        row = totals.setdefault(
+            (dep, m.item_id),
+            {
+                "department": str(dep),
+                "department_name": names.get(dep, ""),
+                "item": str(m.item_id),
+                "item_name": m.item.name,
+                "unit": m.item.base_unit.name,
+                "qty": ZERO,
+                "cost": ZERO,
+            },
+        )
+        row["qty"] += -m.qty_base
+        row["cost"] += (-m.qty_base * m.cost_per_base).quantize(Decimal("0.01"))
+    return sorted(totals.values(), key=lambda r: (r["department_name"], r["item_name"]))
+
+
+class WarehouseTotal(TypedDict):
+    warehouse: str
+    warehouse_name: str
+    kind: str
+    positions: int
+    cost: Decimal
+
+
+def warehouse_totals(visible: Any = None) -> list[WarehouseTotal]:
+    """Остатки по складам: сколько позиций в наличии и на какую сумму по себестоимости."""
+    result: dict[str, WarehouseTotal] = {}
+    warehouses = {
+        str(w.pk): w for w in (visible if visible is not None else Warehouse.objects.all())
+    }
+    for row in balances():
+        key = str(row["warehouse"])
+        if key not in warehouses or row["qty"] <= 0:
+            continue
+        total = result.setdefault(
+            key,
+            {
+                "warehouse": key,
+                "warehouse_name": row["warehouse_name"],
+                "kind": warehouses[key].kind,
+                "positions": 0,
+                "cost": ZERO,
+            },
+        )
+        total["cost"] += row["cost"]
+    for key, total in result.items():
+        total["positions"] = len({r["item"] for r in balances(key) if r["qty"] > 0})
+        total["cost"] = total["cost"].quantize(Decimal("0.01"))
+    return sorted(result.values(), key=lambda t: t["warehouse_name"])

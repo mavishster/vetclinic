@@ -12,6 +12,14 @@ export default [
   { path: 'inventory/stock', component: () => import('./StockPage.vue'), meta: { perm: 'inventory.view_stockmovement' } },
   { path: 'inventory/documents', component: () => import('./DocumentsPage.vue'), meta: { perm: 'inventory.view_stockdocument' } },
   { path: 'inventory/transfer', component: () => import('./TransferPage.vue'), meta: { perm: 'inventory.add_stockdocument' } },
+  { path: 'inventory/department-writeoff', component: () => import('./TransferPage.vue'), props: { department: true }, meta: { perm: 'inventory.add_stockdocument' } },
+  {
+    path: 'directories/departments',
+    component: DirectoryPage,
+    props: { title: 'Отделения', endpoint: 'inventory/departments/', permission: 'inventory.department',
+      fields: [{ name: 'responsible', label: 'Ответственный', endpoint: 'core/users/' }] },
+    meta: { perm: 'inventory.view_department' },
+  },
   { path: 'inventory/documents/:id', component: () => import('./DocumentPage.vue'), props: true, meta: { perm: 'inventory.view_stockdocument' } },
   {
     path: 'directories/warehouses',

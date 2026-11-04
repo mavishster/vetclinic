@@ -2,7 +2,7 @@
   <q-page padding>
     <div class="row items-center q-mb-md q-gutter-sm">
       <h1 class="text-h5 q-my-none col-grow">Отчёты</h1>
-      <q-btn v-if="current.excel" outline color="primary" icon="download" label="Excel" :href="excelUrl" />
+      <q-btn v-if="current.excel && !current.noExcel" outline color="primary" icon="download" label="Excel" :href="excelUrl" />
     </div>
 
     <q-tabs v-model="tab" dense align="left" no-caps active-color="primary" indicator-color="primary" @update:model-value="load">
@@ -18,6 +18,8 @@
         :options="[{ label: 'Всё', value: '' }, { label: 'Услуги', value: 'service' }, { label: 'Товары', value: 'goods' }]" />
       <q-input v-if="tab === 'turnover'" v-model="search" dense outlined clearable debounce="300" placeholder="Товар"
         class="col-12 col-sm-3" @update:model-value="load" />
+      <q-select v-if="tab === 'departments'" v-model="department" :options="departments" option-value="id" option-label="name"
+        emit-value map-options dense outlined clearable label="Все отделения" class="col-12 col-sm-3" @update:model-value="load" />
     </div>
 
     <!-- Итоги периода -->
@@ -117,6 +119,27 @@ const ALL_TABS = [
       { name: 'closing', label: 'На конец', field: (r) => `${qty(r.closing)} ${r.unit}`, align: 'right', classes: 'text-weight-medium' },
     ],
   },
+  {
+    name: 'departments', label: 'Расход по отделениям', icon: 'domain', perm: 'inventory.view_stockmovement', period: true,
+    excel: 'inventory/reports/departments/', empty: 'За период на отделения ничего не списано', barField: 'qty',
+    columns: () => [
+      { name: 'department', label: 'Отделение', field: 'department_name', align: 'left', classes: 'text-weight-medium' },
+      { name: 'item', label: 'Материал', field: 'item_name', align: 'left' },
+      { name: 'qty', label: 'Количество', field: (r) => `${qty(r.qty)} ${r.unit}`, align: 'right' },
+      ...(showCost ? [{ name: 'cost', label: 'Сумма', field: (r) => money(r.cost), align: 'right' }] : []),
+    ],
+  },
+  {
+    name: 'warehouses', label: 'Остатки по складам', icon: 'warehouse', perm: 'inventory.view_stockmovement', period: false,
+    excel: 'inventory/reports/warehouses/', noExcel: true, empty: 'На складах пусто', barField: 'positions',
+    columns: () => [
+      { name: 'warehouse', label: 'Склад', field: 'warehouse_name', align: 'left', classes: 'text-weight-medium' },
+      { name: 'kind', label: 'Назначение', field: (r) => (r.kind === 'sale' ? 'продажа (оперативный)' : 'хранение (основной)'), align: 'left' },
+      { name: 'positions', label: 'Позиций в наличии', field: 'positions', align: 'right' },
+      ...(showCost ? [{ name: 'cost', label: 'Сумма по себестоимости', field: (r) => money(r.cost), align: 'right' }] : []),
+      { name: 'bar', label: '', field: 'positions' },
+    ],
+  },
   { name: 'performers', label: 'Исполнители', icon: 'badge', perm: 'billing.view_invoice', period: false, empty: '', columns: () => [] },
 ]
 const tabs = ALL_TABS.filter((t) => can(t.perm))
@@ -129,6 +152,9 @@ const from = ref('')
 const to = ref('')
 const kind = ref('')
 const search = ref('')
+const department = ref(null)
+const departments = ref([])
+apiGet('inventory/departments/?active=true').then(({ data }) => (departments.value = data ?? []))
 const rows = ref([])
 const loading = ref(false)
 const max = computed(() => Math.max(0, ...rows.value.map((r) => Number(r[current.value.barField]) || 0)))
@@ -156,6 +182,7 @@ const query = computed(() => {
   const params = new URLSearchParams({ from: from.value, to: to.value })
   if (tab.value === 'top' && kind.value) params.set('kind', kind.value)
   if (tab.value === 'turnover' && search.value) params.set('search', search.value)
+  if (tab.value === 'departments' && department.value) params.set('department', department.value)
   return params
 })
 const excelUrl = computed(() => `/api/${current.value.excel}?${query.value}&export=xlsx`)
@@ -170,6 +197,12 @@ const totals = computed(() => {
   }
   if (tab.value === 'top') return [{ label: 'Выручка', value: money(sum('amount')) }, { label: 'Позиций', value: rows.value.length }]
   if (tab.value === 'debtors') return [{ label: 'Всего долгов', value: money(sum('debt')) }, { label: 'Должников', value: rows.value.length }]
+  if (tab.value === 'departments') {
+    const list = [{ label: 'Отделений', value: new Set(rows.value.map((r) => r.department)).size }, { label: 'Позиций', value: rows.value.length }]
+    if (showCost) list.push({ label: 'Сумма расхода', value: money(sum('cost')) })
+    return list
+  }
+  if (tab.value === 'warehouses' && showCost) return [{ label: 'Всего по себестоимости', value: money(sum('cost')) }]
   return []
 })
 
@@ -185,7 +218,7 @@ async function load() {
     for (const m of moneyRows) byDay.set(m.day, { day: m.day, invoices: 0, total: 0, discount: 0, cost: 0, ...byDay.get(m.day), ...m })
     list = [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day))
   }
-  rows.value = list.map((r, i) => ({ ...r, key: r.day || r.item || r.client || i }))
+  rows.value = list.map((r, i) => ({ ...r, key: `${r.day || r.department || r.warehouse || ''}-${r.item || r.client || i}` }))
   loading.value = false
 }
 

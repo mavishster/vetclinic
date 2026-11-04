@@ -206,6 +206,7 @@ PERMISSION_HINTS = {
     "inventory.batch": "Партии товаров: серии и сроки годности.",
     "inventory.stockmovement": "Остатки на складах.",
     "inventory.minstock": "Минимальные остатки — «нужно заказать».",
+    "inventory.department": "Список отделений клиники — на них списываются расходные материалы.",
     "inventory.warehouse": "Список складов.",
     "inventory.manufacturer": "Список производителей.",
     "cash.cashshift": "Смены и закрытие кассы.",

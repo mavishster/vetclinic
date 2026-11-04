@@ -48,6 +48,24 @@ class Warehouse(Directory):
         verbose_name_plural = "склады"
 
 
+class Department(Directory):
+    """Отделение клиники (хирургия, стационар, терапия, приёмная): на него списываются
+    расходные материалы — чтобы видеть, сколько и чего тратит каждое отделение."""
+
+    responsible = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="ответственный",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta(Directory.Meta):
+        verbose_name = "отделение"
+        verbose_name_plural = "отделения"
+
+
 class Manufacturer(Directory):
     class Meta(Directory.Meta):
         verbose_name = "производитель"
@@ -92,6 +110,15 @@ class StockDocument(Document):
     supplier_number = models.CharField("№ накладной поставщика", max_length=50, blank=True)
     supplier_date = models.DateField("дата накладной поставщика", null=True, blank=True)
     reason = models.CharField("причина списания", max_length=200, blank=True)
+    # Списание расходных материалов «на отделение» — для отчёта «Расход по отделениям».
+    department = models.ForeignKey(
+        Department,
+        verbose_name="отделение",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
 
     class Meta(Document.Meta):
         permissions = [

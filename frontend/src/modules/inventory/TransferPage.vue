@@ -1,12 +1,16 @@
 <template>
   <q-page padding>
     <div class="row items-center q-mb-md q-gutter-sm">
-      <h1 class="text-h5 q-my-none col-grow">Перемещение на оперативный</h1>
+      <h1 class="text-h5 q-my-none col-grow">{{ department ? 'Списание на отделение' : 'Перемещение на оперативный' }}</h1>
     </div>
     <div class="row q-col-gutter-sm q-mb-md">
       <q-select v-model="from" :options="warehouses" option-value="id" option-label="name" emit-value map-options outlined dense
         label="Откуда" class="col-6 col-md-3" @update:model-value="lines = []" />
-      <q-select v-model="to" :options="warehouses" option-value="id" option-label="name" emit-value map-options outlined dense
+      <template v-if="department">
+        <q-select v-model="departmentId" :options="departments" option-value="id" option-label="name" emit-value map-options outlined dense
+          label="Отделение *" class="col-6 col-md-3" />
+      </template>
+      <q-select v-else v-model="to" :options="warehouses" option-value="id" option-label="name" emit-value map-options outlined dense
         label="Куда" class="col-6 col-md-3" />
       <q-input ref="scanner" v-model="code" outlined dense autofocus class="col-12 col-md-6" label="Сканер: штрихкод или DataMatrix + Enter"
         :loading="scanning" @keyup.enter="scan">
@@ -20,7 +24,7 @@
         <div class="col">
           <div class="text-subtitle1">{{ line.item_name }} <span class="text-caption text-grey-7">· {{ line.unit }}</span></div>
           <div class="text-caption text-grey-7">
-            На «{{ warehouseName(to) }}» сейчас: {{ qty(line.on_target) }} {{ line.base_unit }}
+            <template v-if="!department">На «{{ warehouseName(to) }}» сейчас: {{ qty(line.on_target) }} {{ line.base_unit }}</template>
             <span v-if="line.ratio !== '1.000'"> · 1 {{ line.unit }} = {{ qty(line.ratio) }} {{ line.base_unit }}</span>
           </div>
         </div>
@@ -51,9 +55,11 @@
     </div>
 
     <div v-if="lines.length" class="row items-center q-mt-md q-gutter-sm">
+      <q-input v-if="department" v-model="reason" outlined dense label="Комментарий (операция, санобработка…)" class="col-12 col-md-5" />
       <q-space />
       <q-btn flat label="Очистить" @click="lines = []" />
-      <q-btn color="primary" unelevated icon="move_down" :label="`Переместить (${lines.length})`" :loading="saving" :disable="!canSave" @click="save" />
+      <q-btn color="primary" unelevated :icon="department ? 'outbox' : 'move_down'"
+        :label="`${department ? 'Списать на отделение' : 'Переместить'} (${lines.length})`" :loading="saving" :disable="!canSave" @click="save" />
     </div>
   </q-page>
 </template>
@@ -65,7 +71,12 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { apiGet, apiPost, fieldErrors } from '@/api'
 
+// department — режим «Списание на отделение»: с основного склада на отделение, без склада-получателя.
+const props = defineProps({ department: { type: Boolean, default: false } })
 const $q = useQuasar()
+const departments = ref([])
+const departmentId = ref(null)
+const reason = ref('')
 const warehouses = ref([])
 const from = ref(null)
 const to = ref(null)
@@ -83,7 +94,8 @@ const totalOf = (line) => line.batches.reduce((sum, b) => sum + Number(b.qty_uni
 const overdraft = (line) => Number(line.quantity) > totalOf(line)
 // Больше, чем в выбранной партии, — берём из нескольких партий по сроку (ранние первыми).
 const spills = (line) => !!chosen(line) && Number(line.quantity) > Number(chosen(line).qty_unit) && !overdraft(line)
-const canSave = computed(() => lines.value.every((l) => l.batch && Number(l.quantity) > 0 && !overdraft(l)) && from.value !== to.value)
+const canSave = computed(() => lines.value.every((l) => l.batch && Number(l.quantity) > 0 && !overdraft(l))
+  && (props.department ? !!departmentId.value : from.value !== to.value))
 
 function expiryClass(expiry) {
   if (!expiry) return 'text-grey-7'
@@ -96,7 +108,8 @@ async function scan() {
   if (!value) return
   error.value = ''
   scanning.value = true
-  const params = new URLSearchParams({ code: value, from: from.value, to: to.value })
+  const params = new URLSearchParams({ code: value, from: from.value })
+  if (!props.department) params.set('to', to.value)
   const { ok, data } = await apiGet(`inventory/transfer/?${params}`)
   scanning.value = false
   code.value = ''
@@ -130,18 +143,20 @@ function checkBatch(line) {
 
 async function save() {
   saving.value = true
-  const { ok, data } = await apiPost('inventory/transfer/', {
-    from: from.value, to: to.value,
-    lines: lines.value.map((l) => ({ item_unit: l.item_unit, quantity: l.quantity, batch: spills(l) ? null : l.batch })),
-  })
+  const payload = { from: from.value, lines: lines.value.map((l) => ({ item_unit: l.item_unit, quantity: l.quantity, batch: spills(l) ? null : l.batch })) }
+  const { ok, data } = props.department
+    ? await apiPost('inventory/department-writeoff/', { ...payload, department: departmentId.value, reason: reason.value })
+    : await apiPost('inventory/transfer/', { ...payload, to: to.value })
   saving.value = false
   if (!ok) return (error.value = Object.values(fieldErrors(data))[0] || 'Не удалось переместить')
-  $q.notify({ type: 'positive', message: `Перемещено: документ № ${data.number}` })
+  $q.notify({ type: 'positive', message: `${props.department ? 'Списано на отделение' : 'Перемещено'}: документ № ${data.number}` })
   lines.value = []
+  reason.value = ''
   scanner.value?.focus()
 }
 
 onMounted(async () => {
+  if (props.department) apiGet('inventory/departments/?active=true').then(({ data }) => (departments.value = data ?? []))
   warehouses.value = (await apiGet('inventory/warehouses/?active=true')).data ?? []
   from.value = warehouses.value.find((w) => w.kind === 'storage')?.id ?? null
   to.value = warehouses.value.find((w) => w.kind === 'sale')?.id ?? null
