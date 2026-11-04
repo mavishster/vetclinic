@@ -701,6 +701,29 @@ def save_user_account(
 # --- Использование записей ---------------------------------------------------------
 
 
+def _live(model: Any) -> Any:
+    """Записи, которые действительно «держат» ссылку — без следов отменённого:
+
+    - движения журналов (склад, касса, баланс) — без отменённых пар: откатили документ —
+      запись и её обратная запись в сумме дают ноль и использованием не считаются;
+    - строки удалённых документов (накладной, счёта) — не считаются: документ удалён.
+    """
+    from core.models import LedgerEntry
+
+    queryset = model._default_manager.all()
+    if issubclass(model, LedgerEntry):
+        queryset = queryset.effective()
+    for parent in model._meta.fields:
+        target = parent.related_model if parent.is_relation and parent.many_to_one else None
+        if (
+            target is not None
+            and target is not model
+            and any(f.name == "is_deleted" for f in target._meta.fields)
+        ):
+            queryset = queryset.exclude(**{f"{parent.name}__is_deleted": True})
+    return queryset
+
+
 def usage_records(record: Any, skip: Any = None) -> dict[Any, set[Any]]:
     """Какие записи ссылаются на эту: {модель: {pk, …}} — по всем таблицам, в том числе по
     связям без обратного имени (related_name="+"). Журналы истории не считаются.
@@ -722,9 +745,7 @@ def usage_records(record: Any, skip: Any = None) -> dict[Any, set[Any]]:
             continue
         if skip is not None and skip(model, field.name):
             continue
-        pks = set(
-            model._default_manager.filter(**{field.name: record}).values_list("pk", flat=True)
-        )
+        pks = set(_live(model).filter(**{field.name: record}).values_list("pk", flat=True))
         if pks:
             result.setdefault(model, set()).update(pks)
     return result

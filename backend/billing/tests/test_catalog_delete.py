@@ -73,3 +73,26 @@ def test_item_in_combination_is_used_but_combination_itself_can_be_deleted(api) 
         api.delete(f"/api/catalog/items/{combo.pk}/").status_code == 204
     )  # строки самой комбинации — её части
     assert api.delete(f"/api/catalog/items/{part.pk}/").status_code == 204  # теперь свободна
+
+
+def test_item_with_rolled_back_and_deleted_documents_can_be_deleted(api) -> None:
+    from core import services as core
+    from inventory import services as inventory
+    from inventory.models import StockDocument, Warehouse
+
+    item = services.save_item(
+        Item(kind=Kind.GOODS, name="Фелиферон", group=ItemGroup.objects.get(name="Препараты"), base_unit=Unit.objects.get(name="шт.")),
+        [{"unit": Unit.objects.get(name="шт."), "price": D("700")}],
+    )  # fmt: skip
+    receipt = inventory.save_document(StockDocument(kind="receipt", warehouse=Warehouse.objects.get(name="Основной склад")),
+                                      [{"item_unit": item.units.get(), "quantity": D("5"), "price": D("400")}])  # fmt: skip
+    core.execute_document(receipt)
+    assert (
+        api.get(f"/api/catalog/items/{item.pk}/usage/").json()["total"] > 0
+    )  # приход проведён — используется
+
+    core.rollback_document(receipt)
+    receipt.delete()  # откатили и удалили накладную
+
+    assert api.get(f"/api/catalog/items/{item.pk}/usage/").json() == {"total": 0, "places": []}
+    assert api.delete(f"/api/catalog/items/{item.pk}/").status_code == 204
