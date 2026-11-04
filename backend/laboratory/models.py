@@ -33,6 +33,8 @@ class AnalyteNorm(models.Model):
     high = models.DecimalField("до", max_digits=12, decimal_places=4, null=True, blank=True)
 
     class Meta:
+        verbose_name = "норма показателя"
+        verbose_name_plural = "нормы показателей"
         default_permissions = ()
         constraints = [
             models.UniqueConstraint(fields=["analyte", "species"], name="laboratory_norm_unique")
@@ -106,6 +108,8 @@ class LabValue(models.Model):
     position = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
+        verbose_name = "значение анализа"
+        verbose_name_plural = "значения анализов"
         default_permissions = ()  # часть результата
         ordering = ["position", "id"]
 

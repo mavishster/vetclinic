@@ -87,6 +87,8 @@ class VisitDiagnosis(models.Model):
     kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.PRELIMINARY)
 
     class Meta:
+        verbose_name = "диагноз приёма"
+        verbose_name_plural = "диагнозы в медкарте"
         default_permissions = ()  # часть записи медкарты
         ordering = ["id"]
 
@@ -107,6 +109,8 @@ class VisitItem(models.Model):
     section = models.CharField(max_length=16, choices=Section.choices)
 
     class Meta:
+        verbose_name = "позиция из медкарты"
+        verbose_name_plural = "позиции, отмеченные в медкарте"
         default_permissions = ()  # часть записи медкарты
         ordering = ["section", "id"]
 
@@ -284,6 +288,8 @@ class Prescription(models.Model):
     position = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
+        verbose_name = "назначение"
+        verbose_name_plural = "назначения в медкарте"
         default_permissions = ()  # часть записи медкарты
         ordering = ["position", "id"]
 

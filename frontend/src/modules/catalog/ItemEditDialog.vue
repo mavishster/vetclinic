@@ -112,6 +112,8 @@
         </q-card-section>
 
         <q-card-actions align="right" class="q-px-md q-pb-md">
+          <q-btn v-if="item?.id && can('catalog.delete_item')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
+          <q-space />
           <q-btn flat label="Отмена" v-close-popup />
           <q-btn v-if="canSave" type="submit" color="primary" unelevated label="Сохранить" :loading="saving" />
         </q-card-actions>
@@ -165,6 +167,7 @@
 </template>
 
 <script setup>
+import { deleteItem } from './deleteItem'
 import { computed, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { apiGet, apiPatch, apiPost, existingByName, fieldErrors, openPostedFile } from '@/api'
@@ -179,6 +182,15 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'saved'])
 const $q = useQuasar()
+
+// Удалить — только если позиция нигде не использовалась; иначе — предложим сделать неактивной.
+async function remove() {
+  const result = await deleteItem($q, props.item)
+  if (!result) return
+  $q.notify({ type: 'positive', message: result === 'deleted' ? 'Позиция удалена' : 'Позиция стала неактивной' })
+  emit('saved', null)
+  emit('update:modelValue', false)
+}
 const ROUNDING = [
   { label: 'копеек', value: '0.01' },
   { label: 'рубля', value: '1.00' },

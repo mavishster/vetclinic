@@ -279,6 +279,8 @@ class PetOwnership(models.Model):
     date_to = models.DateField("по", null=True, blank=True)
 
     class Meta:
+        verbose_name = "владение питомцем"
+        verbose_name_plural = "история владельцев"
         default_permissions = ()  # часть карточки питомца
         ordering = ["-date_from", "-id"]
 
@@ -295,6 +297,8 @@ class PetWeight(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        verbose_name = "вес питомца"
+        verbose_name_plural = "история веса"
         default_permissions = ()  # часть карточки питомца
         ordering = ["-date", "-created_at"]
 

@@ -448,3 +448,37 @@ def sale_unit(item: Any) -> ItemUnit | None:
     """Единица для продажи по умолчанию: совпадающая с единицей учёта, иначе первая продаваемая."""
     units = ItemUnit.objects.filter(item=item, for_sale=True)
     return units.filter(unit_id=F("item__base_unit_id")).first() or units.order_by("ratio").first()
+
+
+def item_usage(item: Item) -> list[tuple[str, int]]:
+    """Где используется позиция прайса (и её единицы): счета, склад, медкарта, комбинации…
+
+    Собственные части позиции не считаются: её единицы и строки самой комбинации.
+    """
+
+    def own(model: Any, field: str) -> bool:
+        return model is ItemUnit or (model is CombinationLine and field == "combination")
+
+    # Строка счёта ссылается и на позицию, и на её единицу — считаем каждую запись один раз.
+    records = core.usage_records(item, skip=own)
+    for unit in ItemUnit.all_objects.filter(item=item):
+        for model, pks in core.usage_records(unit).items():
+            records.setdefault(model, set()).update(pks)
+    totals = {str(model._meta.verbose_name_plural): len(pks) for model, pks in records.items()}
+    return sorted(totals.items(), key=lambda pair: -pair[1])
+
+
+@transaction.atomic
+def delete_item(item: Item) -> None:
+    """Удалить позицию, которой ещё нигде не пользовались. Иначе — CatalogError со списком мест:
+    такую позицию можно только сделать неактивной (история сохраняется)."""
+    used = item_usage(item)
+    if used:
+        places = ", ".join(f"{title} — {count}" for title, count in used)
+        raise CatalogError(
+            f"«{item}» уже используется: {places}. Удалить нельзя — снимите галочку «Активен»: "
+            "позиция перестанет предлагаться для выбора, а история сохранится."
+        )
+    CombinationLine.objects.filter(combination=item).delete()
+    item.units.all().delete()
+    item.delete()

@@ -700,20 +700,50 @@ def save_user_account(
 # --- Использование записей ---------------------------------------------------------
 
 
+def usage_records(record: Any, skip: Any = None) -> dict[Any, set[Any]]:
+    """Какие записи ссылаются на эту: {модель: {pk, …}} — по всем таблицам, в том числе по
+    связям без обратного имени (related_name="+"). Журналы истории не считаются.
+
+    skip(model, field_name) → True — связь не считать (например, собственные части записи:
+    единицы товара, строки самой комбинации).
+    """
+    result: dict[Any, set[Any]] = {}
+    for relation in record._meta.get_fields(include_hidden=True):
+        if not (
+            relation.auto_created
+            and not relation.concrete
+            and (relation.one_to_many or relation.one_to_one)
+        ):
+            continue
+        model = relation.related_model
+        field = relation.field
+        if model._meta.model_name.startswith("historical") or not field.concrete:
+            continue
+        if skip is not None and skip(model, field.name):
+            continue
+        pks = set(
+            model._default_manager.filter(**{field.name: record}).values_list("pk", flat=True)
+        )
+        if pks:
+            result.setdefault(model, set()).update(pks)
+    return result
+
+
+def usage_summary(record: Any, skip: Any = None) -> list[tuple[str, int]]:
+    """Где используется запись: [(что, сколько)] — каждая ссылающаяся запись один раз."""
+    return [
+        (str(model._meta.verbose_name_plural), len(pks))
+        for model, pks in usage_records(record, skip).items()
+    ]
+
+
 def usage_count(record: Any) -> int:
     """Сколько действующих записей ссылаются на эту (журналы истории не считаются).
 
     Нужен, чтобы не удалить справочник, которым пользуются: группу с товарами,
     породу у питомцев, город у клиентов.
     """
-    total = 0
-    for relation in record._meta.related_objects:
-        model = relation.related_model
-        if model._meta.model_name.startswith("historical") or not relation.field.concrete:
-            continue
-        manager = model._default_manager
-        total += manager.filter(**{relation.field.name: record}).count()
-    return total
+    return sum(count for _, count in usage_summary(record))
 
 
 # --- Контрагенты -------------------------------------------------------------------

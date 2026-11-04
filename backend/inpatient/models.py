@@ -127,6 +127,8 @@ class TreatmentPlan(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        verbose_name = "назначение в стационаре"
+        verbose_name_plural = "назначения в стационаре"
         default_permissions = ()  # часть госпитализации
         ordering = ["created_at", "id"]
 
@@ -163,6 +165,8 @@ class TreatmentTask(models.Model):
     quantity = QuantityField("израсходовано (для счёта)", null=True, blank=True)
 
     class Meta:
+        verbose_name = "отметка в листе назначений"
+        verbose_name_plural = "отметки в листе назначений"
         default_permissions = ()  # часть госпитализации
         ordering = ["scheduled_at", "id"]
 
@@ -192,6 +196,8 @@ class Observation(models.Model):
     )
 
     class Meta:
+        verbose_name = "наблюдение"
+        verbose_name_plural = "наблюдения в стационаре"
         default_permissions = ()  # часть госпитализации
         ordering = ["-at"]
 

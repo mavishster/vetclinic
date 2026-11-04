@@ -12,7 +12,6 @@ from rest_framework.response import Response
 
 from catalog import services
 from catalog.models import CombinationLine, Item, ItemGroup, ItemUnit, Kind, Unit
-from core import services as core
 from core.api.directories import DirectoryViewSet
 from core.api.permissions import can_view_cost
 
@@ -179,19 +178,24 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         return Response(self.get_serializer(item).data)
 
     def destroy(self, request: Request, *args: Any, **kwargs: Any) -> Response:
-        """Удалить можно только то, чем не пользовались (склад, медкарта, комбинации…);
+        """Удалить можно только то, чем не пользовались (счета, склад, медкарта, комбинации…);
         иначе — сделать неактивным: позиция пропадёт из выбора, а история сохранится."""
-        item = self.get_object()
-        used = core.usage_count(item) + sum(core.usage_count(unit) for unit in item.units.all())
-        if used:
-            raise ValidationError(
-                {"non_field_errors": [
-                    f"«{item}» уже используется (записей: {used}) — удалить нельзя. "
-                    "Снимите галочку «Активен»: позиция перестанет предлагаться для выбора."
-                ]}
-            )  # fmt: skip
-        item.delete()
+        try:
+            services.delete_item(self.get_object())
+        except services.CatalogError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
         return Response(status=204)
+
+    @action(detail=True, methods=["get"])
+    def usage(self, request: Request, pk: str | None = None) -> Response:
+        """Где используется позиция — перед удалением: [{"title", "count"}]."""
+        places = services.item_usage(self.get_object())
+        return Response(
+            {
+                "total": sum(c for _, c in places),
+                "places": [{"title": t, "count": c} for t, c in places],
+            }
+        )
 
     @action(detail=True, methods=["get"])
     def combinations(self, request: Request, pk: str | None = None) -> Response:

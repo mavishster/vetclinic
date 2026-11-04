@@ -150,6 +150,8 @@ class InvoiceLine(models.Model):
     position = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
+        verbose_name = "строка счёта"
+        verbose_name_plural = "строки счетов"
         default_permissions = ()  # часть счёта
         ordering = ["position", "id"]
 
@@ -166,6 +168,8 @@ class InvoiceLineBatch(models.Model):
     cost_per_base = MoneyField("себестоимость единицы")
 
     class Meta:
+        verbose_name = "списание по партии"
+        verbose_name_plural = "списания по партиям в счетах"
         default_permissions = ()
 
     def __str__(self) -> str:
@@ -186,6 +190,8 @@ class InvoicePayment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        verbose_name = "оплата счёта"
+        verbose_name_plural = "оплаты счетов"
         default_permissions = ()  # часть счёта
         ordering = ["created_at", "id"]
 

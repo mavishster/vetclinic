@@ -147,6 +147,8 @@ class StockLine(models.Model):
     position = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
+        verbose_name = "строка складского документа"
+        verbose_name_plural = "строки складских документов"
         default_permissions = ()  # часть документа
         ordering = ["position", "id"]
 
