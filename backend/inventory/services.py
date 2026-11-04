@@ -662,7 +662,8 @@ def turnover(
     zone = timezone.get_current_timezone()
     start = datetime.combine(date_from, datetime.min.time(), zone)
     end = datetime.combine(date_to, datetime.min.time(), zone) + timedelta(days=1)
-    movements = StockMovement.objects.filter(posted_at__lt=end)
+    # Откатанные документы (и их обратные записи) в оборот не попадают.
+    movements = StockMovement.objects.effective().filter(posted_at__lt=end)
     if warehouse:
         movements = movements.filter(warehouse=warehouse)
     for word in search.split():

@@ -149,3 +149,15 @@ def test_report_api_excel_and_cost_hidden(data) -> None:
     assert turnover.status_code == 200
     assert bad.status_code == 400
     assert viewer.get("/api/cash/reports/money/").status_code == 403
+
+
+def test_refunded_payment_vanishes_from_money_report(data) -> None:
+    from cash.models import Payment
+
+    payment = Payment.objects.filter(status="executed").first()
+    core.rollback_document(payment)  # оплату вернули (смена открыта)
+    today = timezone.localdate()
+
+    money = cash.money_by_day(today, today)
+
+    assert money == [] or (money[0]["cash_in"], money[0]["out"]) == (D("0"), D("0"))

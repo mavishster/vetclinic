@@ -189,6 +189,8 @@ const lineAmount = (line) => {
 
 // --- Скидки: лимит по типу позиции и не ниже себестоимости (сервер проверяет то же) ---
 const showCost = can('catalog.view_cost')
+// Остаток в подборе — склада этого счёта (по умолчанию сервер берёт оперативный).
+const warehouseParam = () => (form.value.warehouse ? `&warehouse=${form.value.warehouse}` : '')
 const clinic = ref({ max_discount_goods: 5, max_discount_services: 10 })
 const kindPercent = ref({ goods: '', service: '' })
 const isManual = (line) => line.item_unit && line.list_price !== null && line.list_price !== undefined && Number(line.price) !== Number(line.list_price)
@@ -280,7 +282,7 @@ async function scan() {
   const code = barcode.value.trim()
   barcode.value = ''
   if (!code) return
-  const { data } = await apiGet(`billing/invoices/lookup/?barcode=${encodeURIComponent(code)}`)
+  const { data } = await apiGet(`billing/invoices/lookup/?barcode=${encodeURIComponent(code)}${warehouseParam()}`)
   if (!data?.length) return $q.notify({ type: 'warning', message: `Позиция со штрихкодом ${code} не найдена` })
   const same = form.value.lines.find((l) => l.item_unit === data[0].item_unit)
   if (same) same.quantity = String(Number(same.quantity) + 1)
@@ -289,7 +291,7 @@ async function scan() {
 
 async function search(text, update, abort) {
   if (text.trim().length < 2) return update(() => (found.value = []))
-  const { ok, data } = await apiGet(`billing/invoices/lookup/?search=${encodeURIComponent(text)}`)
+  const { ok, data } = await apiGet(`billing/invoices/lookup/?search=${encodeURIComponent(text)}${warehouseParam()}`)
   if (!ok) return abort()
   update(() => (found.value = data.map((o) => ({
     ...o, key: o.item_unit || o.item,

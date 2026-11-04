@@ -392,6 +392,15 @@ class LedgerQuerySet(models.QuerySet[_M]):
     def delete(self) -> tuple[int, dict[str, int]]:
         raise LedgerError("Записи журнала не удаляются: исправление — обратной записью.")
 
+    def effective(self) -> "LedgerQuerySet[_M]":
+        """Без отменённых пар: ни отменённой записи, ни её обратной записи.
+
+        Для отчётов о движении (оборот товара, деньги по дням): откатили документ или
+        вернули оплату — в отчёте этого как будто не было. Остатки от этого не меняются:
+        пара в сумме даёт ноль.
+        """
+        return self.filter(reversal_of__isnull=True, reversed_by__isnull=True)
+
 
 class LedgerEntry(models.Model):
     """Основа журналов движений: склад, касса, баланс клиента, долги поставщикам.

@@ -530,7 +530,14 @@ def client_invoices(client: Any) -> Any:
 
 
 def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dict[str, Any]]:
-    """Позиции для счёта: по штрихкоду или словам названия; с ценой и остатком."""
+    """Позиции для счёта: по штрихкоду или словам названия; с ценой и остатком.
+
+    Остаток — склада счёта, а если он не задан — склада продажи (оперативного):
+    продают только с него, остаток основного склада здесь не нужен.
+    """
+    if warehouse is None:
+        default = inventory.default_sale_warehouse()
+        warehouse = default.pk if default else None
     if barcode:
         unit = catalog.find_by_barcode(barcode)
         units = [unit] if unit is not None else []

@@ -150,3 +150,30 @@ def test_transfer_api(main, operative, drug) -> None:
     assert scan["batches"][0]["series"] == "EARLY"
     assert done.status_code == 201 and inventory.available(drug, operative) == D("10")
     assert unknown.status_code == 400
+
+
+def test_lookup_shows_operative_stock_not_main(main, operative, drug) -> None:
+    found = billing.lookup("фелиферон")
+    pack = next(r for r in found if r["unit"] == "упак.")
+    assert pack["stock"] in ("0", "0.000", "0E-3") or D(pack["stock"]) == 0  # всё лежит на основном
+
+    inventory.quick_transfer(
+        main, operative, [{"item_unit": drug.units.get(unit__name="упак."), "quantity": D("1")}]
+    )
+
+    pack = next(r for r in billing.lookup("фелиферон") if r["unit"] == "упак.")
+    assert D(pack["stock"]) == D("1")
+
+
+def test_rolled_back_documents_vanish_from_turnover(main, operative, drug) -> None:
+    from django.utils import timezone
+
+    doc = inventory.quick_transfer(
+        main, operative, [{"item_unit": drug.units.get(unit__name="упак."), "quantity": D("1")}]
+    )
+    core.rollback_document(doc)
+    today = timezone.localdate()
+
+    rows = {r["name"]: r for r in inventory.turnover(today, today, operative)}
+
+    assert "Фелиферон" not in rows  # перемещение откатили — в обороте его нет

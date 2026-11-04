@@ -313,9 +313,10 @@ def money_by_day(date_from: Any, date_to: Any) -> list[dict[str, Any]]:
     # Поступило — только оплаты клиентов (внесение размена и перемещения между кассами —
     # не выручка); выдано — возвраты, возврат аванса и расходы, без перемещений.
     payment = ContentType.objects.get_for_model(Payment)
-    is_payment = Q(document_type=payment, amount__gt=0, reversal_of=None)
+    is_payment = Q(document_type=payment, amount__gt=0)
     rows = (
-        CashMovement.objects.filter(posted_at__gte=start, posted_at__lt=end)
+        CashMovement.objects.effective()
+        .filter(posted_at__gte=start, posted_at__lt=end)
         .annotate(day=TruncDate("posted_at", tzinfo=zone))
         .values("day")
         .annotate(
