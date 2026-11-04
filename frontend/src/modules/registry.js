@@ -18,6 +18,7 @@ export default [
       { title: 'Счета', icon: 'receipt_long', to: '/invoices', perm: 'billing.view_invoice' },
       { title: 'Касса', icon: 'point_of_sale', to: '/cash', perm: 'cash.view_cashmovement' },
       { title: 'Остатки', icon: 'inventory_2', to: '/inventory/stock', perm: 'inventory.view_stockmovement' },
+      { title: 'На оперативный', icon: 'move_down', to: '/inventory/transfer', perm: 'inventory.add_stockdocument' },
       { title: 'Документы склада', icon: 'local_shipping', to: '/inventory/documents', perm: 'inventory.view_stockdocument' },
       { title: 'Товары и услуги', icon: 'sell', to: '/catalog', perm: 'catalog.view_item' },
       { title: 'Стационар', icon: 'local_hotel', to: '/inpatient', perm: 'inpatient.view_hospitalization' },

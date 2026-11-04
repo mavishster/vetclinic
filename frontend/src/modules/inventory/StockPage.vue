@@ -6,10 +6,34 @@
     </div>
     <q-tabs v-model="tab" dense align="left" no-caps active-color="primary" indicator-color="primary" class="q-mb-md">
       <q-tab name="stock" label="Остатки" />
+      <q-tab name="replenish" :label="`Нужно переместить${replenish.length ? ` (${replenish.length})` : ''}`" />
       <q-tab name="low" label="Нужно заказать" />
       <q-tab name="negative" :label="`В минусе${negative.length ? ` (${negative.length})` : ''}`" />
     </q-tabs>
     <LowStock v-if="tab === 'low'" :warehouses="warehouses" />
+    <template v-else-if="tab === 'replenish'">
+      <div class="row items-center q-mb-sm">
+        <div class="text-caption text-grey-7 col">
+          На оперативном складе товар в минусе (продали больше, чем переместили) или ниже минимума. Переместите с основного.
+        </div>
+        <q-btn v-if="can('inventory.add_stockdocument')" color="primary" unelevated icon="move_down" label="Перемещение" to="/inventory/transfer" />
+      </div>
+      <q-markup-table flat bordered dense>
+        <thead><tr><th class="text-left">Товар</th><th class="text-left">Склад</th><th>Сейчас</th><th>Минимум</th><th>Переместить</th><th>Есть на основном</th></tr></thead>
+        <tbody>
+          <tr v-for="r in replenish" :key="r.item + r.warehouse">
+            <td class="text-weight-medium">{{ r.item_name }}</td><td>{{ r.warehouse_name }}</td>
+            <td class="text-right" :class="Number(r.qty) < 0 ? 'text-negative' : ''">{{ Number(r.qty) }} {{ r.unit }}</td>
+            <td class="text-right">{{ r.min_qty ? `${Number(r.min_qty)} ${r.unit}` : '' }}</td>
+            <td class="text-right text-weight-medium">{{ Number(r.need) }} {{ r.unit }}</td>
+            <td class="text-right" :class="Number(r.available) < Number(r.need) ? 'text-negative' : 'text-positive'">
+              {{ Number(r.available) }} {{ r.unit }}<span v-if="Number(r.available) < Number(r.need)"> — нужно заказать</span>
+            </td>
+          </tr>
+          <tr v-if="!replenish.length"><td colspan="6" class="text-grey-7">Перемещать ничего не нужно</td></tr>
+        </tbody>
+      </q-markup-table>
+    </template>
     <template v-else-if="tab === 'negative'">
       <div class="text-caption text-grey-7 q-mb-sm">Продано больше, чем оприходовано. Минус закроется следующим приходом — оформите его.</div>
       <q-list bordered separator class="rounded-borders">
@@ -48,7 +72,8 @@ import { useRoute } from 'vue-router'
 import LowStock from './LowStock.vue'
 
 const route = useRoute()
-const tab = ref(['low', 'negative'].includes(route.query.tab) ? route.query.tab : 'stock')
+const tab = ref(['low', 'negative', 'replenish'].includes(route.query.tab) ? route.query.tab : 'stock')
+const replenish = ref([])
 const negative = ref([])
 const rows = ref([])
 const totals = ref({ cost: 0 })
@@ -88,6 +113,7 @@ async function load() {
 
 onMounted(async () => {
   apiGet('inventory/stock/negative/').then(({ data }) => (negative.value = data ?? []))
+  apiGet('inventory/stock/replenish/').then(({ data }) => (replenish.value = data ?? []))
   warehouses.value = (await apiGet('inventory/warehouses/?active=true')).data ?? []
   load()
 })

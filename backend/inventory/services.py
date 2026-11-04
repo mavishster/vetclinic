@@ -6,8 +6,9 @@
 Другие модули обращаются к модулю только через функции этого файла.
 """
 
+import re
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, TypedDict
 
@@ -606,6 +607,7 @@ class StockSummary(TypedDict):
     expiring: int
     low: int
     negative: int
+    replenish: int
 
 
 def summary(days: int = 90) -> StockSummary:
@@ -626,6 +628,7 @@ def summary(days: int = 90) -> StockSummary:
         "expiring": expiring,
         "low": len(low_stock()),
         "negative": len(negative_stock()),
+        "replenish": len(to_replenish()),
     }
 
 
@@ -675,10 +678,16 @@ def turnover(
         if not (opening or incoming or outgoing):
             continue
         result.append(
-            {"item": str(r["item"]), "name": r["item__name"], "unit": r["item__base_unit__name"],
-             "opening": opening, "incoming": incoming, "outgoing": outgoing,
-             "closing": opening + incoming - outgoing}
-        )  # fmt: skip
+            {
+                "item": str(r["item"]),
+                "name": r["item__name"],
+                "unit": r["item__base_unit__name"],
+                "opening": opening,
+                "incoming": incoming,
+                "outgoing": outgoing,
+                "closing": opening + incoming - outgoing,
+            }
+        )
     return result
 
 
@@ -704,3 +713,199 @@ def expected_cost(item: Any, warehouse: Any = None) -> Decimal | None:
     )
     cost: Decimal | None = last.cost_per_base if last else None
     return cost
+
+
+# --- Доступ к складам ---------------------------------------------------------------
+
+
+def visible_warehouses(user: Any) -> QuerySet[Warehouse]:
+    """Склады, которые видит сотрудник: без ограничения ролей — все; иначе — если у него
+    есть одна из ролей склада. Суперпользователь видит все."""
+    warehouses = Warehouse.objects.all()
+    if getattr(user, "is_superuser", False):
+        return warehouses
+    roles = list(user.groups.values_list("pk", flat=True)) if user and user.is_authenticated else []
+    return warehouses.filter(Q(access_roles=None) | Q(access_roles__in=roles)).distinct()
+
+
+def storage_warehouses() -> QuerySet[Warehouse]:
+    return Warehouse.objects.filter(is_active=True, kind=Warehouse.Kind.STORAGE)
+
+
+# --- Пополнение оперативного склада -------------------------------------------------
+
+
+class ReplenishRow(TypedDict):
+    item: str
+    item_name: str
+    unit: str
+    warehouse: str
+    warehouse_name: str
+    qty: Decimal  # на складе продажи (может быть в минусе — продали больше, чем переместили)
+    min_qty: Decimal | None
+    need: Decimal  # сколько переместить, чтобы выйти в ноль / до минимума
+    available: Decimal  # есть на складах хранения
+
+
+def to_replenish() -> list[ReplenishRow]:
+    """«Нужно переместить»: на складе продажи товар в минусе или ниже минимума, а на складе
+    хранения он есть (или нет — тогда «нужно переместить» превращается в «нужно заказать»)."""
+    rows: list[ReplenishRow] = []
+    storage = list(storage_warehouses().values_list("pk", flat=True))
+    for warehouse in sale_warehouses():
+        stock = {
+            r["item"]: r["qty"]
+            for r in StockMovement.objects.filter(warehouse=warehouse)
+            .values("item")
+            .annotate(qty=Sum("qty_base"))
+        }
+        minimums = {m.item_id: m.min_qty for m in MinStock.objects.filter(warehouse=warehouse)}
+        for item_id in set(stock) | set(minimums):
+            qty = stock.get(item_id, ZERO)
+            min_qty = minimums.get(item_id)
+            need = max((min_qty or ZERO) - qty, -qty, ZERO)
+            if need <= 0:
+                continue
+            item = catalog.get_item(item_id)
+            if item is None:
+                continue
+            available = StockMovement.objects.filter(
+                item_id=item_id, warehouse__in=storage
+            ).aggregate(t=Sum("qty_base"))["t"]
+            rows.append(
+                {
+                    "item": str(item_id),
+                    "item_name": item.name,
+                    "unit": item.base_unit.name,
+                    "warehouse": str(warehouse.pk),
+                    "warehouse_name": warehouse.name,
+                    "qty": qty,
+                    "min_qty": min_qty,
+                    "need": need,
+                    "available": available or ZERO,
+                }
+            )
+    rows.sort(key=lambda r: r["item_name"])
+    return rows
+
+
+# --- Перемещение по сканеру ---------------------------------------------------------
+
+_GS = "\x1d"
+
+
+def parse_gs1(code: str) -> dict[str, Any] | None:
+    """Код GS1 DataMatrix (лекарства): GTIN (01), срок годности (17, ГГММДД), серия (10).
+
+    Понимает и вариант со скобками «(01)…(17)…(10)…», и «сплошной» с разделителем GS.
+    Обычный штрихкод (EAN-13) — не GS1, возвращает None.
+    """
+    raw = code.strip()
+    parts: dict[str, str] = {}
+    if raw.startswith("("):
+        parts = dict(re.findall(r"\((\d{2,4})\)([^(]*)", raw))
+    elif raw.startswith("01") and len(raw) >= 16 and raw[2:16].isdigit():
+        rest = raw.replace("]d2", "")
+        while rest:
+            ai = rest[:2]
+            if ai == "01":
+                parts["01"], rest = rest[2:16], rest[16:]
+            elif ai == "17" or ai == "11":
+                parts[ai], rest = rest[2:8], rest[8:]
+            elif ai in ("10", "21"):
+                value, _, rest = rest[2:].partition(_GS)
+                parts[ai] = value
+            else:
+                break
+            rest = rest.lstrip(_GS)
+    else:
+        return None
+    gtin = parts.get("01")
+    if not gtin:
+        return None
+    expiry = None
+    if len(parts.get("17", "")) == 6:
+        yy, mm, dd = int(parts["17"][:2]), int(parts["17"][2:4]), int(parts["17"][4:6])
+        try:
+            expiry = date(2000 + yy, mm, dd) if dd else date(2000 + yy, mm, 28)
+        except ValueError:
+            expiry = None
+    return {
+        "gtin": gtin,
+        "ean": gtin[1:] if gtin.startswith("0") else gtin,
+        "batch": parts.get("10", ""),
+        "expiry": expiry,
+    }
+
+
+class ScanResult(TypedDict):
+    item_unit: str
+    item: str
+    item_name: str
+    unit: str
+    ratio: Decimal
+    base_unit: str
+    batches: list[dict[str, Any]]
+    recommended: str | None
+    scanned_batch: str | None
+    scanned_series: str
+    on_target: Decimal
+
+
+def scan_for_transfer(code: str, source: Any, target: Any) -> ScanResult | None:
+    """Что отсканировали для перемещения: товар, его партии на складе-источнике по сроку
+    (ближайший — первым, его и рекомендуем) и сколько уже на складе-получателе.
+
+    Если код — GS1 DataMatrix, серия и срок с упаковки сверяются с партиями.
+    """
+    gs1 = parse_gs1(code)
+    unit = catalog.find_by_barcode(gs1["ean"] if gs1 else code)
+    if unit is None and gs1:
+        unit = catalog.find_by_barcode(gs1["gtin"])
+    if unit is None:
+        return None
+    stock = batch_stock(unit.item, source)
+    batches = [
+        {
+            "batch": str(s.batch.pk),
+            "series": s.batch.series,
+            "expiry_date": s.batch.expiry_date.isoformat() if s.batch.expiry_date else None,
+            "qty_base": s.qty,
+            "qty_unit": (s.qty / unit.ratio).quantize(Decimal("0.001")),
+        }
+        for s in stock
+    ]
+    scanned = None
+    if gs1 and gs1["batch"]:
+        scanned = next((b["batch"] for b in batches if b["series"] == gs1["batch"]), None)
+    return {
+        "item_unit": str(unit.pk),
+        "item": str(unit.item_id),
+        "item_name": unit.item.name,
+        "unit": unit.unit.name,
+        "ratio": unit.ratio,
+        "base_unit": unit.item.base_unit.name,
+        "batches": batches,
+        "recommended": batches[0]["batch"] if batches else None,
+        "scanned_batch": scanned,
+        "scanned_series": gs1["batch"] if gs1 else "",
+        "on_target": available(unit.item, target),
+    }
+
+
+@transaction.atomic
+def quick_transfer(source: Any, target: Any, lines: list[LineData]) -> StockDocument:
+    """Перемещение по сканеру: документ «Перемещение» со строками — создать и сразу провести."""
+    if getattr(source, "pk", source) == getattr(target, "pk", target):
+        raise StockError("Склад-источник и склад-получатель совпадают.")
+    if not lines:
+        raise StockError("Нечего перемещать — отсканируйте товары.")
+    document = save_document(
+        StockDocument(
+            kind=K.TRANSFER,
+            warehouse_id=getattr(source, "pk", source),
+            target_warehouse_id=getattr(target, "pk", target),
+        ),
+        lines,
+    )
+    return core.execute_document(document)

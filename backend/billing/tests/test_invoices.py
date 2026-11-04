@@ -59,7 +59,7 @@ def vial(db):
          {"unit": Unit.objects.get(name="упак."), "ratio": D("5"), "price": D("3500"), "for_purchase": True}],
     )  # fmt: skip
     receipt = inventory.save_document(
-        StockDocument(kind="receipt", warehouse=Warehouse.objects.get(name="Основной склад")),
+        StockDocument(kind="receipt", warehouse=Warehouse.objects.get(name="Оперативный склад")),
         [{"item_unit": item.units.get(unit__name="упак."), "quantity": D("2"), "price": D("2000")}],
     )
     core.execute_document(receipt)
@@ -87,7 +87,7 @@ def test_lines_prices_and_totals(client_, visit_service, vial, doctor) -> None:
         D("2400.00"),
     )
     assert {line.performer_id for line in invoice.lines.all()} == {doctor.pk}
-    assert invoice.warehouse.name == "Основной склад"
+    assert invoice.warehouse.name == "Оперативный склад"
 
 
 def test_price_within_min_max_only(client_, visit_service) -> None:
@@ -282,7 +282,7 @@ def test_negative_sale_uses_last_batch_cost_and_receipt_closes_it(client_, vial)
     assert [r["qty"] for r in inventory.negative_stock()] == [D("-2")]
 
     receipt = inventory.save_document(
-        StockDocument(kind="receipt", warehouse=Warehouse.objects.get(name="Основной склад")),
+        StockDocument(kind="receipt", warehouse=Warehouse.objects.get(name="Оперативный склад")),
         [{"item_unit": item.units.get(unit__name="упак."), "quantity": D("1"), "price": D("2500")}],
     )
     core.execute_document(receipt)

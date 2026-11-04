@@ -101,6 +101,7 @@ def test_inventory_fill_api_returns_expected(api, drug) -> None:
         "expiring": 0,
         "low": 0,
         "negative": 0,
+        "replenish": 0,
     }
 
 

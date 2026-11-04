@@ -65,6 +65,7 @@ const stockCards = computed(() => [
   { title: 'партий истекает за 90 дней', count: stock.value.expiring, icon: 'schedule', color: 'warning', to: '/inventory/stock?expiring=1' },
   { title: 'товаров ниже минимума', count: stock.value.low, icon: 'production_quantity_limits', color: 'primary', to: '/inventory/stock?tab=low' },
   { title: 'товаров в минусе — нужен приход', count: stock.value.negative, icon: 'remove_circle', color: 'negative', to: '/inventory/stock?tab=negative' },
+  { title: 'нужно переместить на оперативный', count: stock.value.replenish, icon: 'move_down', color: 'warning', to: '/inventory/stock?tab=replenish' },
 ])
 const firstName = computed(() => session.user?.full_name.split(' ')[1] || session.user?.username)
 

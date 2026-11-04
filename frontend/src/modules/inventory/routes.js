@@ -11,13 +11,18 @@ export const DOC_KINDS = {
 export default [
   { path: 'inventory/stock', component: () => import('./StockPage.vue'), meta: { perm: 'inventory.view_stockmovement' } },
   { path: 'inventory/documents', component: () => import('./DocumentsPage.vue'), meta: { perm: 'inventory.view_stockdocument' } },
+  { path: 'inventory/transfer', component: () => import('./TransferPage.vue'), meta: { perm: 'inventory.add_stockdocument' } },
   { path: 'inventory/documents/:id', component: () => import('./DocumentPage.vue'), props: true, meta: { perm: 'inventory.view_stockdocument' } },
   {
     path: 'directories/warehouses',
     component: DirectoryPage,
     props: {
       title: 'Склады', endpoint: 'inventory/warehouses/', permission: 'inventory.warehouse',
-      fields: [{ name: 'kind', label: 'Тип', type: 'choice', options: [{ id: 'sale', name: 'Реализация' }, { id: 'storage', name: 'Хранение' }] }],
+      fields: [
+        { name: 'kind', label: 'Назначение', type: 'choice', options: [{ id: 'sale', name: 'Продажа (оперативный)' }, { id: 'storage', name: 'Хранение (основной)' }] },
+        { name: 'access_roles', label: 'Видят роли', type: 'multi', endpoint: 'core/roles/', emptyText: 'все',
+          hint: 'Пусто — склад видят все, у кого есть право на склад. Иначе — только эти роли' },
+      ],
     },
     meta: { perm: 'inventory.view_warehouse' },
   },

@@ -372,6 +372,11 @@ def save_invoice(invoice: Invoice, lines: list[LineData] | None = None) -> Invoi
         raise InvoiceError("Питомец принадлежит другому клиенту.")
     if invoice.warehouse_id is None:
         invoice.warehouse = inventory.default_sale_warehouse()
+    elif not inventory.sale_warehouses().filter(pk=invoice.warehouse_id).exists():
+        raise InvoiceError(
+            "По счёту товар списывается только со склада продажи (оперативного), "
+            "а не со склада хранения."
+        )
     invoice.save()
     if lines is not None:
         invoice.lines.all().delete()

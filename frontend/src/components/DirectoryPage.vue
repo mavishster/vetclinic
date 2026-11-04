@@ -59,6 +59,10 @@
               <q-input v-else-if="field.type === 'number'" v-model="editing[field.name]" type="number" step="any"
                 outlined :label="field.label" :hint="field.hint" clearable
                 :error="!!errors[field.name]" :error-message="errors[field.name]" />
+              <!-- Несколько значений (например, роли, которым виден склад) -->
+              <q-select v-else-if="field.type === 'multi'" v-model="editing[field.name]" :options="options[field.name]" option-value="id"
+                :option-label="optionLabel" emit-value map-options multiple use-chips outlined :label="field.label" :hint="field.hint"
+                :error="!!errors[field.name]" :error-message="errors[field.name]" />
               <q-select v-else v-model="editing[field.name]" :options="options[field.name]" option-value="id"
                 :option-label="optionLabel" emit-value map-options outlined :label="field.label"
                 :error="!!errors[field.name]" :error-message="errors[field.name]" />
@@ -124,6 +128,7 @@ function cellValue(field, row) {
   if (field.type === 'time') return value ? value.slice(0, 5) : ''
   if (field.type === 'text') return value || ''
   if (field.type === 'color') return value ? '■' : ''
+  if (field.type === 'multi') return (value || []).map((id) => optionName(field, id)).join(', ') || field.emptyText || ''
   return optionName(field, value)
 }
 const columns = [
@@ -152,7 +157,7 @@ async function load() {
 }
 
 async function loadOptions() {
-  for (const field of listFields) {
+  for (const field of props.fields.filter((f) => !f.type || ['select', 'choice', 'multi'].includes(f.type))) {
     if (field.type === 'choice') {
       options[field.name] = field.options
       continue
@@ -177,6 +182,7 @@ function openEditor(row = null) {
     if (f.type === 'checkbox') return f.default ?? false
     if (f.type === 'text') return ''
     if (f.type === 'color') return '#24566a'
+    if (f.type === 'multi') return []
     return filters[f.name] ?? (f.type === 'choice' ? f.options[0].id : null)
   }
   editing.value = row ? { ...row } : Object.fromEntries(selectFields.map((f) => [f.name, empty(f)]))

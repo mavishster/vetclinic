@@ -14,7 +14,12 @@ from core.models import BaseModel, Directory, Document, LedgerEntry
 
 
 class Warehouse(Directory):
-    """Склад. По счетам товар списывается только со складов реализации."""
+    """Склад. По счетам товар списывается только со складов реализации (оперативный),
+    склад хранения (основной) пополняет их перемещениями.
+
+    access_roles — какие роли видят склад (остатки, документы, отчёты). Пусто — все,
+    у кого есть право на склад.
+    """
 
     class Kind(models.TextChoices):
         SALE = "sale", "реализация"
@@ -28,6 +33,14 @@ class Warehouse(Directory):
         null=True,
         blank=True,
         related_name="+",
+    )
+
+    access_roles = models.ManyToManyField(
+        "auth.Group",
+        verbose_name="видят роли",
+        blank=True,
+        related_name="+",
+        help_text="Пусто — склад видят все, у кого есть право на склад",
     )
 
     class Meta(Directory.Meta):
