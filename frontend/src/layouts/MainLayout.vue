@@ -32,11 +32,21 @@
           <!-- Сворачиваемый раздел (Склад, Справочники): щелчок по заголовку -->
           <q-expansion-item v-if="section.collapsible" :model-value="isOpen(section)" :label="section.title" :icon="section.icon"
             header-class="text-weight-medium" :content-inset-level="0.3" @update:model-value="toggle(section, $event)">
-            <q-item v-for="item in section.items" :key="item.title" :to="item.to" clickable exact dense
-              active-class="text-primary text-weight-medium">
-              <q-item-section avatar><q-icon :name="item.icon" /></q-item-section>
-              <q-item-section><q-item-label>{{ item.title }}</q-item-label></q-item-section>
-            </q-item>
+            <template v-for="item in section.items" :key="item.title">
+              <!-- Подменю внутри раздела: «Справочники → Склад» -->
+              <q-expansion-item v-if="item.items" :model-value="isOpen(item, section)" :label="item.title" :icon="item.icon" dense
+                :content-inset-level="0.4" @update:model-value="toggle(item, $event, section)">
+                <q-item v-for="child in item.items" :key="child.title" :to="child.to" clickable exact dense
+                  active-class="text-primary text-weight-medium">
+                  <q-item-section avatar><q-icon :name="child.icon" /></q-item-section>
+                  <q-item-section><q-item-label>{{ child.title }}</q-item-label></q-item-section>
+                </q-item>
+              </q-expansion-item>
+              <q-item v-else :to="item.to" clickable exact dense active-class="text-primary text-weight-medium">
+                <q-item-section avatar><q-icon :name="item.icon" /></q-item-section>
+                <q-item-section><q-item-label>{{ item.title }}</q-item-label></q-item-section>
+              </q-item>
+            </template>
           </q-expansion-item>
           <template v-else>
           <q-item-label v-if="section.title" header class="q-pb-xs">{{ section.title }}</q-item-label>
@@ -81,11 +91,13 @@ const drawerOpen = ref(false)
 const router = useRouter()
 const clinicTitle = computed(() => session.user?.clinic || 'Ветклиника')
 
-// Пункты без права perm скрываются; пустые разделы — тоже.
+// Пункты без права perm скрываются; пустые подменю и разделы — тоже.
+const allowed = (items) =>
+  items
+    .map((i) => (i.items ? { ...i, items: allowed(i.items) } : i))
+    .filter((i) => (i.items ? i.items.length : !i.perm || can(i.perm)))
 const visibleSections = computed(() =>
-  sections
-    .map((section) => ({ ...section, items: section.items.filter((i) => !i.perm || can(i.perm)) }))
-    .filter((section) => section.items.length),
+  sections.map((section) => ({ ...section, items: allowed(section.items) })).filter((section) => section.items.length),
 )
 
 // Свёрнут / развёрнут раздел — запоминается в браузере; раздел текущей страницы открыт всегда.
@@ -99,10 +111,11 @@ function readSaved() {
   }
 }
 const route = useRoute()
-const hasCurrent = (section) => section.items.some((i) => i.to && route.path.startsWith(i.to))
-const isOpen = (section) => saved.value[section.title] ?? (section.expanded || hasCurrent(section))
-function toggle(section, value) {
-  saved.value = { ...saved.value, [section.title]: value }
+const hasCurrent = (group) => group.items.some((i) => (i.items ? hasCurrent(i) : i.to && route.path.startsWith(i.to)))
+const keyOf = (group, parent) => (parent ? `${parent.title}/${group.title}` : group.title)
+const isOpen = (group, parent) => saved.value[keyOf(group, parent)] ?? (group.expanded || hasCurrent(group))
+function toggle(group, value, parent) {
+  saved.value = { ...saved.value, [keyOf(group, parent)]: value }
   try {
     localStorage.setItem(OPEN_KEY, JSON.stringify(saved.value))
   } catch {

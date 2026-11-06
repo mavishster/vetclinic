@@ -4,6 +4,7 @@ import { DEPARTMENT_PERMS } from './inventory/routes'
 // Пункт без маршрута — модуль в разработке, с номером этапа из docs/PROJECT_PLAN.md (раздел 8).
 // Раздел с collapsible сворачивается по щелчку на заголовке; expanded — открыт ли он по умолчанию.
 // Выбор сотрудника запоминается в браузере; раздел с открытой сейчас страницей раскрывается сам.
+// Пункт с items (без to) — подменю внутри раздела (например, «Справочники → Склад»).
 export default [
   {
     items: [{ title: 'Главная', icon: 'home', to: '/' }],
@@ -39,10 +40,6 @@ export default [
       { title: 'На оперативный', icon: 'move_down', to: '/inventory/transfer', perm: 'inventory.add_stockdocument' },
       { title: 'Отделения', icon: 'domain', to: '/inventory/departments', perm: DEPARTMENT_PERMS },
       { title: 'Документы склада', icon: 'local_shipping', to: '/inventory/documents', perm: 'inventory.view_stockdocument' },
-      { title: 'Склады', icon: 'warehouse', to: '/directories/warehouses', perm: 'inventory.view_warehouse' },
-      { title: 'Отделения (справочник)', icon: 'apartment', to: '/directories/departments', perm: 'inventory.view_department' },
-      { title: 'Производители', icon: 'factory', to: '/directories/manufacturers', perm: 'inventory.view_manufacturer' },
-      { title: 'Контрагенты', icon: 'handshake', to: '/directories/counterparties', perm: 'core.view_counterparty' },
     ],
   },
   {
@@ -71,6 +68,17 @@ export default [
       { title: 'Показатели анализов', icon: 'science', to: '/directories/analytes', perm: 'laboratory.view_analyte' },
       { title: 'Планшеты подписи', icon: 'tablet_mac', to: '/directories/signing-stations', perm: 'clients.view_signingstation' },
       { title: 'Палаты', icon: 'meeting_room', to: '/directories/wards', perm: 'inpatient.view_ward' },
+      // Подменю: справочники, с которыми работает склад.
+      {
+        title: 'Склад',
+        icon: 'warehouse',
+        items: [
+          { title: 'Склады', icon: 'warehouse', to: '/directories/warehouses', perm: 'inventory.view_warehouse' },
+          { title: 'Отделения', icon: 'apartment', to: '/directories/departments', perm: 'inventory.view_department' },
+          { title: 'Производители', icon: 'factory', to: '/directories/manufacturers', perm: 'inventory.view_manufacturer' },
+          { title: 'Контрагенты', icon: 'handshake', to: '/directories/counterparties', perm: 'core.view_counterparty' },
+        ],
+      },
       { title: 'Категории файлов', icon: 'folder', to: '/directories/file-categories', perm: 'core.view_filecategory' },
       { title: 'Как нашли клинику', icon: 'campaign', to: '/directories/client-sources', perm: 'clients.view_clientsource' },
     ],
