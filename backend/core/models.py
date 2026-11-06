@@ -181,10 +181,18 @@ class BaseModel(models.Model):
         self.save(update_fields=["is_deleted"])
 
 
+def logo_path(instance: "Clinic", filename: str) -> str:
+    """Логотип — всегда PNG (перекодирован при загрузке); имя новое при каждой замене."""
+    return f"clinic/logo-{uuid.uuid4().hex[:12]}.png"
+
+
 class Clinic(BaseModel):
     """Клиника (филиал). В первой версии — одна, создаётся миграцией."""
 
     name = models.CharField("название", max_length=200)
+    # Логотип: в шапке системы, на экране входа, во вкладке браузера и в печатных формах
+    # ({{ clinic.logo }}). Хранится файлом PNG — загруженная картинка перекодируется.
+    logo = models.FileField("логотип", upload_to=logo_path, max_length=255, blank=True)
     address = models.CharField("адрес", max_length=300, blank=True)
     phone = models.CharField("телефон", max_length=50, blank=True)
     # Предельные скидки в счёте (в процентах); цена со скидкой к тому же не ниже себестоимости.

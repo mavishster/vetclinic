@@ -3,6 +3,10 @@
     <q-page-container>
       <q-page class="flex flex-center q-pa-md login-page">
         <q-card flat bordered class="login-card">
+          <q-card-section v-if="logoShown" class="text-center q-pb-none">
+            <!-- Логотип клиники; нет логотипа — блок скрывается -->
+            <img src="/api/core/clinic/logo/" alt="" class="login-logo" @error="logoShown = false" />
+          </q-card-section>
           <q-card-section>
             <div class="text-h6">Вход в систему</div>
             <div class="text-caption text-grey-7">Ветклиника</div>
@@ -49,6 +53,7 @@ const password = ref('')
 const showPassword = ref(false)
 const loading = ref(false)
 const error = ref('')
+const logoShown = ref(true)
 
 async function onSubmit() {
   error.value = ''
@@ -71,5 +76,10 @@ async function onSubmit() {
 .login-card {
   width: 100%;
   max-width: 380px;
+}
+.login-logo {
+  max-width: 220px;
+  max-height: 110px;
+  object-fit: contain;
 }
 </style>

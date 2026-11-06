@@ -29,6 +29,10 @@ COMMON_VARIABLES = {
     "clinic.name": "Название клиники",
     "clinic.address": "Адрес клиники",
     "clinic.phone": "Телефон клиники",
+    "clinic.logo": (
+        "Логотип клиники (Настройки клиники). Вставка: "
+        '{% if clinic.logo %}<img src="{{ clinic.logo }}" style="height:18mm">{% endif %}'
+    ),
     "user.full_name": "ФИО сотрудника, который печатает",
     "user.short_name": "Фамилия и инициалы сотрудника",
     "today": "Сегодняшняя дата (с фильтром date: {{ today|date }})",

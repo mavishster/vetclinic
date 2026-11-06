@@ -31,6 +31,7 @@ def me(request: Request) -> Response:
             "is_superuser": user.is_superuser,
             "has_pin": user.has_pin,
             "clinic": services.current_clinic().name,
+            "clinic_logo": services.clinic_logo_version(),
             "permissions": sorted(user.get_all_permissions()),
             "ui_settings": user.ui_settings or {},
             "currency": settings.CURRENCY,

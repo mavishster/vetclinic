@@ -622,13 +622,96 @@ _LEDGER_SERVICE_FIELDS = {"id", "created_at", "created_by", "node_id", "posted_a
 # --- Печатные формы ----------------------------------------------------------------
 
 
+# --- Логотип клиники -------------------------------------------------------------
+
+LOGO_MAX_BYTES = 5 * 1024 * 1024
+LOGO_MAX_PX = 600
+
+
+class LogoError(Exception):
+    """Логотип не подходит. Текст — для пользователя."""
+
+
+def set_clinic_logo(file: Any) -> Clinic:
+    """Загрузить логотип: PNG, JPEG, WebP или GIF до 5 МБ.
+
+    Картинка перекодируется в PNG (прозрачность сохраняется) и уменьшается до 600 px по
+    большей стороне: так в системе хранится только «чистая» картинка небольшого размера.
+    """
+    import io
+
+    from django.core.files.base import ContentFile
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    if getattr(file, "size", 0) > LOGO_MAX_BYTES:
+        raise LogoError("Файл больше 5 МБ — уменьшите картинку.")
+    try:
+        source = Image.open(file)
+        if source.format not in {"PNG", "JPEG", "WEBP", "GIF"}:
+            raise LogoError("Нужна картинка PNG, JPEG, WebP или GIF.")
+        image = ImageOps.exif_transpose(source).convert("RGBA")
+    except (UnidentifiedImageError, OSError) as error:
+        raise LogoError("Не удалось прочитать картинку.") from error
+    image.thumbnail((LOGO_MAX_PX, LOGO_MAX_PX))
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG", optimize=True)
+    clinic = current_clinic()
+    old = clinic.logo.name if clinic.logo else ""
+    clinic.logo.save("logo.png", ContentFile(buffer.getvalue()), save=False)
+    clinic.save(update_fields=["logo"])
+    if old:
+        clinic.logo.storage.delete(old)
+    return clinic
+
+
+def remove_clinic_logo() -> Clinic:
+    clinic = current_clinic()
+    if clinic.logo:
+        clinic.logo.delete(save=False)
+        clinic.logo = ""
+        clinic.save(update_fields=["logo"])
+    return clinic
+
+
+def clinic_logo_version(clinic: Clinic | None = None) -> str | None:
+    """«Версия» логотипа (меняется при замене) — для адреса картинки без старого кэша."""
+    clinic = clinic or current_clinic()
+    return clinic.logo.name.rsplit("-", 1)[-1].split(".")[0] if clinic.logo else None
+
+
+def clinic_logo_bytes() -> bytes | None:
+    """PNG логотипа или None (нет логотипа или файл пропал)."""
+    clinic = current_clinic()
+    if not clinic.logo:
+        return None
+    try:
+        with clinic.logo.open("rb") as file:
+            data: bytes = file.read()
+            return data
+    except OSError:
+        return None
+
+
+def clinic_logo_data_uri() -> str:
+    """Логотип для печатных форм: <img src="{{ clinic.logo }}">; нет логотипа — пусто."""
+    import base64
+
+    data = clinic_logo_bytes()
+    return f"data:image/png;base64,{base64.b64encode(data).decode()}" if data else ""
+
+
 def common_print_context(user: User | None = None) -> dict[str, Any]:
     """Переменные, доступные в любой печатной форме: clinic, user, today, now."""
     user = user or get_current_user()
     clinic = current_clinic()
     now = timezone.localtime()
     return {
-        "clinic": {"name": clinic.name, "address": clinic.address, "phone": clinic.phone},
+        "clinic": {
+            "name": clinic.name,
+            "address": clinic.address,
+            "phone": clinic.phone,
+            "logo": clinic_logo_data_uri(),
+        },
         "user": {
             "full_name": user.full_name if user else "",
             "short_name": user.short_name if user else "",

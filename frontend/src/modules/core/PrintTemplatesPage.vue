@@ -127,6 +127,7 @@ const SNIPPETS = [
   { label: 'Дата справа', text: '<p style="text-align:right;">{{ today|date }}</p>\n', hint: 'Сегодняшняя дата по правому краю' },
   { label: 'Если есть…', text: '{% if client.phones %}телефон {{ client.phones }}{% endif %}', hint: 'Показать текст, только если данные заполнены' },
   { label: 'Питомцы списком', text: '{% for p in pets %}{{ p.name }} ({{ p.species }}){% if not loop.last %}, {% endif %}{% endfor %}', hint: 'Все питомцы клиента через запятую' },
+  { label: 'Логотип', text: '{% if clinic.logo %}<img src="{{ clinic.logo }}" style="height:18mm;">{% endif %}\n', hint: 'Логотип клиники из «Настроек клиники»' },
   { label: 'Подпись клиники', text: '<p style="margin-top:24px;">{{ clinic.name }}{% if clinic.address %}, {{ clinic.address }}{% endif %}</p>\n', hint: 'Название и адрес клиники' },
 ]
 
@@ -168,6 +169,8 @@ async function insert(text) {
 // Списки (питомцы, назначения, строки счёта…) вставляются сразу циклом по элементам,
 // а не одной подстановкой: в описании такого списка после двоеточия перечислены поля.
 function insertVariable(name) {
+  // Логотип — картинка: вставляется тегом <img>, а не текстом.
+  if (name === 'clinic.logo') return insert('{% if clinic.logo %}<img src="{{ clinic.logo }}" style="height:18mm;">{% endif %}')
   const description = variables.value[name] || ''
   const fields = description.includes(':') && !name.includes('.') ? description.split(':')[1].split(',').map((f) => f.trim()).filter(Boolean) : []
   if (!fields.length) return insert(`{{ ${name} }}`)

@@ -3,7 +3,11 @@
     <q-header class="bg-primary text-white">
       <q-toolbar>
         <q-btn flat round dense icon="menu" aria-label="Меню" @click="drawerOpen = !drawerOpen" />
-        <q-toolbar-title>{{ clinicTitle }}</q-toolbar-title>
+        <q-toolbar-title class="row items-center no-wrap">
+          <!-- Логотип клиники — из «Настроек клиники»; на белой подложке, чтобы был виден на цветной шапке -->
+          <img v-if="logo" :src="logo" alt="" class="header-logo q-mr-sm" />
+          <span class="ellipsis">{{ clinicTitle }}</span>
+        </q-toolbar-title>
         <!-- Стационар: напоминания о назначениях моим пациентам -->
         <TasksBell v-if="can('inpatient.view_hospitalization')" />
         <!-- Отделения: остатки не внесены, давно не было выдачи, ниже нормы -->
@@ -82,7 +86,8 @@
 <script setup>
 import TasksBell from '@/modules/inpatient/TasksBell.vue'
 import DepartmentAlertsBell from '@/modules/inventory/DepartmentAlertsBell.vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
+import { applyFavicon, logoUrl } from '@/modules/core/logo'
 import { useRoute, useRouter } from 'vue-router'
 import sections from '@/modules/registry'
 import { can, logout, session } from '@/session'
@@ -90,6 +95,8 @@ import { can, logout, session } from '@/session'
 const drawerOpen = ref(false)
 const router = useRouter()
 const clinicTitle = computed(() => session.user?.clinic || 'Ветклиника')
+const logo = computed(() => logoUrl(session.user?.clinic_logo))
+watchEffect(() => applyFavicon(session.user?.clinic_logo))
 
 // Пункты без права perm скрываются; пустые подменю и разделы — тоже.
 const allowed = (items) =>
@@ -128,3 +135,14 @@ async function onLogout() {
   router.push('/login')
 }
 </script>
+
+<style scoped>
+.header-logo {
+  height: 34px;
+  max-width: 120px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 4px;
+  padding: 2px;
+}
+</style>

@@ -2,8 +2,11 @@
 
 from typing import Any
 
+from django.http import HttpResponse
 from rest_framework import serializers
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import MultiPartParser
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,6 +16,12 @@ from core.models import Clinic
 
 
 class ClinicSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+    # Есть ли логотип и его «версия» — чтобы браузер не показывал старую картинку из кэша.
+    logo_version = serializers.SerializerMethodField()
+
+    def get_logo_version(self, clinic: Clinic) -> str | None:
+        return services.clinic_logo_version(clinic)
+
     class Meta:
         model = Clinic
         fields = [
@@ -25,6 +34,7 @@ class ClinicSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "department_issue_days",
             "department_count_from_days",
             "department_count_due_days",
+            "logo_version",
         ]
         read_only_fields = ["id"]
 
@@ -67,3 +77,46 @@ class ClinicView(APIView):
         data.is_valid(raise_exception=True)
         data.save()
         return Response(data.data)
+
+
+class ClinicLogoView(APIView):
+    """Логотип клиники.
+
+    GET — картинка PNG (открыт без входа: логотип виден на экране входа); нет логотипа — 404.
+    POST (multipart: file) — загрузить, DELETE — убрать; право «Клиника: изменение».
+    """
+
+    parser_classes = [MultiPartParser]
+
+    def get_permissions(self):  # type: ignore[no-untyped-def]
+        return [AllowAny()] if self.request.method == "GET" else [IsAuthenticated()]
+
+    def get(self, request: Request) -> HttpResponse:
+        data = services.clinic_logo_bytes()
+        if data is None:
+            return HttpResponse(status=404)
+        response = HttpResponse(data, content_type="image/png")
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Cache-Control"] = "public, max-age=300"
+        return response
+
+    def _require_change(self, request: Request) -> None:
+        if not request.user.has_perm("core.change_clinic"):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("Нет права менять настройки клиники.")
+
+    def post(self, request: Request) -> Response:
+        self._require_change(request)
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError({"file": ["Выберите картинку."]})
+        try:
+            clinic = services.set_clinic_logo(upload)
+        except services.LogoError as error:
+            raise ValidationError({"file": [str(error)]}) from error
+        return Response(ClinicSerializer(clinic).data)
+
+    def delete(self, request: Request) -> Response:
+        self._require_change(request)
+        return Response(ClinicSerializer(services.remove_clinic_logo()).data)

@@ -12,6 +12,31 @@
       </q-card>
       <q-card flat bordered class="q-mb-md">
         <q-card-section>
+          <div class="text-subtitle1">Логотип</div>
+          <div class="text-caption text-grey-7">
+            Показывается в шапке системы, на экране входа, во вкладке браузера и в печатных формах — там, где в шаблон
+            вставлено <code v-pre>{{ clinic.logo }}</code>. PNG (лучше с прозрачным фоном), JPEG, WebP или GIF до 5 МБ;
+            картинка уменьшится до 600 px.
+          </div>
+        </q-card-section>
+        <q-card-section class="q-pt-none row items-center q-col-gutter-md">
+          <div class="col-auto">
+            <div class="logo-preview row flex-center">
+              <img v-if="logoSrc" :src="logoSrc" alt="Логотип" />
+              <span v-else class="text-grey-6 text-caption">Логотипа нет</span>
+            </div>
+          </div>
+          <div v-if="canEdit" class="col q-gutter-sm">
+            <q-file v-model="logoFile" accept="image/png,image/jpeg,image/webp,image/gif" outlined dense clearable
+              label="Выбрать картинку" :error="!!errors.file" :error-message="errors.file" @update:model-value="uploadLogo">
+              <template #prepend><q-icon name="image" /></template>
+            </q-file>
+            <q-btn v-if="logoSrc" flat color="negative" icon="delete" label="Убрать логотип" :loading="logoBusy" @click="removeLogo" />
+          </div>
+        </q-card-section>
+      </q-card>
+      <q-card flat bordered class="q-mb-md">
+        <q-card-section>
           <div class="text-subtitle1">Скидки в счёте</div>
           <div class="text-caption text-grey-7">
             Больше этих процентов скидку в строке счёта поставить нельзя. Кроме того, цена со скидкой не может быть ниже
@@ -56,16 +81,47 @@
 <script setup>
 // Настройки клиники: реквизиты для печатных форм, предельные скидки в счёте,
 // сроки выдачи и внесения остатков в отделениях (предупреждения).
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
-import { apiGet, apiPatch, fieldErrors } from '@/api'
-import { can } from '@/session'
+import { apiDelete, apiGet, apiPatch, apiUpload, fieldErrors } from '@/api'
+import { can, session } from '@/session'
+import { logoUrl } from './logo'
 
 const $q = useQuasar()
 const canEdit = can('core.change_clinic')
 const form = ref({})
 const errors = ref({})
 const saving = ref(false)
+const logoFile = ref(null)
+const logoBusy = ref(false)
+const logoSrc = computed(() => logoUrl(form.value.logo_version))
+
+// Логотип сохраняется сразу при выборе файла; шапка и значок вкладки обновятся сами.
+function logoChanged(data) {
+  form.value.logo_version = data.logo_version
+  if (session.user) session.user.clinic_logo = data.logo_version
+}
+
+async function uploadLogo(file) {
+  if (!file) return
+  errors.value = {}
+  logoBusy.value = true
+  const body = new FormData()
+  body.append('file', file)
+  const { ok, data } = await apiUpload('core/clinic/logo/', body)
+  logoBusy.value = false
+  logoFile.value = null
+  if (!ok) return (errors.value = fieldErrors(data))
+  logoChanged(data)
+  $q.notify({ type: 'positive', message: 'Логотип сохранён' })
+}
+
+async function removeLogo() {
+  logoBusy.value = true
+  const { ok, data } = await apiDelete('core/clinic/logo/')
+  logoBusy.value = false
+  if (ok) logoChanged(data)
+}
 
 async function save() {
   errors.value = {}
@@ -81,3 +137,18 @@ onMounted(async () => {
   form.value = (await apiGet('core/clinic/')).data ?? {}
 })
 </script>
+
+<style scoped>
+.logo-preview {
+  width: 180px;
+  height: 90px;
+  border: 1px dashed rgba(128, 128, 128, 0.5);
+  border-radius: 6px;
+  background: #fff;
+}
+.logo-preview img {
+  max-width: 170px;
+  max-height: 80px;
+  object-fit: contain;
+}
+</style>
