@@ -120,13 +120,18 @@ const ALL_TABS = [
     ],
   },
   {
+    // Расход отделения — недостача при внесении остатков (и старые списания на отделение); ADR-024.
     name: 'departments', label: 'Расход по отделениям', icon: 'domain', perm: 'inventory.view_stockmovement', period: true,
-    excel: 'inventory/reports/departments/', empty: 'За период на отделения ничего не списано', barField: 'qty',
+    excel: 'inventory/reports/departments/', empty: 'За период движений по отделениям не было', barField: 'consumed',
     columns: () => [
-      { name: 'department', label: 'Отделение', field: 'department_name', align: 'left', classes: 'text-weight-medium' },
+      { name: 'department', label: 'Отделение', field: (r) => `${r.department_name}${r.not_counted ? ' · остатки не внесены' : ''}`,
+        align: 'left', classes: 'text-weight-medium' },
       { name: 'item', label: 'Материал', field: 'item_name', align: 'left' },
-      { name: 'qty', label: 'Количество', field: (r) => `${qty(r.qty)} ${r.unit}`, align: 'right' },
-      ...(showCost ? [{ name: 'cost', label: 'Сумма', field: (r) => money(r.cost), align: 'right' }] : []),
+      { name: 'opening', label: 'На начало', field: 'opening_text', align: 'right' },
+      { name: 'issued', label: 'Выдано', field: 'issued_text', align: 'right' },
+      { name: 'consumed', label: 'Израсходовано', field: 'consumed_text', align: 'right', classes: 'text-weight-medium' },
+      { name: 'closing', label: 'На конец', field: 'closing_text', align: 'right' },
+      ...(showCost ? [{ name: 'cost', label: 'Сумма расхода', field: (r) => money(r.cost), align: 'right' }] : []),
     ],
   },
   {
@@ -154,7 +159,7 @@ const kind = ref('')
 const search = ref('')
 const department = ref(null)
 const departments = ref([])
-apiGet('inventory/departments/?active=true').then(({ data }) => (departments.value = data ?? []))
+apiGet('inventory/department-stock/list/').then(({ ok, data }) => (departments.value = ok ? data : []))
 const rows = ref([])
 const loading = ref(false)
 const max = computed(() => Math.max(0, ...rows.value.map((r) => Number(r[current.value.barField]) || 0)))

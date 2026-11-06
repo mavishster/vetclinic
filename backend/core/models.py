@@ -194,6 +194,17 @@ class Clinic(BaseModel):
     max_discount_services = models.DecimalField(
         "макс. скидка на услуги, %", max_digits=5, decimal_places=2, default=10
     )
+    # Склады отделений (ADR-024): когда предупреждать главного администратора и ответственного
+    # за отделение. Пересчёт — окно «через N … не позже M дней после выдачи»; 0 — не напоминать.
+    department_issue_days = models.PositiveSmallIntegerField(
+        "отделения: выдавать не реже, чем раз в N дней", default=7
+    )
+    department_count_from_days = models.PositiveSmallIntegerField(
+        "отделения: вносить остатки через N дней после выдачи", default=5
+    )
+    department_count_due_days = models.PositiveSmallIntegerField(
+        "отделения: вносить остатки не позже N дней после выдачи", default=7
+    )
 
     class Meta:
         verbose_name = "клиника"

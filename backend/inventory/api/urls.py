@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from inventory.api import views
+from inventory.api import departments, views
 
 router = DefaultRouter()
 router.register("warehouses", views.WarehouseViewSet, basename="warehouse")
@@ -16,9 +16,20 @@ urlpatterns = [
     path("reports/turnover/", views.TurnoverReportView.as_view(), name="report-turnover"),
     path("transfer/", views.TransferView.as_view(), name="stock-transfer"),
     path(
-        "department-writeoff/", views.DepartmentWriteOffView.as_view(), name="department-writeoff"
+        "department-stock/<str:step>/",
+        departments.DepartmentStockView.as_view(),
+        name="department-stock",
     ),
-    path("reports/departments/", views.DepartmentsReportView.as_view(), name="report-departments"),
+    path(
+        "reports/departments/",
+        departments.DepartmentSummaryView.as_view(),
+        name="report-departments",
+    ),
+    path(
+        "reports/department-journal/",
+        departments.DepartmentJournalView.as_view(),
+        name="report-department-journal",
+    ),
     path("reports/warehouses/", views.WarehouseTotalsView.as_view(), name="report-warehouses"),
     path("import/<str:step>/", views.StockImportView.as_view(), name="stock-import"),
     *router.urls,

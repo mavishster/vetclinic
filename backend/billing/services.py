@@ -558,6 +558,7 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
         if not unit.for_sale or unit.item.combo_only:
             continue
         tracked = unit.item.kind == Kind.GOODS and unit.item.stock_tracked
+        on_hand = inventory.available(unit.item, warehouse) if tracked else None
         price = list_price(unit, warehouse)
         limit = discount_limit(unit, price, warehouse) if price is not None else None
         result.append(
@@ -574,9 +575,9 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
                 "price": str(price) if price is not None else None,
                 "price_min": str(unit.price_min) if unit.price_min is not None else None,
                 "price_max": str(unit.price_max) if unit.price_max is not None else None,
-                "stock": str(inventory.available(unit.item, warehouse) / unit.ratio)
-                if tracked
-                else None,
+                "stock": str(on_hand / unit.ratio) if on_hand is not None else None,
+                # Остаток словами: «5,25 упак. / 5 упак. 2 таб.».
+                "stock_text": catalog.qty_text(unit.item, on_hand) if on_hand is not None else None,
             }
         )
     for combo in combos:
@@ -596,6 +597,7 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
                 "price_min": None,
                 "price_max": None,
                 "stock": None,
+                "stock_text": None,
             }
         )
     return result

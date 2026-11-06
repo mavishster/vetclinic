@@ -6,6 +6,8 @@
         <q-toolbar-title>{{ clinicTitle }}</q-toolbar-title>
         <!-- Стационар: напоминания о назначениях моим пациентам -->
         <TasksBell v-if="can('inpatient.view_hospitalization')" />
+        <!-- Отделения: остатки не внесены, давно не было выдачи, ниже нормы -->
+        <DepartmentAlertsBell />
         <q-btn flat no-caps icon="account_circle" :label="$q.screen.gt.xs ? session.user?.short_name || session.user?.username : ''">
           <q-menu anchor="bottom right" self="top right">
             <q-list style="min-width: 200px">
@@ -58,6 +60,7 @@
 
 <script setup>
 import TasksBell from '@/modules/inpatient/TasksBell.vue'
+import DepartmentAlertsBell from '@/modules/inventory/DepartmentAlertsBell.vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import sections from '@/modules/registry'

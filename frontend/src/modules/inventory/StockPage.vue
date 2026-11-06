@@ -23,11 +23,11 @@
         <tbody>
           <tr v-for="r in replenish" :key="r.item + r.warehouse">
             <td class="text-weight-medium">{{ r.item_name }}</td><td>{{ r.warehouse_name }}</td>
-            <td class="text-right" :class="Number(r.qty) < 0 ? 'text-negative' : ''">{{ Number(r.qty) }} {{ r.unit }}</td>
-            <td class="text-right">{{ r.min_qty ? `${Number(r.min_qty)} ${r.unit}` : '' }}</td>
-            <td class="text-right text-weight-medium">{{ Number(r.need) }} {{ r.unit }}</td>
+            <td class="text-right" :class="Number(r.qty) < 0 ? 'text-negative' : ''">{{ r.qty_text }}</td>
+            <td class="text-right">{{ r.min_qty_text }}</td>
+            <td class="text-right text-weight-medium">{{ r.need_text }}</td>
             <td class="text-right" :class="Number(r.available) < Number(r.need) ? 'text-negative' : 'text-positive'">
-              {{ Number(r.available) }} {{ r.unit }}<span v-if="Number(r.available) < Number(r.need)"> — нужно заказать</span>
+              {{ r.available_text }}<span v-if="Number(r.available) < Number(r.need)"> — нужно заказать</span>
             </td>
           </tr>
           <tr v-if="!replenish.length"><td colspan="6" class="text-grey-7">Перемещать ничего не нужно</td></tr>
@@ -39,7 +39,7 @@
       <q-list bordered separator class="rounded-borders">
         <q-item v-for="r in negative" :key="r.item + r.warehouse_name">
           <q-item-section>{{ r.item_name }}<q-item-label caption>{{ r.warehouse_name }}</q-item-label></q-item-section>
-          <q-item-section side class="text-negative text-weight-medium">{{ Number(r.qty) }} {{ r.unit }}</q-item-section>
+          <q-item-section side class="text-negative text-weight-medium">{{ r.qty_text }}</q-item-section>
         </q-item>
         <q-item v-if="!negative.length"><q-item-section class="text-grey-7">Минусов нет</q-item-section></q-item>
       </q-list>
@@ -63,7 +63,8 @@
 </template>
 
 <script setup>
-// Остатки по товарам, складам и партиям. Остаток — в единице учёта (таб., мл, шт.).
+// Остатки по товарам, складам и партиям: «5,25 упак. / 5 упак. 2 таб.» (упаковки и штуки).
+// Склады отделений здесь не показываются — они в «Склад → Отделения» (ADR-024).
 import { onMounted, ref } from 'vue'
 import { apiGet } from '@/api'
 import { can } from '@/session'
@@ -83,7 +84,6 @@ const warehouse = ref(null)
 const expiring = ref(route.query.expiring === '1')
 const warehouses = ref([])
 const fmt = (iso) => (iso ? new Date(iso).toLocaleDateString('ru-RU') : '—')
-const qty = (value) => Number(value).toLocaleString('ru-RU', { maximumFractionDigits: 3 })
 function expiryClass(iso) {
   if (!iso) return ''
   const days = (new Date(iso) - new Date()) / 86400000
@@ -95,7 +95,7 @@ const columns = [
   { name: 'warehouse', label: 'Склад', field: 'warehouse_name', align: 'left', sortable: true },
   { name: 'series', label: 'Серия', field: 'series', align: 'left' },
   { name: 'expiry', label: 'Годен до', field: 'expiry_date', align: 'left', sortable: true },
-  { name: 'qty', label: 'Остаток', field: (r) => `${qty(r.qty)} ${r.unit}`, align: 'right' },
+  { name: 'qty', label: 'Остаток', field: 'qty_text', align: 'right' },
   ...(showCost ? [{ name: 'cost', label: 'По закупке', field: (r) => money(r.cost), align: 'right' }] : []),
 ]
 

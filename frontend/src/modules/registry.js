@@ -1,3 +1,5 @@
+import { DEPARTMENT_PERMS } from './inventory/routes'
+
 // Меню. Пункт виден, если у пользователя есть право perm.
 // Пункт без маршрута — модуль в разработке, с номером этапа из docs/PROJECT_PLAN.md (раздел 8).
 export default [
@@ -20,7 +22,7 @@ export default [
       { title: 'Касса', icon: 'point_of_sale', to: '/cash', perm: 'cash.view_cashmovement' },
       { title: 'Остатки', icon: 'inventory_2', to: '/inventory/stock', perm: 'inventory.view_stockmovement' },
       { title: 'На оперативный', icon: 'move_down', to: '/inventory/transfer', perm: 'inventory.add_stockdocument' },
-      { title: 'На отделение', icon: 'outbox', to: '/inventory/department-writeoff', perm: 'inventory.add_stockdocument' },
+      { title: 'Отделения', icon: 'domain', to: '/inventory/departments', perm: DEPARTMENT_PERMS },
       { title: 'Документы склада', icon: 'local_shipping', to: '/inventory/documents', perm: 'inventory.view_stockdocument' },
       { title: 'Товары и услуги', icon: 'sell', to: '/catalog', perm: 'catalog.view_item' },
       { title: 'Стационар', icon: 'local_hotel', to: '/inpatient', perm: 'inpatient.view_hospitalization' },

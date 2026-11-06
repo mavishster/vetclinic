@@ -45,7 +45,8 @@ class WarehouseViewSet(DirectoryViewSet):
     extra_fields = ("kind", "responsible", "access_roles")
 
     def get_queryset(self):  # type: ignore[no-untyped-def]
-        queryset = super().get_queryset()
+        # Склады отделений создаются сами и живут в разделе «Отделения» — здесь их нет.
+        queryset = super().get_queryset().exclude(kind=Warehouse.Kind.DEPARTMENT)
         if self.request.user.has_perm("inventory.change_warehouse"):
             return queryset
         return queryset.filter(pk__in=services.visible_warehouses(self.request.user).values("pk"))
@@ -197,7 +198,12 @@ class DocumentViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         params = self.request.query_params
         # Документы складов, которые сотруднику не видны, — не показываются.
         visible = services.visible_warehouses(self.request.user).values("pk")
-        queryset = queryset.filter(Q(warehouse__in=visible) | Q(target_warehouse__in=visible))
+        shown = Q(warehouse__in=visible) | Q(target_warehouse__in=visible)
+        if self.action != "list":
+            # Пересчёт отделения открывается по ссылке из журнала отделений (ADR-024),
+            # но в общем списке документов склада его нет.
+            shown |= Q(department__isnull=False)
+        queryset = queryset.filter(shown)
         for field in ("kind", "status"):
             if value := params.get(field):
                 queryset = queryset.filter(**{field: value})
@@ -271,6 +277,7 @@ class StockViewSet(viewsets.ViewSet):
         cost = sum((r["cost"] for r in rows), Decimal("0")).quantize(Decimal("0.01"))
         show_cost = can_view_cost(request)
         totals = {"qty_rows": len(rows), "cost": str(cost) if show_cost else None}
+        services.with_qty_text(rows, "qty")
         for row in rows:
             row["qty"] = _text(row["qty"])  # type: ignore[typeddict-item]
             cost_text = _text(row["cost"].quantize(Decimal("0.01"))) if show_cost else None
@@ -284,6 +291,7 @@ class StockViewSet(viewsets.ViewSet):
             str(pk) for pk in services.visible_warehouses(request.user).values_list("pk", flat=True)
         }
         rows = [r for r in services.to_replenish() if r["warehouse"] in visible]
+        services.with_qty_text(rows, "qty", "need", "available", "min_qty")
         for row in rows:
             for key in ("qty", "need", "available"):
                 row[key] = _text(row[key])  # type: ignore[literal-required]
@@ -294,6 +302,7 @@ class StockViewSet(viewsets.ViewSet):
     def low(self, request: Request) -> Response:
         """Товары ниже минимального остатка — «нужно заказать»."""
         rows = services.low_stock()
+        services.with_qty_text(rows, "qty", "min_qty")
         for row in rows:
             row["min_qty"], row["qty"] = _text(row["min_qty"]), _text(row["qty"])  # type: ignore[typeddict-item]
         return Response(rows)
@@ -302,6 +311,7 @@ class StockViewSet(viewsets.ViewSet):
     def negative(self, request: Request) -> Response:
         """Товары в минусе — продано больше, чем оприходовано; закроются приходом."""
         rows = services.negative_stock()
+        services.with_qty_text(rows, "qty")
         for row in rows:
             row["qty"] = _text(row["qty"])
         return Response(rows)
@@ -316,9 +326,11 @@ class StockViewSet(viewsets.ViewSet):
         item = request.query_params.get("item")
         warehouse = request.query_params.get("warehouse") or None
         show_cost = can_view_cost(request)
+        text = catalog.qty_text
         return Response(
             [
                 {
+                    "qty_text": text(s.batch.item_id, s.qty),
                     "batch": str(s.batch.pk),
                     "label": str(s.batch),
                     "series": s.batch.series,
@@ -334,7 +346,9 @@ class StockViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def lookup(self, request: Request) -> Response:
         params = request.query_params
-        if code := params.get("barcode", "").strip():
+        if item_id := params.get("item", "").strip():  # все единицы товара — выбор единицы
+            units = list(catalog.item_units_of([item_id]))
+        elif code := params.get("barcode", "").strip():
             unit = catalog.find_by_barcode(code)
             if unit is None or unit.item.kind != Kind.GOODS:
                 return Response([])
@@ -351,8 +365,11 @@ class StockViewSet(viewsets.ViewSet):
                 for item in items
                 for u in item.units.select_related("item__base_unit", "unit").all()
             ]
-        return Response(
-            [
+        text = catalog.qty_formatter(u.item_id for u in units)
+        result = []
+        for u in units:
+            stock = services.available(u.item)
+            result.append(
                 {
                     "item_unit": str(u.pk),
                     "item": str(u.item_id),
@@ -361,11 +378,11 @@ class StockViewSet(viewsets.ViewSet):
                     "ratio": _text(u.ratio),
                     "base_unit": u.item.base_unit.name,
                     "for_purchase": u.for_purchase,
-                    "stock": _text(services.available(u.item)),
+                    "stock": _text(stock),
+                    "stock_text": text(u.item_id, stock),
                 }
-                for u in units
-            ]
-        )
+            )
+        return Response(result)
 
 
 class MinStockSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
@@ -472,7 +489,7 @@ class StockImportView(APIView):
                 return Response(importing.preview(*_upload(request)))
             if step == "commit":
                 warehouse = request.data.get("warehouse")
-                if not Warehouse.objects.filter(pk=warehouse).exists():
+                if not services.visible_warehouses(request.user).filter(pk=warehouse).exists():
                     raise ValidationError({"warehouse": ["Выберите склад."]})
                 return Response(importing.commit(*_upload(request), warehouse))
         except importing.ImportError_ as error:
@@ -538,7 +555,10 @@ class TransferView(APIView):
             raise ValidationError({"code": ["Товар с таким кодом не найден в прайсе."]})
         data: dict[str, Any] = dict(found)
         data["ratio"], data["on_target"] = _text(found["ratio"]), _text(found["on_target"])
+        data["on_target_text"] = catalog.qty_text(found["item"], found["on_target"])
+        text = catalog.qty_formatter([found["item"]])
         for batch in data["batches"]:
+            batch["qty_text"] = text(found["item"], batch["qty_base"])
             batch["qty_base"], batch["qty_unit"] = (
                 _text(batch["qty_base"]),
                 _text(batch["qty_unit"]),
@@ -561,65 +581,6 @@ class TransferView(APIView):
         except (services.StockError, DocumentError) as error:
             raise ValidationError({"non_field_errors": [str(error)]}) from error
         return Response({"id": str(document.pk), "number": document.number}, status=201)
-
-
-class DepartmentWriteOffView(TransferView):
-    """Списание расходных материалов со склада на отделение (по сканеру).
-
-    POST {"from", "department", "reason", "lines": [{"item_unit", "quantity", "batch"}]}.
-    Сканирование — тот же GET, что у перемещения (без склада-получателя).
-    """
-
-    def post(self, request: Request) -> Response:
-        source = self._warehouse(request, request.data.get("from"))
-        department = Department.objects.filter(
-            pk=request.data.get("department"), is_active=True
-        ).first()
-        lines = [
-            {
-                "item_unit": line.get("item_unit"),
-                "quantity": Decimal(str(line.get("quantity") or 0)),
-                "batch": line.get("batch") or None,
-            }
-            for line in request.data.get("lines") or []
-        ]
-        try:
-            document = services.department_writeoff(
-                source, department, lines, str(request.data.get("reason") or "")
-            )  # type: ignore[arg-type]
-        except (services.StockError, DocumentError) as error:
-            raise ValidationError({"non_field_errors": [str(error)]}) from error
-        return Response({"id": str(document.pk), "number": document.number}, status=201)
-
-
-class DepartmentsReportView(APIView):
-    """Расход по отделениям: ?from=&to=&department= (&export=xlsx).
-
-    Суммы — только с правом «Видеть себестоимость».
-    """
-
-    queryset = StockMovement.objects.none()  # права — как на остатки
-
-    def get_queryset(self) -> QuerySet[StockMovement]:
-        return StockMovement.objects.none()
-
-    def get(self, request: Request) -> HttpResponse:
-        date_from, date_to = reports.period(request)
-        rows = services.department_consumption(
-            date_from, date_to, request.query_params.get("department") or None
-        )
-        hide = set() if can_view_cost(request) else {"cost"}
-        if reports.wants_excel(request):
-            columns = [
-                ("department_name", "Отделение", 18),
-                ("item_name", "Материал", 40),
-                ("qty", "Количество", 12),
-                ("unit", "Ед.", 8),
-            ]
-            if not hide:
-                columns.append(("cost", "Сумма", 14))
-            return xlsx_response("departments.xlsx", "Расход по отделениям", columns, rows)
-        return Response(reports.as_text(rows, hide))  # type: ignore[arg-type]
 
 
 class WarehouseTotalsView(APIView):

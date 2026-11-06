@@ -6,6 +6,7 @@
 Бизнес-правила живут здесь, а не в моделях и не в API (ENGINEERING.md).
 """
 
+from collections.abc import Callable, Iterable
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, TypedDict
 
@@ -375,6 +376,15 @@ def item_units(ids: list[Any]) -> QuerySet[ItemUnit]:
     return ItemUnit.objects.filter(pk__in=ids).select_related("item", "unit")
 
 
+def item_units_of(item_ids: Iterable[Any]) -> QuerySet[ItemUnit]:
+    """Все единицы товаров — для выбора единицы в строке (упак., фл., таб.); крупные первыми."""
+    return (
+        ItemUnit.objects.filter(item_id__in=list(item_ids))
+        .select_related("unit", "item__base_unit")
+        .order_by("item_id", "-ratio")
+    )
+
+
 def mark_stock_tracked(item: Item) -> None:
     """Склад начал вести учёт товара (первый выполненный приход)."""
     if not item.stock_tracked:
@@ -493,3 +503,72 @@ def delete_item(item: Item) -> None:
     CombinationLine.objects.filter(combination=item).delete()
     item.units.all().delete()
     item.delete()
+
+
+# --- Остаток словами: «5,25 упак. / 5 упак. 2 таб.» -------------------------------
+
+
+def _number(value: Decimal) -> str:
+    """5 вместо 5.000, 5,25 вместо 5.250 (до трёх знаков)."""
+    text = format(value.quantize(D("0.001")).normalize(), "f")
+    if text in ("-0", "0E-3"):
+        text = "0"
+    return text.replace(".", ",")
+
+
+def _qty_text(qty: Decimal, base: str, units: list[tuple[Decimal, str]]) -> str:
+    """Остаток в единицах учёта → текст для человека.
+
+    Если у товара есть упаковка и штучная единица (таб., фл., мл), остаток показывается
+    дробно в упаковках и через «/» — целыми упаковками и штуками: «5,25 упак. / 5 упак. 2 таб.».
+    Иначе — просто «12 шт.».
+    """
+    ratios = sorted({(ratio, name) for ratio, name in units if ratio > 0})
+    if len({ratio for ratio, _ in ratios}) < 2:
+        if ratios and ratios[0][0] != 1:
+            ratio, name = ratios[0]
+            return f"{_number(qty / ratio)} {name}"
+        return f"{_number(qty)} {base}"
+    piece_ratio, piece = ratios[0]
+    pack_ratio, pack = ratios[-1]
+    packs = qty / pack_ratio
+    main = f"{_number(packs)} {pack}"
+    sign = "-" if qty < 0 else ""
+    whole = int(abs(packs).to_integral_value(rounding="ROUND_FLOOR"))
+    pieces = (abs(qty) - whole * pack_ratio) / piece_ratio
+    nearest = pieces.to_integral_value(rounding=ROUND_HALF_UP)
+    if abs(pieces - nearest) < D("0.02"):
+        pieces = nearest
+    per_pack = pack_ratio / piece_ratio
+    if pieces >= per_pack:  # округление дало целую упаковку
+        whole, pieces = whole + 1, pieces - per_pack
+    if pieces == 0:
+        return main
+    parts = [f"{whole} {pack}"] if whole else []
+    parts.append(f"{_number(pieces)} {piece}")
+    return f"{main} / {sign}{' '.join(parts)}"
+
+
+def qty_formatter(item_ids: Iterable[Any]) -> Callable[[Any, Decimal | None], str]:
+    """Функция «товар, остаток в единицах учёта → текст» для многих товаров сразу (один запрос
+    единиц на всех). Пример: «5,25 упак. / 5 упак. 2 таб.»."""
+    ids = {getattr(i, "pk", i) for i in item_ids}
+    bases = dict(Item.objects.filter(pk__in=ids).values_list("pk", "base_unit__name"))
+    units: dict[Any, list[tuple[Decimal, str]]] = {}
+    for item_id, ratio, name in ItemUnit.objects.filter(item_id__in=ids).values_list(
+        "item_id", "ratio", "unit__name"
+    ):
+        units.setdefault(item_id, []).append((ratio, name))
+
+    def text(item: Any, qty: Decimal | None) -> str:
+        key = getattr(item, "pk", item)
+        if isinstance(key, str):
+            key = next((k for k in bases if str(k) == key), key)
+        return _qty_text(D(str(qty or 0)), bases.get(key, ""), units.get(key, []))
+
+    return text
+
+
+def qty_text(item: Any, qty: Decimal | None) -> str:
+    """Остаток одного товара словами (см. qty_formatter)."""
+    return qty_formatter([item])(item, qty)

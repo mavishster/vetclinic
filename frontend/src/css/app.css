@@ -19,3 +19,6 @@
 .row-highlight-primary {
   background: rgba(36, 86, 106, 0.18);
 }
+.row-highlight-warning {
+  background: rgba(196, 140, 30, 0.18);
+}

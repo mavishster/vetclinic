@@ -28,13 +28,34 @@
           <div class="col-12 text-caption text-grey-7">Комбинации — по составу: товары в них — по лимиту товаров, услуги — по лимиту услуг.</div>
         </q-card-section>
       </q-card>
+      <q-card flat bordered class="q-mb-md">
+        <q-card-section>
+          <div class="text-subtitle1">Отделения: выдача и внесение остатков</div>
+          <div class="text-caption text-grey-7">
+            По этим срокам система предупреждает главного администратора (особое право «Отделения: нормы, контроль…») и
+            ответственного за отделение — на главной и значком в шапке. 0 — не напоминать.
+          </div>
+        </q-card-section>
+        <q-card-section class="q-pt-none row q-col-gutter-sm">
+          <q-input v-model.number="form.department_issue_days" type="number" step="1" min="0" max="365" outlined dense suffix="дн."
+            label="Выдавать не реже, чем раз в" class="col-12 col-sm-4" :readonly="!canEdit" :error="!!errors.department_issue_days"
+            :error-message="errors.department_issue_days" />
+          <q-input v-model.number="form.department_count_from_days" type="number" step="1" min="0" max="365" outlined dense suffix="дн."
+            label="Внести остатки — через" hint="после выдачи: «пора внести»" class="col-6 col-sm-4" :readonly="!canEdit"
+            :error="!!errors.department_count_from_days" :error-message="errors.department_count_from_days" />
+          <q-input v-model.number="form.department_count_due_days" type="number" step="1" min="0" max="365" outlined dense suffix="дн."
+            label="…и не позже" hint="после выдачи: «не внесены»" class="col-6 col-sm-4" :readonly="!canEdit"
+            :error="!!errors.department_count_due_days" :error-message="errors.department_count_due_days" />
+        </q-card-section>
+      </q-card>
       <q-btn v-if="canEdit" type="submit" color="primary" unelevated icon="save" label="Сохранить" :loading="saving" />
     </q-form>
   </q-page>
 </template>
 
 <script setup>
-// Настройки клиники: реквизиты для печатных форм и предельные скидки в счёте.
+// Настройки клиники: реквизиты для печатных форм, предельные скидки в счёте,
+// сроки выдачи и внесения остатков в отделениях (предупреждения).
 import { onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { apiGet, apiPatch, fieldErrors } from '@/api'

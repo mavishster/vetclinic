@@ -32,9 +32,9 @@
           <q-input v-if="form.kind === 'receipt'" v-model="form.supplier_number" label="№ накладной поставщика" outlined dense class="col-6 col-sm-2" :readonly="executed" />
           <q-input v-if="form.kind === 'receipt'" v-model="form.supplier_date" type="date" label="от" stack-label outlined dense class="col-6 col-sm-2" :readonly="executed" />
         </template>
-        <q-select v-if="form.kind === 'write_off'" v-model="form.department" :options="departments" option-value="id" option-label="name"
+        <q-select v-if="form.kind === 'write_off' && form.department" v-model="form.department" :options="departments" option-value="id" option-label="name"
           emit-value map-options clearable outlined dense label="На отделение" class="col-12 col-sm-3" :readonly="executed"
-          hint="Расходники — для отчёта «Расход по отделениям»" />
+          hint="Старое списание на отделение. Теперь — «Склад → Отделения»" />
         <q-input v-if="form.kind === 'write_off'" v-model="form.reason" label="Причина списания" outlined dense class="col-12 col-sm-4"
           :readonly="executed" />
         <q-input v-model="form.comment" label="Комментарий" outlined dense class="col-12" :readonly="executed" />
@@ -83,7 +83,7 @@
             <td v-if="form.kind === 'inventory'" class="text-right text-grey-8">
               {{ line.qty_expected === null || line.qty_expected === undefined ? '—' : `${Number(line.qty_expected)} ${line.base_unit}` }}
             </td>
-            <td style="width: 100px"><q-input v-model="line.quantity" type="number" step="0.001" min="0" dense borderless input-class="text-right" :readonly="executed" /></td>
+            <td style="width: 100px"><q-input v-model="line.quantity" type="number" step="any" min="0" dense borderless input-class="text-right" :readonly="executed" /></td>
             <td v-if="form.kind === 'inventory'" class="text-right text-weight-medium" :class="diffClass(line)">{{ diffText(line) }}</td>
             <template v-if="form.kind === 'receipt'">
               <td style="width: 120px"><q-input v-model="line.price" type="number" step="0.01" min="0" dense borderless input-class="text-right" :readonly="executed" /></td>
@@ -211,7 +211,7 @@ async function searchItems(text, update, abort) {
   if (text.trim().length < 2) return update(() => (found.value = []))
   const { ok, data } = await apiGet(`inventory/stock/lookup/?search=${encodeURIComponent(text)}`)
   if (!ok) return abort()
-  update(() => (found.value = data.map((u) => ({ ...u, label: `${u.item_name} — ${u.unit_name} (на складе ${Number(u.stock)} ${u.base_unit})` }))))
+  update(() => (found.value = data.map((u) => ({ ...u, label: `${u.item_name} — ${u.unit_name} (на складе ${u.stock_text})` }))))
 }
 
 function addFromSearch(id) {
@@ -224,7 +224,7 @@ async function loadBatches(line) {
   const params = new URLSearchParams({ item: line.item })
   if (form.value.warehouse) params.set('warehouse', form.value.warehouse)
   const { data } = await apiGet(`inventory/stock/batches/?${params}`)
-  line.batches = (data ?? []).map((b) => ({ ...b, label: `${b.label} · остаток ${Number(b.qty)}` }))
+  line.batches = (data ?? []).map((b) => ({ ...b, label: `${b.label} · остаток ${b.qty_text}` }))
 }
 
 async function addCounterparty(name, done) {

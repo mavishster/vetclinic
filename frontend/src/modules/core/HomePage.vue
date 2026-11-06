@@ -23,6 +23,16 @@
         <div><div class="text-h5">{{ toCall }}</div><div class="text-caption text-grey-7">к обзвону — напоминания клиентам</div></div>
       </q-card-section>
     </q-card>
+    <q-card v-if="departmentAlerts.length" flat bordered class="q-mb-md">
+      <q-card-section class="q-pb-xs text-subtitle1"><q-icon name="domain" color="warning" class="q-mr-sm" />Отделения</q-card-section>
+      <q-list dense>
+        <q-item v-for="a in departmentAlerts" :key="a.department + a.kind" clickable
+          @click="$router.push({ path: '/inventory/departments', query: { department: a.department } })">
+          <q-item-section avatar><q-icon :name="a.level === 'negative' ? 'error' : 'warning'" :color="a.level === 'negative' ? 'negative' : 'warning'" /></q-item-section>
+          <q-item-section><b>{{ a.department_name }}</b> {{ a.message }}</q-item-section>
+        </q-item>
+      </q-list>
+    </q-card>
     <div v-if="stock" class="row q-col-gutter-md q-mb-lg">
       <div v-for="card in stockCards" :key="card.title" class="col-12 col-sm-6 col-md-3">
         <q-card flat bordered class="cursor-pointer" @click="$router.push(card.to)">
@@ -56,6 +66,7 @@ const state = ref('loading') // loading | ok | error
 const stock = ref(null)
 const toCall = ref(0)
 const unassignedLab = ref(0)
+const departmentAlerts = ref([])
 const backup = ref(null)
 const fmt = (stamp) => new Date(stamp.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })
 
@@ -98,6 +109,8 @@ onMounted(async () => {
   if (can('reminders.view_reminder')) {
     apiGet('reminders/reminders/count/').then(({ ok, data }) => { if (ok) toCall.value = data.to_call })
   }
+  // Отделения: видят главный администратор (все) и ответственные (свои) — сервер решает сам.
+  apiGet('inventory/department-stock/alerts/').then(({ ok, data }) => { if (ok) departmentAlerts.value = data })
   if (can('inventory.view_stockmovement')) {
     apiGet('inventory/stock/summary/').then(({ ok, data }) => { if (ok) stock.value = data })
   }

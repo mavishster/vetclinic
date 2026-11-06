@@ -22,7 +22,6 @@ from catalog.models import Kind
 from core import services as core
 from inventory.models import (
     Batch,
-    Department,
     MinStock,
     StockDocument,
     StockLine,
@@ -46,11 +45,22 @@ def _q(value: Decimal) -> str:
 
 # --- Остатки -----------------------------------------------------------------------
 
+DEPARTMENT = Warehouse.Kind.DEPARTMENT
+
+
+def general_stock() -> QuerySet[StockMovement]:
+    """Движения общих складов — без складов отделений (ADR-024).
+
+    Выданное на отделение в общих остатках, счетах, медкарте и складских отчётах не видно:
+    оно учитывается только в разделе «Отделения».
+    """
+    return StockMovement.objects.exclude(warehouse__kind=DEPARTMENT)
+
 
 def _movements(
     item: Any = None, warehouse: Any = None, batch: Any = None
 ) -> QuerySet[StockMovement]:
-    queryset = StockMovement.objects.all()
+    queryset = StockMovement.objects.all() if warehouse is not None else general_stock()
     if item is not None:
         queryset = queryset.filter(item=item)
     if warehouse is not None:
@@ -137,8 +147,8 @@ class BalanceRow(TypedDict):
 def balances(
     warehouse: Any = None, search: str = "", expiring_days: int | None = None
 ) -> list[BalanceRow]:
-    """Остатки по товарам, складам и партиям (ненулевые)."""
-    queryset = StockMovement.objects.all()
+    """Остатки по товарам, складам и партиям (ненулевые). Склады отделений — не здесь."""
+    queryset = general_stock()
     if warehouse:
         queryset = queryset.filter(warehouse=warehouse)
     for word in search.split():
@@ -179,6 +189,16 @@ def balances(
     ]
 
 
+def with_qty_text(rows: list[Any], *fields: str, item_key: str = "item") -> list[Any]:
+    """Добавить к строкам остатки словами: поле qty → qty_text («5,25 упак. / 5 упак. 2 таб.»)."""
+    text = catalog.qty_formatter(row[item_key] for row in rows)
+    for row in rows:
+        for field in fields:
+            value = row.get(field)
+            row[f"{field}_text"] = text(row[item_key], value) if value is not None else ""
+    return rows
+
+
 # --- Черновик документа ------------------------------------------------------------
 
 
@@ -194,9 +214,27 @@ class LineData(TypedDict, total=False):
     batch: Any
 
 
+def _is_department(warehouse_id: Any) -> bool:
+    return (
+        warehouse_id is not None
+        and Warehouse.all_objects.filter(pk=warehouse_id, kind=DEPARTMENT).exists()
+    )
+
+
 @transaction.atomic
-def save_document(document: StockDocument, lines: list[LineData] | None = None) -> StockDocument:
-    """Сохранить черновик складского документа со строками."""
+def save_document(
+    document: StockDocument, lines: list[LineData] | None = None, *, department_ok: bool = False
+) -> StockDocument:
+    """Сохранить черновик складского документа со строками.
+
+    Документы складов отделений создаёт только раздел «Отделения» (department_ok=True).
+    """
+    if not department_ok and (
+        _is_department(document.warehouse_id) or _is_department(document.target_warehouse_id)
+    ):
+        raise StockError(
+            "Склад отделения пополняется и пересчитывается только в разделе «Склад → Отделения»."
+        )
     if document.kind == K.TRANSFER:
         if document.target_warehouse_id is None:
             raise StockError("Выберите склад, на который перемещается товар.")
@@ -483,9 +521,8 @@ def _close_negative(document: StockDocument, item: Any, batch: Batch, qty: Decim
 def negative_stock() -> list[dict[str, Any]]:
     """Товары в минусе (продано больше, чем оприходовано) — их ждёт приход."""
     rows = (
-        StockMovement.objects.values(
-            "item", "item__name", "item__base_unit__name", "warehouse__name"
-        )
+        general_stock()
+        .values("item", "item__name", "item__base_unit__name", "warehouse__name")
         .annotate(qty=Sum("qty_base"))
         .filter(qty__lt=0)
         .order_by("item__name")
@@ -598,6 +635,8 @@ def set_min_stock(item: Any, min_qty: Decimal, warehouse: Any = None) -> MinStoc
     """Задать минимум (0 — убрать правило)."""
     if min_qty < 0:
         raise StockError("Минимальный остаток не может быть отрицательным.")
+    if _is_department(getattr(warehouse, "pk", warehouse)):
+        raise StockError("Для отделения задаётся норма — в разделе «Склад → Отделения».")
     rule = MinStock.objects.filter(item=item, warehouse=warehouse).first()
     if min_qty == 0:
         if rule is not None:
@@ -623,7 +662,8 @@ def summary(days: int = 90) -> StockSummary:
     """Сводка для главной: партии просрочены, истекают за days дней, товары ниже минимума."""
     today = timezone.localdate()
     rows = (
-        StockMovement.objects.exclude(batch=None)
+        general_stock()
+        .exclude(batch=None)
         .values("batch", "batch__expiry_date")
         .annotate(qty=Sum("qty_base"))
         .filter(qty__gt=0, batch__expiry_date__isnull=False)
@@ -664,7 +704,11 @@ def turnover(
     start = datetime.combine(date_from, datetime.min.time(), zone)
     end = datetime.combine(date_to, datetime.min.time(), zone) + timedelta(days=1)
     # Откатанные документы (и их обратные записи) в оборот не попадают.
-    movements = StockMovement.objects.effective().filter(posted_at__lt=end)
+    movements = (
+        StockMovement.objects.effective()
+        .exclude(warehouse__kind=DEPARTMENT)
+        .filter(posted_at__lt=end)
+    )
     if warehouse:
         movements = movements.filter(warehouse=warehouse)
     for word in search.split():
@@ -731,7 +775,7 @@ def expected_cost(item: Any, warehouse: Any = None) -> Decimal | None:
 def visible_warehouses(user: Any) -> QuerySet[Warehouse]:
     """Склады, которые видит сотрудник: без ограничения ролей — все; иначе — если у него
     есть одна из ролей склада. Суперпользователь видит все."""
-    warehouses = Warehouse.objects.all()
+    warehouses = Warehouse.objects.exclude(kind=DEPARTMENT)  # склады отделений — в «Отделениях»
     if getattr(user, "is_superuser", False):
         return warehouses
     roles = list(user.groups.values_list("pk", flat=True)) if user and user.is_authenticated else []
@@ -919,89 +963,6 @@ def quick_transfer(source: Any, target: Any, lines: list[LineData]) -> StockDocu
         lines,
     )
     return core.execute_document(document)
-
-
-# --- Списание на отделения ----------------------------------------------------------
-
-
-@transaction.atomic
-def department_writeoff(
-    source: Any, department: Any, lines: list[LineData], reason: str = ""
-) -> StockDocument:
-    """Списать расходные материалы со склада на отделение: документ «Списание» с отделением —
-    создать и провести (по партиям, ранний срок первым)."""
-    if department is None:
-        raise StockError("Выберите отделение.")
-    if not lines:
-        raise StockError("Нечего списывать — отсканируйте или добавьте материалы.")
-    document = save_document(
-        StockDocument(
-            kind=K.WRITE_OFF,
-            warehouse_id=getattr(source, "pk", source),
-            department_id=getattr(department, "pk", department),
-            reason=reason.strip() or f"на отделение «{department}»",
-        ),
-        lines,
-    )
-    return core.execute_document(document)
-
-
-class ConsumptionRow(TypedDict):
-    department: str
-    department_name: str
-    item: str
-    item_name: str
-    unit: str
-    qty: Decimal
-    cost: Decimal
-
-
-def department_consumption(
-    date_from: date, date_to: date, department: Any = None
-) -> list[ConsumptionRow]:
-    """Расход по отделениям за период: что и сколько списано на каждое отделение
-    (по выполненным документам «Списание на отделение»), по себестоимости партий."""
-    from datetime import datetime, time
-
-    from django.contrib.contenttypes.models import ContentType
-
-    zone = timezone.get_current_timezone()
-    start = datetime.combine(date_from, time.min, zone)
-    end = datetime.combine(date_to, time.min, zone) + timedelta(days=1)
-    documents = StockDocument.objects.filter(
-        kind=K.WRITE_OFF,
-        status=StockDocument.Status.EXECUTED,
-        department__isnull=False,
-        date__gte=start,
-        date__lt=end,
-    )
-    if department:
-        documents = documents.filter(department=department)
-    departments = dict(documents.values_list("pk", "department_id"))
-    names = {d.pk: d.name for d in Department.objects.filter(pk__in=set(departments.values()))}
-    movements = StockMovement.objects.filter(
-        document_type=ContentType.objects.get_for_model(StockDocument),
-        document_id__in=list(departments),
-        reversal_of=None,
-    ).select_related("item__base_unit")
-    totals: dict[tuple[Any, Any], ConsumptionRow] = {}
-    for m in movements:
-        dep = departments[m.document_id]
-        row = totals.setdefault(
-            (dep, m.item_id),
-            {
-                "department": str(dep),
-                "department_name": names.get(dep, ""),
-                "item": str(m.item_id),
-                "item_name": m.item.name,
-                "unit": m.item.base_unit.name,
-                "qty": ZERO,
-                "cost": ZERO,
-            },
-        )
-        row["qty"] += -m.qty_base
-        row["cost"] += (-m.qty_base * m.cost_per_base).quantize(Decimal("0.01"))
-    return sorted(totals.values(), key=lambda r: (r["department_name"], r["item_name"]))
 
 
 class WarehouseTotal(TypedDict):

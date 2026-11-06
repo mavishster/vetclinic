@@ -28,7 +28,7 @@
               input-debounce="300" outlined dense label="Товар" @filter="search" />
             <q-select v-model="form.warehouse" :options="warehouses" option-value="id" option-label="name" emit-value map-options
               outlined dense clearable label="Склад (пусто — все склады)" />
-            <q-input v-model="form.min_qty" type="number" step="0.001" min="0" outlined dense
+            <q-input v-model="form.min_qty" type="number" step="any" min="0" outlined dense
               :label="`Минимум${unitName ? `, ${unitName}` : ''}`" />
             <div v-if="error" class="text-negative">{{ error }}</div>
           </q-card-section>
@@ -60,8 +60,8 @@ const qty = (v) => Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 3 
 const columns = [
   { name: 'item', label: 'Товар', field: 'item_name', align: 'left', classes: 'text-weight-medium' },
   { name: 'warehouse', label: 'Склад', field: 'warehouse_name', align: 'left' },
-  { name: 'qty', label: 'Остаток', field: (r) => `${qty(r.qty)} ${r.unit}`, align: 'right', classes: 'text-negative' },
-  { name: 'min', label: 'Минимум', field: (r) => `${qty(r.min_qty)} ${r.unit}`, align: 'right' },
+  { name: 'qty', label: 'Остаток', field: 'qty_text', align: 'right', classes: 'text-negative' },
+  { name: 'min', label: 'Минимум', field: 'min_qty_text', align: 'right' },
   { name: 'order', label: 'Не хватает до минимума', field: (r) => `${qty(Number(r.min_qty) - Number(r.qty))} ${r.unit}`, align: 'right' },
 ]
 
@@ -76,7 +76,7 @@ async function search(text, update, abort) {
   const { ok, data } = await apiGet(`inventory/stock/lookup/?search=${encodeURIComponent(text)}`)
   if (!ok) return abort()
   const unique = [...new Map(data.map((u) => [u.item, u])).values()]
-  update(() => (found.value = unique.map((u) => ({ item: u.item, base_unit: u.base_unit, label: `${u.item_name} (остаток ${Number(u.stock)} ${u.base_unit})` }))))
+  update(() => (found.value = unique.map((u) => ({ item: u.item, base_unit: u.base_unit, label: `${u.item_name} (остаток ${u.stock_text})` }))))
 }
 
 async function save() {

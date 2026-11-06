@@ -14,6 +14,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from catalog import services as catalog
 from clients.models import Pet
 from core import services as core
 from core.api.directories import DirectoryViewSet
@@ -428,7 +429,12 @@ class PreventionViewSet(viewsets.ReadOnlyModelViewSet):  # type: ignore[type-arg
         """Партии препарата с остатком: ?item=<id>."""
         return Response(
             [
-                {"batch": str(s.batch.pk), "label": str(s.batch), "qty": str(s.qty)}
+                {
+                    "batch": str(s.batch.pk),
+                    "label": str(s.batch),
+                    "qty": str(s.qty),
+                    "qty_text": catalog.qty_text(s.batch.item_id, s.qty),
+                }
                 for s in services.batches_for(request.query_params.get("item"))
             ]
         )

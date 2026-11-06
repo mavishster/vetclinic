@@ -31,7 +31,7 @@
               map-options use-input input-debounce="300" outlined dense label="Товар или услуга" class="col-12 col-sm-6"
               @filter="(text, update, abort) => searchUnits(line, text, update, abort)"
               @update:model-value="(id) => onPick(line, id)" />
-            <q-input v-model="line.quantity" type="number" step="0.001" min="0" outlined dense label="Кол-во" class="col-4 col-sm-2" />
+            <q-input v-model="line.quantity" type="number" step="any" min="0" outlined dense label="Кол-во" class="col-4 col-sm-2" />
             <q-input v-model="line.price_override" type="number" step="0.01" min="0" outlined dense clearable
               label="Своя цена" :placeholder="line.current_price ? money(line.current_price) : ''" stack-label
               class="col-5 col-sm-2" />

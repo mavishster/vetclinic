@@ -8,11 +8,14 @@ export const DOC_KINDS = {
   return: { label: 'Возврат поставщику', icon: 'assignment_return', color: 'deep-orange' },
 }
 
+// Раздел «Отделения»: смотреть остатки, выдавать, вносить остатки, задавать нормы (ADR-024).
+export const DEPARTMENT_PERMS = ['inventory.view_department', 'inventory.add_stockdocument', 'inventory.count_department', 'inventory.manage_department']
+
 export default [
   { path: 'inventory/stock', component: () => import('./StockPage.vue'), meta: { perm: 'inventory.view_stockmovement' } },
   { path: 'inventory/documents', component: () => import('./DocumentsPage.vue'), meta: { perm: 'inventory.view_stockdocument' } },
   { path: 'inventory/transfer', component: () => import('./TransferPage.vue'), meta: { perm: 'inventory.add_stockdocument' } },
-  { path: 'inventory/department-writeoff', component: () => import('./TransferPage.vue'), props: { department: true }, meta: { perm: 'inventory.add_stockdocument' } },
+  { path: 'inventory/departments', component: () => import('./DepartmentsPage.vue'), meta: { perm: DEPARTMENT_PERMS } },
   {
     path: 'directories/departments',
     component: DirectoryPage,

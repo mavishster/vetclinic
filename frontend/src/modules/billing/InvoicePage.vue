@@ -78,10 +78,10 @@
             <tr>
               <td>
                 <div class="text-weight-medium">{{ line.name }}</div>
-                <div class="text-caption text-grey-7">{{ line.unit_name }}<span v-if="line.stock !== undefined && line.stock !== null"> · на складе {{ Number(line.stock) }}</span></div>
+                <div class="text-caption text-grey-7">{{ line.unit_name }}<span v-if="line.stock !== undefined && line.stock !== null"> · на складе {{ line.stock_text || Number(line.stock) }}</span></div>
                 <div v-for="(child, c) in line.children" :key="c" class="text-caption text-grey-7">— {{ child.name }} × {{ Number(child.quantity) }} = {{ money(child.amount) }}<span v-if="child.discount_percent"> (−{{ Number(child.discount_percent) }} %)</span></div>
               </td>
-              <td style="width: 90px"><q-input v-model="line.quantity" type="number" step="0.001" min="0" dense borderless input-class="text-right" :readonly="executed" /></td>
+              <td style="width: 90px"><q-input v-model="line.quantity" type="number" step="any" min="0" dense borderless input-class="text-right" :readonly="executed" /></td>
               <td style="width: 140px">
                 <q-input v-if="line.item_unit" v-model="line.price" type="number" step="0.01" min="0" dense borderless input-class="text-right"
                   :readonly="executed" :error="outOfBounds(line)" :hint="bounds(line)" />
@@ -256,7 +256,7 @@ function addLine(option) {
   form.value.lines.push({
     item_unit: option.item_unit, item: option.item, name: option.name, unit_name: option.unit, quantity: '1',
     price: option.price, list_price: option.price, price_min: option.price_min, price_max: option.price_max,
-    stock: option.stock, performer: form.value.doctor || null, children: [],
+    stock: option.stock, stock_text: option.stock_text, performer: form.value.doctor || null, children: [],
     max_discount: option.max_discount ? { percent: option.max_discount, reason: option.max_reason } : null,
     unit_cost: option.unit_cost ?? null, cost_source: option.cost_source || '', kind: option.kind,
     discount_percent: option.item_unit ? defaultDiscount(option) : null,
@@ -295,7 +295,7 @@ async function search(text, update, abort) {
   if (!ok) return abort()
   update(() => (found.value = data.map((o) => ({
     ...o, key: o.item_unit || o.item,
-    label: `${o.name} — ${o.unit} · ${o.price ? money(o.price) : 'цена по закупке'}${o.stock !== null ? ` · на складе ${Number(o.stock)}` : ''}`,
+    label: `${o.name} — ${o.unit} · ${o.price ? money(o.price) : 'цена по закупке'}${o.stock !== null ? ` · на складе ${o.stock_text || Number(o.stock)}` : ''}`,
   }))))
 }
 

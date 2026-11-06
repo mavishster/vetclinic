@@ -24,8 +24,12 @@ class Warehouse(Directory):
     class Kind(models.TextChoices):
         SALE = "sale", "реализация"
         STORAGE = "storage", "хранение"
+        # Склад отделения — создаётся сам у каждого отделения (ADR-024). Виден только в разделе
+        # «Отделения»: выдача с основного склада, остатки, пересчёт. В счетах, медкарте,
+        # общих остатках, отчётах и выборе склада его нет.
+        DEPARTMENT = "department", "отделение"
 
-    kind = models.CharField("тип", max_length=8, choices=Kind.choices, default=Kind.SALE)
+    kind = models.CharField("тип", max_length=10, choices=Kind.choices, default=Kind.SALE)
     responsible = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         verbose_name="ответственный",
@@ -49,8 +53,11 @@ class Warehouse(Directory):
 
 
 class Department(Directory):
-    """Отделение клиники (хирургия, стационар, терапия, приёмная): на него списываются
-    расходные материалы — чтобы видеть, сколько и чего тратит каждое отделение."""
+    """Отделение клиники (хирургия, стационар, терапия, приёмная).
+
+    У отделения свой склад (warehouse, тип «отделение», ADR-024): материалы выдаются на него
+    с основного склада, остатки периодически пересчитываются, разница — расход отделения.
+    """
 
     responsible = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -60,10 +67,56 @@ class Department(Directory):
         blank=True,
         related_name="+",
     )
+    warehouse = models.OneToOneField(
+        Warehouse,
+        verbose_name="склад отделения",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name="department",
+    )
 
     class Meta(Directory.Meta):
         verbose_name = "отделение"
         verbose_name_plural = "отделения"
+        permissions = [
+            ("count_department", "Отделения: вносить остатки (пересчёт)"),
+            (
+                "manage_department",
+                "Отделения: нормы, контроль выдачи и пересчёта (предупреждения)",
+            ),
+        ]
+
+
+class DepartmentNorm(BaseModel):
+    """Норма материала в отделении (в единицах учёта): ниже — пора выдать.
+
+    Задаёт тот, у кого особое право «Отделения: нормы…» (главный администратор).
+    """
+
+    department = models.ForeignKey(
+        Department, verbose_name="отделение", on_delete=models.PROTECT, related_name="norms"
+    )
+    item = models.ForeignKey(
+        "catalog.Item", verbose_name="товар", on_delete=models.PROTECT, related_name="+"
+    )
+    norm_qty = QuantityField("норма, в единицах учёта")
+
+    class Meta:
+        default_permissions = ()  # особое право отделения
+        verbose_name = "норма отделения"
+        verbose_name_plural = "нормы отделений"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["department", "item"],
+                condition=models.Q(is_deleted=False),
+                name="inventory_departmentnorm_unique",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.department}: {self.item} — {self.norm_qty}"
 
 
 class Manufacturer(Directory):

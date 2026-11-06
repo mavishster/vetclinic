@@ -166,7 +166,7 @@ def _entity_title(model: type[Any]) -> str:
 # Пояснения к строкам таблицы прав — для того, кто настраивает роли (не для разработчика).
 PERMISSION_HINTS = {
     "core.user": "Учётные записи сотрудников: логин, пароль, ФИО.",
-    "core.clinic": "Настройки клиники: реквизиты для печатных форм, лимиты скидок в счёте.",
+    "core.clinic": "Настройки клиники: реквизиты, лимиты скидок, сроки выдачи и пересчёта.",
     "core.attachment": "Файлы у клиентов, питомцев и приёмов: сканы, снимки, договоры.",
     "core.printtemplate": "Шаблоны печати: выписка из медкарты, счёт, этикетка.",
     "core.filecategory": "Список категорий файлов: договор, анализы, рентген…",
@@ -206,7 +206,7 @@ PERMISSION_HINTS = {
     "inventory.batch": "Партии товаров: серии и сроки годности.",
     "inventory.stockmovement": "Остатки на складах.",
     "inventory.minstock": "Минимальные остатки — «нужно заказать».",
-    "inventory.department": "Список отделений клиники — на них списываются расходные материалы.",
+    "inventory.department": "Список отделений клиники и их ответственные; у каждого — свой склад.",
     "inventory.warehouse": "Список складов.",
     "inventory.manufacturer": "Список производителей.",
     "cash.cashshift": "Смены и закрытие кассы.",
@@ -321,6 +321,7 @@ _DIRECTORIES_VIEW = [
     "medical.preventiontype",
     "staff.position",
     "inventory.warehouse",
+    "inventory.department",
     "core.filecategory",
     "cash.cashregister",
 ]

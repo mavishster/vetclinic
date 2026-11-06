@@ -10,7 +10,7 @@
         <q-select v-model="form.item" :options="preparations" option-value="id" option-label="name" emit-value map-options
           outlined dense clearable :label="itemLabel" class="col-12 col-sm-5"
           :hint="preparations.length ? '' : 'Отметьте в каталоге у группы или позиции вид профилактики'" />
-        <q-input v-model="form.quantity" type="number" step="0.001" min="0" outlined dense label="Кол-во" class="col-12 col-sm-2" />
+        <q-input v-model="form.quantity" type="number" step="any" min="0" outlined dense label="Кол-во" class="col-12 col-sm-2" />
       </div>
       <div v-if="!oneTime" class="row q-col-gutter-sm items-center">
         <q-select v-if="isVaccination" v-model="form.stage" :options="STAGES" emit-value map-options outlined dense
@@ -110,7 +110,7 @@ const batches = ref([])
 // Партии выбранного препарата с остатком на складе.
 watch(() => form.value.item, async (item) => {
   form.value.batch = editingId.value ? form.value.batch : null
-  batches.value = item ? ((await apiGet(`medical/preventions/batches/?item=${item}`)).data ?? []).map((b) => ({ ...b, label: `${b.label} · остаток ${Number(b.qty)}` })) : []
+  batches.value = item ? ((await apiGet(`medical/preventions/batches/?item=${item}`)).data ?? []).map((b) => ({ ...b, label: `${b.label} · остаток ${b.qty_text}` })) : []
 })
 
 async function onType(typeId, keepItem = false) {

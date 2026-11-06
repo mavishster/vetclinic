@@ -16,7 +16,7 @@ select = ["E", "W", "F", "I", "B", "UP", "DJ", "SIM"]
 
 [tool.mypy]
 # Типы обязательны в публичных входах модулей (ENGINEERING.md).
-files = ["*/services.py"]
+files = ["*/services.py", "inventory/departments.py"]
 plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
 strict = true
 ignore_missing_imports = false
