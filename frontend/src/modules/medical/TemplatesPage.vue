@@ -2,6 +2,8 @@
   <q-page padding>
     <div class="row items-center q-mb-md q-gutter-sm">
       <h1 class="text-h5 q-my-none col-grow">Шаблоны медкарты</h1>
+      <q-btn v-if="can('medical.add_texttemplate')" flat color="primary" icon="upload_file" label="Импорт из VetManager"
+        @click="importOpen = true" />
       <q-btn color="primary" unelevated icon="add" label="Новый шаблон" @click="open()" />
     </div>
     <p class="text-grey-8">
@@ -18,6 +20,31 @@
         </q-td>
       </template>
     </q-table>
+
+    <!-- Импорт общих шаблонов из VetManager: файл — ответ API MedicalCards/MedcardsTextTemplates -->
+    <q-dialog v-model="importOpen">
+      <q-card style="width: 560px; max-width: 96vw">
+        <q-card-section class="text-h6">Импорт шаблонов из VetManager</q-card-section>
+        <q-card-section class="q-pt-none q-gutter-y-sm">
+          <div class="text-caption text-grey-8">
+            Сохраните ответ VetManager в файл (администратору — команда ниже) и выберите его здесь. Шаблоны станут общими,
+            «___» в тексте — полями [___]. Шаблоны с уже существующим названием пропускаются.
+          </div>
+          <pre class="text-caption q-pa-sm rounded-borders bg-grey-2 text-dark" style="white-space: pre-wrap">curl -s -H "X-REST-API-KEY: КЛЮЧ" "https://ВАШ-ДОМЕН.vetmanager.ru/rest/api/MedicalCards/MedcardsTextTemplates?tpls_for=1" > vm-templates.json</pre>
+          <q-file v-model="importFile" accept=".json,application/json" outlined dense label="Файл vm-templates.json"
+            :error="!!importError" :error-message="importError">
+            <template #prepend><q-icon name="attach_file" /></template>
+          </q-file>
+          <q-select v-model="importSection" :options="SECTIONS" emit-value map-options outlined dense label="На какой вкладке предлагать"
+            hint="VetManager отдаёт шаблоны описания и рекомендаций одним списком" />
+          <q-checkbox v-model="importUpdate" dense label="Заменить текст шаблонов с тем же названием" />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Отмена" v-close-popup />
+          <q-btn color="primary" unelevated icon="upload" label="Импортировать" :disable="!importFile" :loading="importing" @click="runImport" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
 
     <q-dialog v-model="editorOpen">
       <q-card style="width: 820px; max-width: 96vw">
@@ -61,7 +88,8 @@
 // Шаблоны текста медкарты: общие и личные, с переменными и полями для заполнения.
 import { onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
-import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
+import { apiDelete, apiGet, apiPatch, apiPost, apiUpload, fieldErrors } from '@/api'
+import { can } from '@/session'
 
 const $q = useQuasar()
 const SECTIONS = [
@@ -73,6 +101,28 @@ const variables = ref([])
 const editorOpen = ref(false)
 const form = ref({})
 const error = ref('')
+const importOpen = ref(false)
+const importFile = ref(null)
+const importSection = ref('both')
+const importUpdate = ref(false)
+const importing = ref(false)
+const importError = ref('')
+
+async function runImport() {
+  importError.value = ''
+  importing.value = true
+  const body = new FormData()
+  body.append('file', importFile.value)
+  body.append('section', importSection.value)
+  body.append('update', importUpdate.value ? '1' : '0')
+  const { ok, data } = await apiUpload('medical/text-templates/import-vetmanager/', body)
+  importing.value = false
+  if (!ok) return (importError.value = Object.values(fieldErrors(data))[0] || 'Не удалось импортировать')
+  importOpen.value = false
+  importFile.value = null
+  $q.notify({ type: 'positive', message: `Добавлено: ${data.created}, обновлено: ${data.updated}, пропущено: ${data.skipped}` })
+  load()
+}
 const columns = [
   { name: 'name', label: 'Название', field: 'name', align: 'left', classes: 'text-weight-medium' },
   { name: 'section', label: 'Вкладка', field: (r) => SECTIONS.find((s) => s.value === r.section)?.label, align: 'left' },

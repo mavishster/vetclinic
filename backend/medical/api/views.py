@@ -11,6 +11,7 @@ from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.parsers import MultiPartParser
 from rest_framework.request import Request
 from rest_framework.response import Response
 
@@ -159,6 +160,25 @@ class TextTemplateViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             )
             return Response(self.get_serializer(found, many=True).data)
         return super().list(request, *args, **kwargs)
+
+    @action(detail=False, methods=["post"], url_path="import-vetmanager",
+            parser_classes=[MultiPartParser])  # fmt: skip
+    def import_vetmanager(self, request: Request) -> Response:
+        """Импорт общих шаблонов из VetManager (multipart: file — ответ
+        MedicalCards/MedcardsTextTemplates; section; update=1 — заменить совпадающие)."""
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError({"file": ["Выберите файл."]})
+        try:
+            rows = services.vetmanager_templates(upload.read())
+            result = services.import_vetmanager_templates(
+                rows,
+                request.data.get("section") or "both",
+                str(request.data.get("update", "")).lower() in {"1", "true", "yes"},
+            )
+        except services.MedicalError as error:
+            raise ValidationError({"file": [str(error)]}) from error
+        return Response(result)
 
     @action(detail=False, methods=["get"])
     def variables(self, request: Request) -> Response:

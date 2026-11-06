@@ -564,6 +564,72 @@ def save_template(template: Any) -> Any:
     return template
 
 
+# --- Импорт шаблонов из VetManager -------------------------------------------------
+
+# Пустое место для заполнения в тексте VetManager: «новокаин 0,5% ___» → поле [___].
+_VM_BLANK = re.compile(r"(?<!\[)_{3,}(?!\s*\])")
+# Служебные теги из Word («<o:p></o:p>») — без них текст тот же.
+_VM_WORD_TAGS = re.compile(r"</?o:[a-z]+[^>]*>", re.IGNORECASE)
+
+
+def vetmanager_templates(data: Any) -> list[dict[str, Any]]:
+    """Шаблоны из ответа VetManager GET /rest/api/MedicalCards/MedcardsTextTemplates:
+    {"data": {"medicalcards": [{"id", "title", "full_text"}]}, "success": true}."""
+    if isinstance(data, (bytes, str)):
+        import json
+
+        try:
+            data = json.loads(data)
+        except ValueError as error:
+            raise MedicalError("Это не ответ VetManager: файл не в формате JSON.") from error
+    rows = (data or {}).get("data", {}).get("medicalcards") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise MedicalError(
+            "Это не список шаблонов VetManager: нет data.medicalcards. "
+            "Нужен ответ MedicalCards/MedcardsTextTemplates."
+        )
+    return [r for r in rows if isinstance(r, dict)]
+
+
+@transaction.atomic
+def import_vetmanager_templates(
+    rows: list[dict[str, Any]], section: str = "both", update: bool = False
+) -> dict[str, int]:
+    """Перенести текстовые шаблоны медкарты из VetManager как общие шаблоны.
+
+    HTML очищается (как любой текст медкарты), «___» становится полем [___].
+    Шаблон с тем же названием уже есть — пропускается (update=True — текст заменяется).
+    VetManager не различает шаблоны описания и рекомендаций в ответе API (параметр tpls_for
+    отдаёт одно и то же), поэтому вкладка задаётся при импорте: по умолчанию — обе.
+    """
+    from medical.models import TextTemplate
+
+    if section not in TextTemplate.Section.values:
+        raise MedicalError("Неизвестная вкладка шаблона.")
+    result = {"created": 0, "updated": 0, "skipped": 0}
+    existing = {t.name.strip().lower(): t for t in TextTemplate.objects.filter(owner=None)}
+    for row in rows:
+        name = str(row.get("title") or "").strip()[:200]
+        body = _VM_WORD_TAGS.sub("", str(row.get("full_text") or ""))
+        body = clean(_VM_BLANK.sub("[___]", body)).strip()
+        if not name or not body:
+            result["skipped"] += 1
+            continue
+        template = existing.get(name.lower())
+        if template is not None and not update:
+            result["skipped"] += 1
+            continue
+        if template is None:
+            template = TextTemplate(name=name, section=section)
+            existing[name.lower()] = template
+            result["created"] += 1
+        else:
+            result["updated"] += 1
+        template.body_html = body
+        template.save()
+    return result
+
+
 # --- Назначения --------------------------------------------------------------------
 
 
