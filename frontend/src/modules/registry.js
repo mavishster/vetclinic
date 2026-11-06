@@ -2,6 +2,8 @@ import { DEPARTMENT_PERMS } from './inventory/routes'
 
 // Меню. Пункт виден, если у пользователя есть право perm.
 // Пункт без маршрута — модуль в разработке, с номером этапа из docs/PROJECT_PLAN.md (раздел 8).
+// Раздел с collapsible сворачивается по щелчку на заголовке; expanded — открыт ли он по умолчанию.
+// Выбор сотрудника запоминается в браузере; раздел с открытой сейчас страницей раскрывается сам.
 export default [
   {
     items: [{ title: 'Главная', icon: 'home', to: '/' }],
@@ -20,10 +22,6 @@ export default [
       { title: 'Профилактика', icon: 'health_and_safety', to: '/medical/prevention', perm: 'medical.view_prevention' },
       { title: 'Счета', icon: 'receipt_long', to: '/invoices', perm: 'billing.view_invoice' },
       { title: 'Касса', icon: 'point_of_sale', to: '/cash', perm: 'cash.view_cashmovement' },
-      { title: 'Остатки', icon: 'inventory_2', to: '/inventory/stock', perm: 'inventory.view_stockmovement' },
-      { title: 'На оперативный', icon: 'move_down', to: '/inventory/transfer', perm: 'inventory.add_stockdocument' },
-      { title: 'Отделения', icon: 'domain', to: '/inventory/departments', perm: DEPARTMENT_PERMS },
-      { title: 'Документы склада', icon: 'local_shipping', to: '/inventory/documents', perm: 'inventory.view_stockdocument' },
       { title: 'Товары и услуги', icon: 'sell', to: '/catalog', perm: 'catalog.view_item' },
       { title: 'Стационар', icon: 'local_hotel', to: '/inpatient', perm: 'inpatient.view_hospitalization' },
       { title: 'Лаборатория', icon: 'biotech', to: '/laboratory', perm: 'laboratory.view_labresult' },
@@ -32,7 +30,26 @@ export default [
     ],
   },
   {
+    title: 'Склад',
+    icon: 'warehouse',
+    collapsible: true,
+    expanded: true,
+    items: [
+      { title: 'Остатки', icon: 'inventory_2', to: '/inventory/stock', perm: 'inventory.view_stockmovement' },
+      { title: 'На оперативный', icon: 'move_down', to: '/inventory/transfer', perm: 'inventory.add_stockdocument' },
+      { title: 'Отделения', icon: 'domain', to: '/inventory/departments', perm: DEPARTMENT_PERMS },
+      { title: 'Документы склада', icon: 'local_shipping', to: '/inventory/documents', perm: 'inventory.view_stockdocument' },
+      { title: 'Склады', icon: 'warehouse', to: '/directories/warehouses', perm: 'inventory.view_warehouse' },
+      { title: 'Отделения (справочник)', icon: 'apartment', to: '/directories/departments', perm: 'inventory.view_department' },
+      { title: 'Производители', icon: 'factory', to: '/directories/manufacturers', perm: 'inventory.view_manufacturer' },
+      { title: 'Контрагенты', icon: 'handshake', to: '/directories/counterparties', perm: 'core.view_counterparty' },
+    ],
+  },
+  {
     title: 'Справочники',
+    icon: 'menu_book',
+    collapsible: true,
+    expanded: false,
     items: [
       { title: 'Виды животных', icon: 'category', to: '/directories/species', perm: 'clients.view_species' },
       { title: 'Породы', icon: 'list', to: '/directories/breeds', perm: 'clients.view_breed' },
@@ -54,10 +71,6 @@ export default [
       { title: 'Показатели анализов', icon: 'science', to: '/directories/analytes', perm: 'laboratory.view_analyte' },
       { title: 'Планшеты подписи', icon: 'tablet_mac', to: '/directories/signing-stations', perm: 'clients.view_signingstation' },
       { title: 'Палаты', icon: 'meeting_room', to: '/directories/wards', perm: 'inpatient.view_ward' },
-      { title: 'Отделения', icon: 'domain', to: '/directories/departments', perm: 'inventory.view_department' },
-      { title: 'Склады', icon: 'warehouse', to: '/directories/warehouses', perm: 'inventory.view_warehouse' },
-      { title: 'Производители', icon: 'factory', to: '/directories/manufacturers', perm: 'inventory.view_manufacturer' },
-      { title: 'Контрагенты', icon: 'handshake', to: '/directories/counterparties', perm: 'core.view_counterparty' },
       { title: 'Категории файлов', icon: 'folder', to: '/directories/file-categories', perm: 'core.view_filecategory' },
       { title: 'Как нашли клинику', icon: 'campaign', to: '/directories/client-sources', perm: 'clients.view_clientsource' },
     ],
