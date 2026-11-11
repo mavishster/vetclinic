@@ -38,11 +38,17 @@
           </q-input>
         </q-card-section>
         <q-list dense class="q-pa-sm" style="max-height: 360px; overflow: auto">
-          <q-item v-for="(option, i) in results" :key="option.id" clickable :active="i === active"
-            active-class="row-highlight-primary" @click="choose(option)">
-            <q-item-section>{{ option.label }}</q-item-section>
-            <q-item-section side>{{ option.price ? money(option.price) : '' }}</q-item-section>
-          </q-item>
+          <!-- Разделы: по названию, аналоги по действующему веществу, та же группа -->
+          <template v-for="(option, i) in results" :key="option.id">
+            <q-item-label v-if="option.header" header class="text-caption text-weight-medium q-py-xs">{{ option.header }}</q-item-label>
+            <q-item clickable :active="i === active" active-class="row-highlight-primary" @click="choose(option)">
+              <q-item-section>
+                <q-item-label>{{ option.label }}</q-item-label>
+                <q-item-label v-if="option.section_note" caption>{{ option.section_note }}</q-item-label>
+              </q-item-section>
+              <q-item-section side>{{ option.price ? money(option.price) : '' }}</q-item-section>
+            </q-item>
+          </template>
           <q-item v-if="query.length >= 2 && !results.length"><q-item-section class="text-grey-7">Не найдено</q-item-section></q-item>
         </q-list>
       </q-card>
@@ -57,6 +63,7 @@ import { ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { apiGet, apiPost } from '@/api'
 import { money } from '@/modules/catalog/money'
+import { withHeaders } from '@/modules/catalog/sections'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -185,10 +192,13 @@ function onKeydown(event) {
 async function search(text) {
   active.value = 0
   if (!text || text.trim().length < 2) return (results.value = [])
-  const { data } = await apiGet(`catalog/items/?kind=goods,service&active=true&page_size=15&search=${encodeURIComponent(text)}`)
-  results.value = (data?.results ?? []).flatMap((item) =>
-    item.units.filter((u) => u.for_sale).map((u) => ({
+  // suggest=1: по названию (с опечатками), аналоги по веществу, препараты той же группы.
+  const { data } = await apiGet(`catalog/items/?kind=goods,service&active=true&suggest=1&search=${encodeURIComponent(text)}`)
+  results.value = withHeaders(data?.results ?? []).flatMap((item) =>
+    item.units.filter((u) => u.for_sale).map((u, index) => ({
       id: u.id, label: `${item.name} (${u.unit_name})`, price: u.current_price, name: item.name, unit: u.unit_name,
+      // Заголовок раздела — только у первой единицы позиции.
+      header: index === 0 ? item.header : '', section_note: index === 0 ? item.section_note : '',
     })),
   )
 }

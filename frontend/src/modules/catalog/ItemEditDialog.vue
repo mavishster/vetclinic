@@ -110,6 +110,24 @@
           </div>
         </q-card-section>
 
+        <!-- Препарат: вещества и группа — по ним поиск предлагает аналоги и то же действие -->
+        <q-card-section v-if="isGoods" class="q-pt-none">
+          <div class="row q-col-gutter-sm">
+            <q-select v-model="form.substances" :options="substances" option-value="id" :option-label="substanceLabel" emit-value
+              map-options multiple use-chips use-input input-debounce="200" outlined dense class="col-12 col-md-6"
+              label="Действующие вещества" hint="Для препаратов. По ним поиск находит аналоги" new-value-mode="add-unique"
+              @filter="filterSubstances" @new-value="addSubstance" @update:model-value="suggestGroups">
+              <template #no-option><q-item><q-item-section class="text-grey-7">Нет в списке — впишите и нажмите Enter</q-item-section></q-item></template>
+            </q-select>
+            <q-select v-model="form.drug_groups" :options="drugGroups" option-value="id" option-label="name" emit-value
+              map-options multiple use-chips use-input input-debounce="200" outlined dense class="col-12 col-md-6"
+              label="Группа препарата" hint="Противорвотное, анестетик… Подставится по веществу" new-value-mode="add-unique"
+              @filter="filterGroups" @new-value="addDrugGroup">
+              <template #no-option><q-item><q-item-section class="text-grey-7">Нет в списке — впишите и нажмите Enter</q-item-section></q-item></template>
+            </q-select>
+          </div>
+        </q-card-section>
+
         <q-card-section v-if="!isGoods && canSeeUsers" class="q-pt-none">
           <q-select v-model="form.responsible" :options="users" option-value="id" option-label="label" emit-value
             map-options multiple use-chips outlined dense label="Ответственные сотрудники"
@@ -213,6 +231,51 @@ const saving = ref(false)
 const allGroups = ref([])
 const units = ref([])
 const users = ref([])
+// Справочники препарата: вещества и группы (загружаются при открытии, фильтруются на месте).
+const allSubstances = ref([])
+const allDrugGroups = ref([])
+const substances = ref([])
+const drugGroups = ref([])
+const substanceLabel = (s) => (s.latin_name ? `${s.name} · ${s.latin_name}` : s.name)
+const matches = (option, text) => [option.name, option.latin_name, option.synonyms].some((v) => (v || '').toLowerCase().includes(text))
+
+function filterSubstances(text, update) {
+  const needle = text.toLowerCase()
+  update(() => (substances.value = needle ? allSubstances.value.filter((o) => matches(o, needle)) : allSubstances.value))
+}
+function filterGroups(text, update) {
+  const needle = text.toLowerCase()
+  update(() => (drugGroups.value = needle ? allDrugGroups.value.filter((o) => matches(o, needle)) : allDrugGroups.value))
+}
+
+// Нового вещества или группы нет в справочнике — заводим на месте.
+async function createNamed(endpoint, name, list, all) {
+  const exists = all.value.find((o) => o.name.toLowerCase() === name.trim().toLowerCase())
+  if (exists) return exists.id
+  const { ok, data } = await apiPost(endpoint, { name: name.trim() })
+  if (!ok) {
+    $q.notify({ type: 'negative', message: Object.values(fieldErrors(data || {}))[0] || 'Не удалось добавить' })
+    return null
+  }
+  all.value = [...all.value, data].sort((a, b) => a.name.localeCompare(b.name))
+  list.value = all.value
+  return data.id
+}
+async function addSubstance(name, done) {
+  const id = await createNamed('catalog/substances/', name, substances, allSubstances)
+  if (id) done(id, 'add-unique')
+}
+async function addDrugGroup(name, done) {
+  const id = await createNamed('catalog/drug-groups/', name, drugGroups, allDrugGroups)
+  if (id) done(id, 'add-unique')
+}
+
+// Выбрали вещество, группа не указана — подставляем обычную группу этого вещества.
+function suggestGroups(selected) {
+  if (form.value.drug_groups?.length) return
+  const groups = selected.map((id) => allSubstances.value.find((s) => s.id === id)?.group).filter(Boolean)
+  if (groups.length) form.value.drug_groups = [...new Set(groups)]
+}
 const history = ref([])
 const historyOpen = ref(false)
 const infoOpen = ref(false)
@@ -317,16 +380,22 @@ watch(
   async (open) => {
     if (!open) return
     errors.value = []
-    const [g, u, people] = await Promise.all([
+    const [g, u, people, subs, dgroups] = await Promise.all([
       apiGet('catalog/groups/?active=true'),
       apiGet('catalog/units/?active=true'),
       canSeeUsers ? apiGet('core/users/') : Promise.resolve({ data: [] }),
+      apiGet('catalog/substances/?active=true'),
+      apiGet('catalog/drug-groups/?active=true'),
     ])
     allGroups.value = g.data ?? []
     units.value = u.data ?? []
+    allSubstances.value = subs.data ?? []
+    allDrugGroups.value = dgroups.data ?? []
+    substances.value = allSubstances.value
+    drugGroups.value = allDrugGroups.value
     users.value = (people.data ?? []).map((p) => ({ id: p.id, label: p.full_name || p.username }))
     if (props.item) {
-      form.value = { ...props.item, units: props.item.units.map(withSize) }
+      form.value = { ...props.item, units: props.item.units.map(withSize), substances: props.item.substances ?? [], drug_groups: props.item.drug_groups ?? [] }
       const purchase = form.value.units.find((u) => u.for_purchase && Number(u.ratio) > 1)
       costUnitId.value = purchase ? purchase.unit : form.value.base_unit
       return
@@ -336,7 +405,7 @@ watch(
     const goods = props.kind === 'goods'
     form.value = {
       kind: props.kind, name: '', group: null, article: '', description: '', barcode: '', manual_cost: null,
-      for_sale: true, combo_only: false, is_call: false, is_active: true, responsible: [], prevention_kind: '',
+      for_sale: true, combo_only: false, is_call: false, is_active: true, responsible: [], substances: [], drug_groups: [], prevention_kind: '',
       base_unit: goods ? pieceUnit : serviceUnit,
       units: [newUnit(goods ? pieceUnit : serviceUnit)],
     }
@@ -373,6 +442,10 @@ async function save() {
     })),
   }
   if (!isGoods.value && canSeeUsers) body.responsible = form.value.responsible
+  if (isGoods.value) {
+    body.substances = form.value.substances
+    body.drug_groups = form.value.drug_groups
+  }
   saving.value = true
   const { ok, data } = form.value.id
     ? await apiPatch(`catalog/items/${form.value.id}/`, body)

@@ -55,6 +55,8 @@ export default [
       { title: 'Улицы', icon: 'signpost', to: '/directories/streets', perm: 'clients.view_street' },
       { title: 'Типы клиентов', icon: 'label', to: '/directories/client-types', perm: 'clients.view_clienttype' },
       { title: 'Группы товаров и услуг', icon: 'workspaces', to: '/directories/item-groups', perm: 'catalog.view_itemgroup' },
+      { title: 'Группы препаратов', icon: 'medication', to: '/directories/drug-groups', perm: 'catalog.view_druggroup' },
+      { title: 'Действующие вещества', icon: 'science', to: '/directories/substances', perm: 'catalog.view_substance' },
       { title: 'Единицы измерения', icon: 'straighten', to: '/directories/units', perm: 'catalog.view_unit' },
       { title: 'Шаблоны медкарты', icon: 'article', to: '/medical/templates', perm: 'medical.view_texttemplate' },
       { title: 'Диагнозы', icon: 'local_hospital', to: '/directories/diagnoses', perm: 'medical.view_diagnosis' },

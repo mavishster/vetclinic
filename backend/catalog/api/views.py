@@ -11,7 +11,16 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from catalog import services
-from catalog.models import CombinationLine, Item, ItemGroup, ItemUnit, Kind, Unit
+from catalog.models import (
+    CombinationLine,
+    DrugGroup,
+    Item,
+    ItemGroup,
+    ItemUnit,
+    Kind,
+    Substance,
+    Unit,
+)
 from core.api.directories import DirectoryViewSet
 from core.api.permissions import can_view_cost
 
@@ -23,6 +32,16 @@ def _text(value: Any) -> str | None:
 
 class UnitViewSet(DirectoryViewSet):
     model = Unit
+
+
+class DrugGroupViewSet(DirectoryViewSet):
+    model = DrugGroup
+
+
+class SubstanceViewSet(DirectoryViewSet):
+    model = Substance
+    extra_fields = ("latin_name", "synonyms", "group")
+    filter_fields = ("group",)
 
 
 class ItemGroupViewSet(DirectoryViewSet):
@@ -79,6 +98,14 @@ class ItemSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     combo_price = serializers.SerializerMethodField()
     group_name = serializers.CharField(source="group.name", read_only=True)
     base_unit_name = serializers.CharField(source="base_unit.name", read_only=True)
+    substance_names = serializers.SerializerMethodField()
+    drug_group_names = serializers.SerializerMethodField()
+
+    def get_substance_names(self, item: Item) -> list[str]:
+        return [s.name for s in item.substances.all()]
+
+    def get_drug_group_names(self, item: Item) -> list[str]:
+        return [g.name for g in item.drug_groups.all()]
 
     class Meta:
         model = Item
@@ -87,9 +114,13 @@ class ItemSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "base_unit", "base_unit_name", "barcode", "manual_cost", "for_sale", "combo_only",
             "stock_tracked", "prevention_kind", "is_call",
             "is_active", "responsible", "units", "is_template", "print_mode", "lines",
+            "substances", "substance_names", "drug_groups", "drug_group_names",
             "combo_price", "created_at", "updated_at",
         ]  # fmt: skip
-        extra_kwargs = {"responsible": {"required": False}, "base_unit": {"required": False}}
+        extra_kwargs = {
+            "responsible": {"required": False}, "base_unit": {"required": False},
+            "substances": {"required": False}, "drug_groups": {"required": False},
+        }  # fmt: skip
 
     def get_combo_price(self, item: Item) -> str | None:
         if item.kind != Kind.COMBO:
@@ -101,6 +132,8 @@ class ItemSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         units = data.pop("units", None)
         lines = data.pop("lines", None)
         responsible = data.pop("responsible", None)
+        substances = data.pop("substances", None)
+        drug_groups = data.pop("drug_groups", None)
         for field, value in data.items():
             setattr(item, field, value)
         try:
@@ -114,6 +147,8 @@ class ItemSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             raise serializers.ValidationError({"non_field_errors": [str(error)]}) from error
         if responsible is not None:
             item.responsible.set(responsible)
+        if substances is not None or drug_groups is not None:
+            services.set_drug_info(item, substances, drug_groups)
         return item
 
     def create(self, validated_data: dict[str, Any]) -> Item:
@@ -152,7 +187,7 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
 
     def get_queryset(self) -> QuerySet[Item]:
         queryset = Item.objects.select_related("group", "base_unit").prefetch_related(
-            "units__unit", "units__item__group", "responsible",
+            "units__unit", "units__item__group", "responsible", "substances", "drug_groups",
             "lines__item_unit__item__group", "lines__item_unit__unit",
         )  # fmt: skip
         params = self.request.query_params
@@ -166,9 +201,27 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             queryset = queryset.filter(kind=Kind.GOODS, stock_tracked=tracked == "yes")
         if params.get("not_for_sale", "").lower() in {"1", "true"}:
             queryset = queryset.filter(for_sale=False)
-        if search := params.get("search", "").strip():
+        if drug_group := params.get("drug_group"):
+            queryset = queryset.filter(drug_groups=drug_group)
+        if substance := params.get("substance"):
+            queryset = queryset.filter(substances=substance)
+        search = params.get("search", "").strip()
+        if search and params.get("suggest") != "1":
             queryset = services.search_items(queryset, search)
         return queryset
+
+    def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """?search=…&suggest=1 — подбор для медкарты и назначений: по названию (с опечатками),
+        затем аналоги по действующему веществу и препараты той же группы. У каждой строки —
+        section (name | substance | group) и note (какое вещество или группа совпали)."""
+        search = request.query_params.get("search", "").strip()
+        if request.query_params.get("suggest") != "1" or not search:
+            return super().list(request, *args, **kwargs)
+        rows = []
+        for found in services.suggest(self.get_queryset(), search):
+            row = self.get_serializer(found["item"]).data
+            rows.append({**row, "section": found["section"], "section_note": found["note"]})
+        return Response({"count": len(rows), "results": rows})
 
     @action(detail=True, methods=["post"], url_path="reset-prices")
     def reset_prices(self, request: Request, pk: str | None = None) -> Response:

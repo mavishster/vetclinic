@@ -1,9 +1,10 @@
 <template>
   <q-page padding>
-    <div class="row items-center q-mb-md q-gutter-sm">
+    <div class="row items-center q-mb-sm q-gutter-sm">
       <h1 class="text-h5 q-my-none col-grow">{{ title }}</h1>
       <q-btn v-if="canAdd" color="primary" icon="add" label="Добавить" unelevated @click="openEditor()" />
     </div>
+    <p v-if="hint" class="text-grey-8 q-mt-none q-mb-md">{{ hint }}</p>
 
     <div class="row q-col-gutter-sm q-mb-md">
       <q-input v-model="search" dense outlined clearable debounce="300" placeholder="Поиск"
@@ -97,6 +98,7 @@ const props = defineProps({
   endpoint: { type: String, required: true }, // 'clients/species/'
   permission: { type: String, required: true }, // 'clients.species'
   fields: { type: Array, default: () => [] }, // [{ name, label, type, endpoint, options, hint }]
+  hint: { type: String, default: '' },
 })
 
 const $q = useQuasar()
@@ -157,7 +159,7 @@ async function load() {
 }
 
 async function loadOptions() {
-  for (const field of props.fields.filter((f) => !f.type || ['select', 'choice', 'multi'].includes(f.type))) {
+  for (const field of props.fields.filter((f) => f.endpoint || f.type === 'choice')) {
     if (field.type === 'choice') {
       options[field.name] = field.options
       continue

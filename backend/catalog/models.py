@@ -9,6 +9,7 @@
 from decimal import Decimal
 
 from django.conf import settings
+from django.contrib.postgres.indexes import GinIndex
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
@@ -43,6 +44,50 @@ class Unit(Directory):
     class Meta(Directory.Meta):
         verbose_name = "единица измерения"
         verbose_name_plural = "единицы измерения"
+
+
+class DrugGroup(Directory):
+    """Группа препарата по действию: противорвотное, анестетик, спазмолитик…
+
+    По ней поиск предлагает препараты «из той же группы».
+    """
+
+    class Meta(Directory.Meta):
+        verbose_name = "группа препарата"
+        verbose_name_plural = "группы препаратов"
+
+
+class Substance(Directory):
+    """Действующее вещество (МНН): маропитант, мелоксикам… У препарата их может быть несколько.
+
+    По веществу поиск находит аналоги. group — к какой группе вещество обычно относится:
+    подставляется препарату, когда ему выбирают это вещество.
+    """
+
+    latin_name = models.CharField("латинское название", max_length=150, blank=True)
+    synonyms = models.CharField(
+        "другие названия",
+        max_length=255,
+        blank=True,
+        help_text="Через запятую: по ним вещество тоже находится (например, «анальгин»)",
+    )
+    group = models.ForeignKey(
+        DrugGroup,
+        verbose_name="обычная группа",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="substances",
+    )
+
+    class Meta(Directory.Meta):
+        verbose_name = "действующее вещество"
+        verbose_name_plural = "действующие вещества"
+        indexes = [
+            GinIndex(
+                fields=["name"], name="catalog_substance_name_trgm", opclasses=["gin_trgm_ops"]
+            ),
+        ]
 
 
 class ItemGroup(Directory):
@@ -124,6 +169,13 @@ class Item(BaseModel):
         blank=True,
         related_name="+",
     )
+    # Для препаратов: по веществам поиск находит аналоги, по группе — препараты того же действия.
+    substances = models.ManyToManyField(
+        Substance, verbose_name="действующие вещества", blank=True, related_name="items"
+    )
+    drug_groups = models.ManyToManyField(
+        DrugGroup, verbose_name="группы препарата", blank=True, related_name="items"
+    )
 
     class Meta:
         permissions = [
@@ -132,6 +184,10 @@ class Item(BaseModel):
         verbose_name = "товар или услуга"
         verbose_name_plural = "товары и услуги"
         ordering = ["name"]
+        indexes = [
+            # Поиск с опечатками: «церукл» → «Церукал» (триграммы).
+            GinIndex(fields=["name"], name="catalog_item_name_trgm", opclasses=["gin_trgm_ops"]),
+        ]
 
     def __str__(self) -> str:
         return self.name

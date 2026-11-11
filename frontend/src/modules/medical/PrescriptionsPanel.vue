@@ -15,7 +15,20 @@
               use-input fill-input hide-selected input-debounce="300" dense borderless :readonly="!canEdit"
               :input-value="row.drug_name" placeholder="из прайса или своё название"
               @filter="(text, update, abort) => search(row, text, update, abort)"
-              @input-value="(text) => onTyped(row, text)" @update:model-value="(id) => onPicked(row, id)" />
+              @input-value="(text) => onTyped(row, text)" @update:model-value="(id) => onPicked(row, id)">
+              <!-- Разделы: аналоги по действующему веществу и препараты той же группы -->
+              <template #option="scope">
+                <div>
+                  <q-item-label v-if="scope.opt.header" header class="text-caption text-weight-medium q-py-xs">{{ scope.opt.header }}</q-item-label>
+                  <q-item v-bind="scope.itemProps">
+                    <q-item-section>
+                      <q-item-label>{{ scope.opt.name }}</q-item-label>
+                      <q-item-label v-if="scope.opt.section_note" caption>{{ scope.opt.section_note }}</q-item-label>
+                    </q-item-section>
+                  </q-item>
+                </div>
+              </template>
+            </q-select>
           </td>
           <td style="width: 90px"><q-input v-model="row.dose" dense borderless placeholder="1 таб." :readonly="!canEdit" /></td>
           <td style="width: 140px">
@@ -59,6 +72,7 @@
 // сколько дней; «продать» — в счёт. Памятка владельцу печатается одной кнопкой.
 import { ref, watch } from 'vue'
 import { apiGet, apiPut, fieldErrors } from '@/api'
+import { withHeaders } from '@/modules/catalog/sections'
 
 const props = defineProps({ visit: { type: Object, required: true }, canEdit: { type: Boolean, default: false } })
 const emit = defineEmits(['changed'])
@@ -92,9 +106,12 @@ function add() {
 
 async function search(row, text, update, abort) {
   if (text.trim().length < 2) return update(() => (row.options = []))
-  const { ok, data } = await apiGet(`catalog/items/?kind=goods&active=true&page_size=15&search=${encodeURIComponent(text)}`)
+  // suggest=1: по названию (с опечатками), аналоги по веществу, препараты той же группы.
+  const { ok, data } = await apiGet(`catalog/items/?kind=goods&active=true&suggest=1&search=${encodeURIComponent(text)}`)
   if (!ok) return abort()
-  update(() => (row.options = (data.results || []).map((i) => ({ id: i.id, name: i.name, units: i.units.filter((u) => u.for_sale) }))))
+  update(() => (row.options = withHeaders(data.results || []).map((i) => ({
+    id: i.id, name: i.name, units: i.units.filter((u) => u.for_sale), header: i.header, section_note: i.section_note,
+  }))))
 }
 
 // Набрали своё название, не выбирая из прайса — это просто текст назначения.

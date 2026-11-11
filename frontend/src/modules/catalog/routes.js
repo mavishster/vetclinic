@@ -33,6 +33,33 @@ export default [
     meta: { perm: 'catalog.view_itemgroup' },
   },
   {
+    path: 'directories/drug-groups',
+    component: DirectoryPage,
+    props: {
+      title: 'Группы препаратов',
+      endpoint: 'catalog/drug-groups/',
+      permission: 'catalog.druggroup',
+      hint: 'Группа по действию: противорвотное, анестетик, спазмолитик. По ней поиск предлагает препараты того же действия',
+    },
+    meta: { perm: 'catalog.view_druggroup' },
+  },
+  {
+    path: 'directories/substances',
+    component: DirectoryPage,
+    props: {
+      title: 'Действующие вещества',
+      endpoint: 'catalog/substances/',
+      permission: 'catalog.substance',
+      hint: 'По веществу поиск находит аналоги препарата. У препарата их может быть несколько',
+      fields: [
+        { name: 'latin_name', label: 'Латинское название', type: 'text' },
+        { name: 'synonyms', label: 'Другие названия', type: 'text', hint: 'Через запятую — по ним вещество тоже находится' },
+        { name: 'group', label: 'Обычная группа', endpoint: 'catalog/drug-groups/', hint: 'Подставится препарату при выборе вещества' },
+      ],
+    },
+    meta: { perm: 'catalog.view_substance' },
+  },
+  {
     path: 'directories/units',
     component: DirectoryPage,
     props: { title: 'Единицы измерения', endpoint: 'catalog/units/', permission: 'catalog.unit' },

@@ -542,10 +542,15 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
         unit = catalog.find_by_barcode(barcode)
         units = [unit] if unit is not None else []
         combos: list[Item] = []
+        sections: dict[Any, tuple[str, str]] = {}
     else:
         if len(text.strip()) < 2:
             return []
-        items = catalog.search_items(Item.objects.filter(is_active=True, for_sale=True), text)[:20]
+        # Общий подбор каталога: по названию (с опечатками), затем аналоги по действующему
+        # веществу и препараты той же группы.
+        found = catalog.suggest(Item.objects.filter(is_active=True, for_sale=True), text)
+        sections = {f["item"].pk: (f["section"], f["note"]) for f in found}
+        items = [f["item"] for f in found]
         units = [
             u
             for item in items
@@ -567,6 +572,8 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
                 "max_reason": limit["reason"] if limit else None,
                 "unit_cost": str(limit["cost"]) if limit and limit["cost"] is not None else None,
                 "cost_source": limit["cost_source"] if limit else "",
+                "section": sections.get(unit.item_id, ("name", ""))[0],
+                "section_note": sections.get(unit.item_id, ("name", ""))[1],
                 "item_unit": str(unit.pk),
                 "item": str(unit.item_id),
                 "kind": unit.item.kind,
@@ -588,6 +595,8 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
                 "max_reason": None,
                 "unit_cost": None,
                 "cost_source": "",
+                "section": "name",
+                "section_note": "",
                 "item_unit": None,
                 "item": str(combo.pk),
                 "kind": "combo",
@@ -600,6 +609,14 @@ def lookup(text: str = "", barcode: str = "", warehouse: Any = None) -> list[dic
                 "stock_text": None,
             }
         )
+    # Разделы по порядку; среди аналогов и «той же группы» — сначала то, что есть в наличии.
+    order = {"name": 0, "substance": 1, "group": 2}
+
+    def rank(row: dict[str, Any]) -> tuple[int, int]:
+        out_of_stock = row["stock"] is not None and Decimal(row["stock"]) <= 0
+        return order[row["section"]], int(out_of_stock and row["section"] != "name")
+
+    result.sort(key=rank)
     return result
 
 

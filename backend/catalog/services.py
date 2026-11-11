@@ -6,14 +6,16 @@
 Бизнес-правила живут здесь, а не в моделях и не в API (ENGINEERING.md).
 """
 
+import re
 from collections.abc import Callable, Iterable
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, TypedDict
 
+from django.contrib.postgres.search import TrigramWordSimilarity
 from django.db import transaction
-from django.db.models import F, Q, QuerySet
+from django.db.models import Case, F, IntegerField, Q, QuerySet, When
 
-from catalog.models import CombinationLine, Item, ItemUnit, Kind, Unit
+from catalog.models import CombinationLine, DrugGroup, Item, ItemUnit, Kind, Substance, Unit
 from core import services as core
 
 D = Decimal
@@ -204,6 +206,149 @@ def search_items(queryset: QuerySet[Item], text: str) -> QuerySet[Item]:
     for word in text.split():
         by_words &= Q(name__icontains=word)
     return queryset.filter(exact | by_words).distinct()
+
+
+# --- Подбор препаратов: с опечатками, аналоги по веществу и по группе -----------------
+
+_LAYOUT = str.maketrans(
+    "qwertyuiop[]asdfghjkl;'zxcvbnm,.`QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>~",
+    "йцукенгшщзхъфывапролджэячсмитьбюёЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮЁ",
+)
+SUGGEST_LIMITS = {"name": 8, "substance": 6, "group": 6}
+_FUZZY_MIN_LENGTH = 4  # короче — опечатки не ищем: слишком много случайных совпадений
+_FUZZY_THRESHOLD = 0.4
+_CONFIDENT = 0.6  # с такой похожестью считаем, что нашли именно этот препарат
+
+
+class Suggestion(TypedDict):
+    item: Item
+    section: str  # name — по названию; substance — то же вещество; group — та же группа
+    note: str  # для аналогов: какое вещество или группа совпали
+
+
+def fix_layout(text: str) -> str:
+    """«wtherfk» → «церукал»: текст, набранный в английской раскладке."""
+    return text.translate(_LAYOUT)
+
+
+def _by_name(queryset: QuerySet[Item], text: str, limit: int) -> tuple[list[Item], list[Item]]:
+    """Совпадения по названию: сначала точные (все слова есть в названии, артикул, штрихкод),
+    затем похожие — с опечатками (триграммы). Второй список — «уверенные» совпадения:
+    к ним подбираются аналоги."""
+    starts_first = Case(
+        When(name__istartswith=text, then=0), default=1, output_field=IntegerField()
+    )
+    found: list[Item] = list(search_items(queryset, text).order_by(starts_first, "name")[:limit])
+    confident: list[Item] = found[:3]
+    if len(found) < limit and len(text) >= _FUZZY_MIN_LENGTH:
+        fuzzy = (
+            queryset.exclude(pk__in=[i.pk for i in found])
+            .annotate(similarity=TrigramWordSimilarity(text, "name"))
+            .filter(similarity__gte=_FUZZY_THRESHOLD)
+            .order_by("-similarity", "name")
+            .values_list("pk", "similarity")[: limit - len(found)]
+        )
+        similar = dict(fuzzy)
+        by_pk = {item.pk: item for item in queryset.filter(pk__in=similar)}
+        for index, (pk, similarity) in enumerate(
+            sorted(similar.items(), key=lambda pair: -pair[1])
+        ):
+            found.append(by_pk[pk])
+            # Точных совпадений нет — к лучшему похожему («цирукал» → «Церукал») тоже
+            # подбираем аналоги: иначе опечатка лишала бы врача подсказок.
+            if len(confident) < 3 and (similarity >= _CONFIDENT or (not confident and index == 0)):
+                confident.append(by_pk[pk])
+    return found, confident
+
+
+def _named(model: Any, text: str, extra: Q | None = None) -> Any:
+    """Справочник (вещества, группы) по названию — тоже с опечатками."""
+    match = Q(name__icontains=text)
+    if extra is not None:
+        match |= extra
+    queryset = model.objects.filter(is_active=True)
+    if len(text) < _FUZZY_MIN_LENGTH:
+        return queryset.filter(match)
+    return queryset.annotate(similarity=TrigramWordSimilarity(text, "name")).filter(
+        match | Q(similarity__gte=0.5)
+    )
+
+
+def suggest(queryset: QuerySet[Item], text: str) -> list[Suggestion]:
+    """Подбор позиций для счёта и медкарты — одним списком из трёх разделов:
+
+    1. по названию — в том числе с опечатками и в неверной раскладке;
+    2. с тем же действующим веществом (аналоги найденного; полные аналоги — первыми);
+       сюда же попадает всё с веществом, название которого набрали («маропитант»);
+    3. из той же группы препаратов (или группы, которую набрали: «противорвотное»).
+    """
+    text = " ".join(text.split())
+    if len(text) < 2:
+        return []
+    queryset = queryset.prefetch_related("substances", "drug_groups")
+    found, confident = _by_name(queryset, text, SUGGEST_LIMITS["name"])
+    if not found and not re.search("[а-яё]", text, re.IGNORECASE):
+        fixed = fix_layout(text)  # ничего не нашли латиницей — пробуем как русскую раскладку
+        if fixed != text:
+            found, confident = _by_name(queryset, fixed, SUGGEST_LIMITS["name"])
+            text = fixed if found else text
+    result: list[Suggestion] = [{"item": item, "section": "name", "note": ""} for item in found]
+    seen = {item.pk for item in found}
+
+    # Вещества: у найденных препаратов и те, чьё название (или синоним) набрали.
+    anchors = [set(s.pk for s in item.substances.all()) for item in confident]
+    typed_substances = list(
+        _named(Substance, text, Q(synonyms__icontains=text) | Q(latin_name__icontains=text))[:5]
+    )
+    substance_ids = (
+        set().union(*anchors) | {s.pk for s in typed_substances}
+        if (anchors or typed_substances)
+        else set()
+    )
+    if substance_ids:
+        candidates = list(
+            queryset.filter(substances__in=substance_ids).exclude(pk__in=seen).distinct()[:60]
+        )
+
+        def closeness(item: Item) -> tuple[int, str]:
+            own = {s.pk for s in item.substances.all()}
+            full = any(
+                own == anchor for anchor in anchors if anchor
+            )  # полный аналог — тот же состав
+            return (0 if full else 1, item.name.lower())
+
+        for item in sorted(candidates, key=closeness)[: SUGGEST_LIMITS["substance"]]:
+            shared = [s.name for s in item.substances.all() if s.pk in substance_ids]
+            result.append({"item": item, "section": "substance", "note": ", ".join(shared)})
+            seen.add(item.pk)
+
+    # Группы: у найденных препаратов и те, чьё название набрали.
+    group_ids = {g.pk for item in confident for g in item.drug_groups.all()}
+    group_ids |= set(_named(DrugGroup, text).values_list("pk", flat=True)[:3])
+    if group_ids:
+        same_group = (
+            queryset.filter(drug_groups__in=group_ids)
+            .exclude(pk__in=seen)
+            .distinct()
+            .order_by("name")
+        )
+        for item in same_group[: SUGGEST_LIMITS["group"]]:
+            shared = [g.name for g in item.drug_groups.all() if g.pk in group_ids]
+            result.append({"item": item, "section": "group", "note": ", ".join(shared)})
+    return result
+
+
+def set_drug_info(item: Item, substances: list[Any] | None, drug_groups: list[Any] | None) -> None:
+    """Вещества и группы препарата. Если группы не указаны, подставляются обычные группы
+    выбранных веществ: достаточно выбрать вещество — группа появится сама."""
+    if substances is not None:
+        item.substances.set(substances)
+    if drug_groups is not None:
+        item.drug_groups.set(drug_groups)
+    if not item.drug_groups.exists():
+        typical = DrugGroup.objects.filter(substances__in=item.substances.all()).distinct()
+        if typical:
+            item.drug_groups.set(typical)
 
 
 def sale_units(item: Item) -> QuerySet[ItemUnit]:

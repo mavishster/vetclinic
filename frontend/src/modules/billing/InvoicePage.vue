@@ -61,7 +61,10 @@
           <template #prepend><q-icon name="qr_code_scanner" /></template>
         </q-input>
         <q-select v-model="picked" :options="found" option-value="key" option-label="label" emit-value use-input input-debounce="300"
-          outlined dense class="col-12 col-sm-9" label="Добавить услугу, товар или комбинацию" @filter="search" @update:model-value="addFromSearch" />
+          outlined dense class="col-12 col-sm-9" label="Добавить услугу, товар или комбинацию" @filter="search" @update:model-value="addFromSearch">
+          <!-- Аналоги по действующему веществу и препараты той же группы — отдельными разделами -->
+          <template #option="scope"><DrugOption :option="scope.opt" :item-props="scope.itemProps" :header="scope.opt.header" /></template>
+        </q-select>
       </div>
 
       <q-markup-table flat bordered dense wrap-cells>
@@ -151,6 +154,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
+import DrugOption from '@/components/DrugOption.vue'
+import { withHeaders } from '@/modules/catalog/sections'
 import { currency, money } from '@/modules/catalog/money'
 import ClientSelect from '@/modules/clients/ClientSelect.vue'
 // Окно оплаты — модуль «Касса».
@@ -293,7 +298,7 @@ async function search(text, update, abort) {
   if (text.trim().length < 2) return update(() => (found.value = []))
   const { ok, data } = await apiGet(`billing/invoices/lookup/?search=${encodeURIComponent(text)}${warehouseParam()}`)
   if (!ok) return abort()
-  update(() => (found.value = data.map((o) => ({
+  update(() => (found.value = withHeaders(data).map((o) => ({
     ...o, key: o.item_unit || o.item,
     label: `${o.name} — ${o.unit} · ${o.price ? money(o.price) : 'цена по закупке'}${o.stock !== null ? ` · на складе ${o.stock_text || Number(o.stock)}` : ''}`,
   }))))

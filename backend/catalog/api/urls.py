@@ -6,6 +6,8 @@ from catalog.api import importing, views
 router = DefaultRouter()
 router.register("units", views.UnitViewSet, basename="unit")
 router.register("groups", views.ItemGroupViewSet, basename="item-group")
+router.register("drug-groups", views.DrugGroupViewSet, basename="drug-group")
+router.register("substances", views.SubstanceViewSet, basename="substance")
 router.register("items", views.ItemViewSet, basename="item")
 
 urlpatterns = [
