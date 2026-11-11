@@ -99,3 +99,67 @@ def test_items_without_substances_are_found_by_name_only(drugs) -> None:
 def test_short_text_and_nothing_found(drugs) -> None:
     assert services.suggest(Item.objects.all(), "ц") == []
     assert names("ксяоплдж") == []
+
+
+def test_bulk_set_drug_info(drugs) -> None:
+    pair = [drugs["cerucal"], drugs["ondan"]]
+    group = DrugGroup.objects.get(name="Гастропротекторы")
+
+    services.set_drug_info_bulk(pair, [], [group])
+
+    assert {g.name for g in drugs["cerucal"].drug_groups.all()} == {
+        "Противорвотные",
+        "Гастропротекторы",
+    }
+    services.set_drug_info_bulk([drugs["ondan"]], [], [group], replace=True)
+    assert [g.name for g in drugs["ondan"].drug_groups.all()] == ["Гастропротекторы"]
+    with pytest.raises(services.CatalogError, match="вещество или группу"):
+        services.set_drug_info_bulk(pair, [], [])
+
+
+def test_bulk_substance_fills_group(db) -> None:
+    item = drug("Новый противорвотный")
+
+    services.set_drug_info_bulk([item], [Substance.objects.get(name="маропитант")], [])
+
+    assert [g.name for g in item.drug_groups.all()] == ["Противорвотные"]
+
+
+def test_import_columns(db) -> None:
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    from catalog import importing
+
+    book = Workbook()
+    sheet = book.active
+    sheet.append(
+        ["Название", "Вид", "Группа", "Единица", "Цена", "Действующее вещество", "Группа препарата"]
+    )
+    sheet.append(["Вомендин таблетки", "Товар", "Препараты", "таб.", 300, "маропитант", ""])
+    sheet.append(
+        [
+            "Комбинированный препарат",
+            "Товар",
+            "Препараты",
+            "фл.",
+            500,
+            "лидокаин, прокаин",
+            "Местные анестетики",
+        ]
+    )
+    buffer = BytesIO()
+    book.save(buffer)
+
+    result = importing.commit(buffer.getvalue(), "price.xlsx")
+
+    assert result.errors == 0
+    vomendin = Item.objects.get(name="Вомендин таблетки")
+    assert [s.name for s in vomendin.substances.all()] == ["маропитант"]
+    assert [g.name for g in vomendin.drug_groups.all()] == [
+        "Противорвотные"
+    ]  # подставилась по веществу
+    mixed = Item.objects.get(name="Комбинированный препарат")
+    assert {s.name for s in mixed.substances.all()} == {"лидокаин", "прокаин"}
+    assert [g.name for g in mixed.drug_groups.all()] == ["Местные анестетики"]

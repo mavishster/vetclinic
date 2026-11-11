@@ -351,6 +351,32 @@ def set_drug_info(item: Item, substances: list[Any] | None, drug_groups: list[An
             item.drug_groups.set(typical)
 
 
+@transaction.atomic
+def set_drug_info_bulk(
+    items: list[Any], substances: list[Any], drug_groups: list[Any], replace: bool = False
+) -> int:
+    """Проставить вещества и группы сразу нескольким позициям прайса.
+
+    По умолчанию добавляет к тому, что уже указано; replace — заменить целиком.
+    Группы, как и в карточке, подставляются по веществам, если их не задали.
+    """
+    if not items:
+        raise CatalogError("Выберите позиции.")
+    if not substances and not drug_groups:
+        raise CatalogError("Выберите действующее вещество или группу препарата.")
+    for item in items:
+        if replace:
+            set_drug_info(item, substances or [], drug_groups or None)
+            continue
+        if substances:
+            item.substances.add(*substances)
+        if drug_groups:
+            item.drug_groups.add(*drug_groups)
+        elif substances and not item.drug_groups.exists():
+            set_drug_info(item, None, None)  # подставит обычные группы веществ
+    return len(items)
+
+
 def sale_units(item: Item) -> QuerySet[ItemUnit]:
     """Единицы, в которых товар продаётся — для счёта и медкарты (этап 3)."""
     return item.units.filter(for_sale=True)

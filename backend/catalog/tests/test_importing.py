@@ -111,7 +111,7 @@ def test_template_has_headers_that_import_understands() -> None:
 def test_template_imports_cleanly() -> None:
     result = importing.preview(importing.template(), "template.xlsx")
 
-    assert (result.created, result.errors) == (3, 0)
+    assert (result.created, result.errors) == (4, 0)
 
 
 @pytest.mark.django_db
@@ -132,9 +132,13 @@ def test_api_preview_commit_and_permissions(django_user_model) -> None:
         format="multipart",
     )
 
-    assert preview.json()["created"] == 3
-    assert commit.json()["created"] == 3
-    assert Item.objects.count() == 3
+    assert preview.json()["created"] == 4
+    assert commit.json()["created"] == 4
+    assert Item.objects.count() == 4
+    # В шаблоне есть пример с действующим веществом — оно проставляется при импорте.
+    assert [s.name for s in Item.objects.get(name__startswith="Серения").substances.all()] == [
+        "маропитант"
+    ]
     assert "Не удалось открыть" in bad.json()["file"][0]
     assert (
         plain.post("/api/catalog/import/preview/", upload(), format="multipart").status_code == 403

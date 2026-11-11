@@ -15,7 +15,7 @@ from django.db import transaction
 from openpyxl import Workbook
 
 from catalog import services
-from catalog.models import Item, ItemGroup, ItemUnit, Kind, Unit
+from catalog.models import DrugGroup, Item, ItemGroup, ItemUnit, Kind, Substance, Unit
 from core import tables
 
 MAX_ROWS = 5000
@@ -30,6 +30,9 @@ COLUMNS: dict[str, tuple[str, ...]] = {
     "markup": ("наценка", "наценка, %", "наценка %"),
     "cost": ("себестоимость", "закупочная цена", "цена закупки", "закупка"),
     "barcode": ("штрихкод", "штрих-код", "ean", "barcode"),
+    # Для препаратов: по ним поиск находит аналоги и препараты того же действия.
+    "substances": ("действующее вещество", "действующие вещества", "мнн", "вещество"),
+    "drug_groups": ("группа препарата", "группы препарата", "фармгруппа", "действие"),
 }
 SERVICE_WORDS = {"услуга", "услуги", "service"}
 
@@ -99,6 +102,22 @@ _text = tables.text
 # --- Разбор строк ------------------------------------------------------------------
 
 
+def _names(text: str) -> list[str]:
+    """«маропитант, ондансетрон» → список названий (через запятую или точку с запятой)."""
+    return [part.strip() for part in text.replace(";", ",").split(",") if part.strip()]
+
+
+def _directory_items(model: Any, names: list[str]) -> list[Any]:
+    """Найти записи справочника по названию (или синониму) — чего нет, завести."""
+    found = []
+    for name in names:
+        record = model.objects.filter(name__iexact=name).first()
+        if record is None and hasattr(model, "synonyms"):
+            record = model.objects.filter(synonyms__icontains=name).first()
+        found.append(record or model.objects.create(name=name))
+    return found
+
+
 def _parse(content: bytes, filename: str) -> list[RowResult]:
     table = _read_table(content, filename)
     header_index, mapping = _find_header(table)
@@ -120,6 +139,8 @@ def _parse(content: bytes, filename: str) -> list[RowResult]:
                 "markup": _decimal(_text(raw, mapping, "markup")),
                 "cost": _decimal(_text(raw, mapping, "cost")),
                 "barcode": _text(raw, mapping, "barcode"),
+                "substances": _names(_text(raw, mapping, "substances")),
+                "drug_groups": _names(_text(raw, mapping, "drug_groups")),
             }
         except ValueError as error:
             result.action, result.error = "error", f"Строка {offset}: {error}"
@@ -205,6 +226,12 @@ def _apply(row: RowResult) -> None:
     else:
         units.append({"unit": unit.pk, "ratio": Decimal("1"), "for_sale": True, **pricing})  # type: ignore[typeddict-item]
     services.save_item(item, units)
+    if data["substances"] or data["drug_groups"]:
+        services.set_drug_info(
+            item,
+            _directory_items(Substance, data["substances"]) if data["substances"] else None,
+            _directory_items(DrugGroup, data["drug_groups"]) if data["drug_groups"] else None,
+        )
 
 
 def preview(content: bytes, filename: str) -> ImportResult:
@@ -251,13 +278,18 @@ def template() -> bytes:
     sheet = workbook.active
     sheet.title = "Прайс"
     sheet.append(["Название", "Вид", "Группа", "Единица", "Цена", "Наценка, %", "Себестоимость",
-                  "Артикул", "Штрихкод"])  # fmt: skip
+                  "Артикул", "Штрихкод", "Действующее вещество", "Группа препарата"])  # fmt: skip
     sheet.append(["Первичный приём", "Услуга", "Приём и консультации", "усл.", 900, None, None,
-                  "", ""])  # fmt: skip
+                  "", "", "", ""])  # fmt: skip
     sheet.append(["Нобивак DHPPi (доза)", "Товар", "Вакцины", "доза", 1100, None, 650,
-                  "NB-DHPPI", ""])  # fmt: skip
-    sheet.append(["Корм Purina 85 г", "Товар", "Корма", "шт.", None, 25, 100, "", "7613035347717"])
-    for column, width in zip("ABCDEFGHI", (40, 10, 28, 10, 10, 12, 14, 14, 16), strict=True):
+                  "NB-DHPPI", "", "", "Вакцины"])  # fmt: skip
+    sheet.append(["Корм Purina 85 г", "Товар", "Корма", "шт.", None, 25, 100, "", "7613035347717",
+                  "", ""])  # fmt: skip
+    sheet.append(["Серения раствор 10 мг/мл", "Товар", "Препараты", "фл.", 2500, None, 1800, "", "",
+                  "маропитант", "Противорвотные"])  # fmt: skip
+    for column, width in zip(
+        "ABCDEFGHIJK", (40, 10, 28, 10, 10, 12, 14, 14, 16, 26, 22), strict=True
+    ):
         sheet.column_dimensions[column].width = width
     buffer = io.BytesIO()
     workbook.save(buffer)

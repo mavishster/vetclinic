@@ -27,7 +27,15 @@
       <q-checkbox v-model="showInactive" label="Показать неактивные" dense class="col-auto" @update:model-value="reload" />
     </div>
 
-    <q-table v-model:pagination="pagination" :rows="rows" :columns="columns" row-key="id" :loading="loading"
+    <!-- Отмеченные позиции: вещества и группы можно проставить сразу всем -->
+    <div v-if="selected.length" class="row items-center q-mb-sm q-gutter-sm">
+      <span class="text-weight-medium">Отмечено: {{ selected.length }}</span>
+      <q-btn outline color="primary" icon="science" label="Вещество и группа" @click="drugBulkOpen = true" />
+      <q-btn flat label="Снять отметки" @click="selected = []" />
+    </div>
+
+    <q-table v-model:pagination="pagination" v-model:selected="selected" :rows="rows" :columns="columns" row-key="id"
+      :selection="canEditItems ? 'multiple' : 'none'" :loading="loading"
       flat bordered :rows-per-page-options="[25, 50, 100]" no-data-label="Ничего не найдено"
       rows-per-page-label="Строк на странице" @request="onRequest" @row-click="(e, row) => edit(row)">
       <template #body-cell-name="props">
@@ -51,6 +59,7 @@
       </template>
     </q-table>
 
+    <DrugBulkDialog v-model="drugBulkOpen" :items="selected" @saved="selected = []; reload()" />
     <ItemEditDialog v-model="editorOpen" :item="editing" :kind="newKind" @saved="reload" />
     <ComboEditDialog v-model="comboOpen" :item="editing" @saved="reload" />
     <ImportDialog v-model="importOpen" @imported="reload" />
@@ -63,6 +72,7 @@ import { apiGet } from '@/api'
 import { can } from '@/session'
 import ComboEditDialog from './ComboEditDialog.vue'
 import ImportDialog from './ImportDialog.vue'
+import DrugBulkDialog from './DrugBulkDialog.vue'
 import ItemEditDialog from './ItemEditDialog.vue'
 import { money } from './money'
 
@@ -88,6 +98,10 @@ const groupOptions = computed(() => {
   const groupKind = kind.value === 'combo' ? 'service' : kind.value
   return groups.value.filter((g) => !groupKind || g.kind === groupKind)
 })
+const selected = ref([])
+const drugBulkOpen = ref(false)
+const canEditItems = can('catalog.change_item')
+
 const columns = [
   { name: 'name', label: 'Название', field: 'name', align: 'left' },
   { name: 'group', label: 'Группа', field: 'group_name', align: 'left' },

@@ -5,7 +5,7 @@ from typing import Any
 from django.db.models import QuerySet
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -222,6 +222,23 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             row = self.get_serializer(found["item"]).data
             rows.append({**row, "section": found["section"], "section_note": found["note"]})
         return Response({"count": len(rows), "results": rows})
+
+    @action(detail=False, methods=["post"], url_path="set-drug-info")
+    def set_drug_info(self, request: Request) -> Response:
+        """Проставить вещества и группы сразу нескольким позициям:
+        {"items": [...], "substances": [...], "drug_groups": [...], "replace": false}."""
+        if not request.user.has_perm("catalog.change_item"):
+            raise PermissionDenied("Нет права менять товары и услуги.")
+        items = list(Item.objects.filter(pk__in=request.data.get("items") or []))
+        substances = list(Substance.objects.filter(pk__in=request.data.get("substances") or []))
+        groups = list(DrugGroup.objects.filter(pk__in=request.data.get("drug_groups") or []))
+        try:
+            count = services.set_drug_info_bulk(
+                items, substances, groups, bool(request.data.get("replace"))
+            )
+        except services.CatalogError as error:
+            raise serializers.ValidationError({"non_field_errors": [str(error)]}) from error
+        return Response({"updated": count})
 
     @action(detail=True, methods=["post"], url_path="reset-prices")
     def reset_prices(self, request: Request, pk: str | None = None) -> Response:
