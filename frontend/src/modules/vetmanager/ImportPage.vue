@@ -29,7 +29,9 @@
             {{ results[step.step].errors.join('; ') }}
           </q-item-label>
         </q-item-section>
-        <q-item-section side>
+        <q-item-section side class="row items-center no-wrap q-gutter-sm">
+          <q-btn v-if="step.step === 'units'" flat color="primary" label="Как сведутся" :loading="planning"
+            :disable="!status?.configured || !!running" @click="showUnitPlan" />
           <q-btn :color="step.imported ? 'grey-7' : 'primary'" :outline="!!step.imported" unelevated
             :label="step.imported ? 'Перенести ещё раз' : 'Перенести'" :loading="running === step.step"
             :disable="!status?.configured || !!running" @click="run(step)" />
@@ -71,6 +73,7 @@ const error = ref('')
 const probeModel = ref('Good')
 const probeResult = ref(null)
 const probing = ref(false)
+const planning = ref(false)
 
 async function load() {
   const { ok, data } = await apiGet('vetmanager/status/')
@@ -88,6 +91,28 @@ async function run(step) {
   results.value = { ...results.value, [step.step]: data }
   $q.notify({ type: data.errors?.length ? 'warning' : 'positive', message: `${data.title}: ${data.text}` })
   load()
+}
+
+// В VetManager единицы часто задвоены («шт», «шт.», «штука») — показываем, что с чем сведётся.
+async function showUnitPlan() {
+  error.value = ''
+  planning.value = true
+  const { ok, data } = await apiGet('vetmanager/unit-plan/')
+  planning.value = false
+  if (!ok) return (error.value = Object.values(fieldErrors(data || {}))[0] || 'Не удалось получить список')
+  const rows = data.map((row) => {
+    const from = row.sources.join(', ')
+    const mark = row.is_new ? ' <b>(новая)</b>' : ''
+    return `• ${from} → <b>${row.target}</b>${mark}`
+  })
+  $q.dialog({
+    title: 'Единицы измерения',
+    message: rows.length
+      ? `Переносятся только те, что используются в товарах и ценах:<br>${rows.join('<br>')}`
+      : 'В VetManager не нашлось единиц измерения.',
+    html: true,
+    ok: { label: 'Понятно', color: 'primary', flat: true },
+  })
 }
 
 async function probe() {

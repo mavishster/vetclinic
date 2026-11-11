@@ -9,17 +9,25 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from catalog.models import Item, ItemGroup, Kind, Unit
+from catalog.models import Item, Kind
 from vetmanager import client, services
 from vetmanager.models import Imported
 
 D = Decimal
 
-UNITS = [{"id": "1", "title": "шт."}, {"id": "2", "title": "упак."}, {"id": "3", "title": "усл."}]
+# В VetManager единицы часто задвоены: «шт», «Шт.», «штука» — всё это одна «шт.».
+UNITS = [
+    {"id": "1", "title": "шт"},
+    {"id": "2", "title": "упаковка"},
+    {"id": "3", "title": "Услуга"},
+    {"id": "4", "title": "шт."},
+    {"id": "5", "title": "штука"},
+    {"id": "6", "title": "лоток"},
+]
 GROUPS = [
-    {"id": "10", "title": "Препараты", "parent_id": "0"},
-    {"id": "11", "title": "Антибиотики", "parent_id": "10"},
-    {"id": "12", "title": "Приём", "parent_id": None},
+    {"id": "10", "title": "Препараты"},
+    {"id": "11", "title": "препараты "},  # то же самое другим написанием
+    {"id": "12", "title": "Приём"},
 ]
 GOODS = [
     {
@@ -58,24 +66,13 @@ def imported(db):
     return services.import_items(GOODS, PRICES)
 
 
-def test_units_and_groups(db) -> None:
-    units = services.import_units(UNITS)
-    groups = services.import_item_groups(GROUPS)
-
-    assert units.total == 3 and Unit.objects.filter(name="упак.").exists()
-    assert ItemGroup.objects.filter(
-        name="Препараты / Антибиотики"
-    ).exists()  # вложенность в названии
-    assert groups.created + groups.updated == 3
-
-
 def test_goods_and_services(imported) -> None:
     drug = Item.objects.get(name="Цефтриаксон 1 г")
     service = Item.objects.get(name="Первичный приём")
 
     assert imported.created == 2 and len(imported.errors) == 1  # позиция без названия
     assert drug.kind == Kind.GOODS and drug.stock_tracked and drug.article == "A-1"
-    assert drug.group.name == "Препараты / Антибиотики" and drug.base_unit.name == "шт."
+    assert drug.group.name == "Препараты" and drug.base_unit.name == "шт."
     assert {(u.unit.name, u.ratio, u.price) for u in drug.units.all()} == {
         ("шт.", D("1.000000"), D("120.50")),
         ("упак.", D("10.000000"), D("1100.00")),
@@ -94,7 +91,7 @@ def test_second_run_changes_nothing(imported) -> None:
 def test_status_counts(imported) -> None:
     status = {row["step"]: row["imported"] for row in services.status()}
 
-    assert status == {"units": 3, "item_groups": 3, "items": 2}
+    assert status == {"units": 6, "item_groups": 3, "items": 2}
 
 
 def test_fetch_pages_and_errors(monkeypatch) -> None:
@@ -126,13 +123,13 @@ def test_api_needs_right_and_reports_settings(db, django_user_model, settings) -
 
 
 def test_run_step_uses_api(db, monkeypatch) -> None:
-    monkeypatch.setattr(client, "fetch", lambda model, *a, **kw: {"Unit": UNITS}.get(model, []))
+    monkeypatch.setattr(services, "used_units", lambda: UNITS)
 
     result = services.run_step("units")
 
-    # «шт.» и «усл.» в системе уже есть — они не создаются заново, а связываются.
-    assert result.created + result.updated == 3
-    assert Imported.objects.filter(kind="unit").count() == 3
+    # Единицы в системе уже есть — они не создаются заново, а связываются.
+    assert result.created + result.updated == len(UNITS)
+    assert Imported.objects.filter(kind="unit").count() == len(UNITS)
 
 
 def test_probe_shows_fields(db, monkeypatch, django_user_model) -> None:

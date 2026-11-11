@@ -45,6 +45,16 @@ class ProbeView(_ImportView):
             raise ValidationError({"non_field_errors": [str(error)]}) from error
 
 
+class UnitPlanView(_ImportView):
+    """GET — что с чем сведётся при переносе единиц: «шт, шт., штука → шт.»."""
+
+    def get(self, request: Request) -> Response:
+        try:
+            return Response(services.unit_plan())
+        except services.VetManagerError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+
+
 class RunStepView(_ImportView):
     """POST {"step": "items"} — выполнить шаг переноса."""
 

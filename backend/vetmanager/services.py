@@ -81,13 +81,83 @@ def imported_count(kind: str) -> int:
     return Imported.objects.filter(kind=kind).count()
 
 
+# --- Сведение названий ----------------------------------------------------------------
+
+# Как в VetManager пишут единицы → наша единица. Сравнение без точек, пробелов и регистра.
+UNIT_SYNONYMS = {
+    "шт.": ("шт", "штука", "штуки", "штук", "pcs", "ед", "единица"),
+    "фл.": ("фл", "флакон", "флакона", "флаконов", "флак"),
+    "таб.": ("таб", "табл", "таблетка", "таблетки", "таблеток"),
+    "упак.": ("уп", "упак", "упаковка", "упаковки", "упаковок", "пачка"),
+    "амп.": ("амп", "ампула", "ампулы", "ампул"),
+    "капс.": ("капс", "капсула", "капсулы", "капсул"),
+    "доза": ("доз", "дозы", "дозировка"),
+    "усл.": ("усл", "услуга", "услуги", "процедура", "работа"),
+    "мл": ("миллилитр", "ml"),
+    "л": ("литр", "литры"),
+    "г": ("гр", "грамм", "граммы", "g"),
+    "кг": ("килограмм", "килограммы", "kg"),
+}
+
+
+def simplify(name: str) -> str:
+    """«Шт.» и « штука » — к одному виду: без точек, пробелов, регистра и «ё»."""
+    return name.lower().replace("ё", "е").replace(".", "").replace(" ", "").strip()
+
+
+def _same_name(queryset: Any, name: str) -> Any:
+    """Запись справочника с таким же названием — без учёта точек, пробелов и регистра."""
+    simple = simplify(name)
+    return next((row for row in queryset if simplify(row.name) == simple), None)
+
+
+def match_unit(name: str) -> Unit | None:
+    """Наша единица для названия из VetManager (по словарю или по самому названию)."""
+    simple = simplify(name)
+    for ours, variants in UNIT_SYNONYMS.items():
+        if simple == simplify(ours) or simple in variants:
+            found: Unit | None = _same_name(Unit.objects.all(), ours)
+            if found is not None:
+                return found
+    matched: Unit | None = _same_name(Unit.objects.all(), name)
+    return matched
+
+
+def used_units() -> list[dict[str, Any]]:
+    """Только те единицы VetManager, что встречаются в товарах и ценах, — без мусора."""
+    units = client.fetch("Unit")
+    used = {str(row.get("unit_storage_id") or "") for row in client.fetch("Good")}
+    used |= {str(row.get("unit_sale_id") or "") for row in client.fetch("GoodSaleParam")}
+    used.discard("")
+    return [row for row in units if str(row.get("id")) in used] or units
+
+
+def unit_plan() -> list[dict[str, Any]]:
+    """Что с чем сведётся — показываем до переноса, чтобы можно было проверить."""
+    plan: dict[str, dict[str, Any]] = {}
+    for row in used_units():
+        name = _text(row, "title", "name")
+        if not name:
+            continue
+        ours = match_unit(name)
+        key = ours.name if ours is not None else name
+        entry = plan.setdefault(key, {"target": key, "is_new": ours is None, "sources": []})
+        if name not in entry["sources"]:
+            entry["sources"].append(name)
+    return sorted(plan.values(), key=lambda row: row["target"])
+
+
 # --- Шаги -----------------------------------------------------------------------------
 
 
 @transaction.atomic
 def import_units(rows: list[dict[str, Any]] | None = None) -> StepResult:
-    """Единицы измерения VetManager → наш справочник единиц."""
-    rows = client.fetch("Unit") if rows is None else rows
+    """Единицы измерения VetManager → наши.
+
+    В VetManager они часто задвоены («шт», «шт.», «штука») — все такие варианты
+    сводятся к одной нашей единице; новая заводится, только если похожей нет.
+    """
+    rows = used_units() if rows is None else rows
     result = StepResult("units", "Единицы измерения", total=len(rows))
     for row in rows:
         name = _text(row, "title", "name")
@@ -97,9 +167,9 @@ def import_units(rows: list[dict[str, Any]] | None = None) -> StepResult:
         if _link("unit", row["id"]):
             result.skipped += 1
             continue
-        unit = Unit.objects.filter(name__iexact=name).first()
+        unit = match_unit(name)
         if unit is None:
-            unit = Unit.objects.create(name=name)
+            unit = Unit.objects.create(name=name[:20])
             result.created += 1
         else:
             result.updated += 1
@@ -111,30 +181,20 @@ def import_units(rows: list[dict[str, Any]] | None = None) -> StepResult:
 def import_item_groups(rows: list[dict[str, Any]] | None = None) -> StepResult:
     """Группы товаров VetManager → группы прайса.
 
-    Вложенность разворачивается в название «Родитель / Группа».
+    Названия сводятся к уже имеющимся: «Препараты» и «препараты » — одна группа.
     """
     rows = client.fetch("GoodGroup") if rows is None else rows
     result = StepResult("item_groups", "Группы прайса", total=len(rows))
-    titles = {str(row["id"]): _text(row, "title", "name") for row in rows if row.get("id")}
-    parents = {str(row["id"]): str(row.get("parent_id") or "") for row in rows if row.get("id")}
-
-    def full_name(external_id: str, depth: int = 0) -> str:
-        own = titles.get(external_id, "")
-        parent = parents.get(external_id, "")
-        if parent and parent in titles and depth < 5:
-            return f"{full_name(parent, depth + 1)} / {own}".strip(" /")
-        return own
-
     for row in rows:
         external_id = str(row.get("id") or "")
-        name = full_name(external_id)[:150]
+        name = _text(row, "title", "name")[:150]
         if not name:
             result.errors.append(f"Группа {external_id}: нет названия.")
             continue
         if _link("item_group", external_id):
             result.skipped += 1
             continue
-        group = ItemGroup.objects.filter(name__iexact=name).first()
+        group = _same_name(ItemGroup.objects.filter(kind=Kind.GOODS), name)
         if group is None:
             group = ItemGroup.objects.create(name=name, kind=Kind.GOODS)
             result.created += 1
