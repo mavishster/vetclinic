@@ -41,6 +41,7 @@ addopts = "--strict-markers"
 root_packages = [
     "config", "core", "clients", "catalog", "staff",
     "scheduling", "medical", "billing", "inventory", "cash", "sync", "reminders", "inpatient", "laboratory",
+    "vetmanager",
 ]
 
 [[tool.importlinter.contracts]]
@@ -48,6 +49,7 @@ name = "Уровни модулей"
 type = "layers"
 layers = [
     "config",
+    "vetmanager",
     "sync : reminders",
     "scheduling : medical : billing : inventory : cash : inpatient : laboratory",
     "clients : catalog : staff",

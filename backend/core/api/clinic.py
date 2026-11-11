@@ -82,7 +82,8 @@ class ClinicView(APIView):
 class ClinicLogoView(APIView):
     """Логотип клиники.
 
-    GET — картинка PNG (открыт без входа: логотип виден на экране входа); нет логотипа — 404.
+    GET — картинка PNG (открыт без входа: логотип виден на экране входа);
+    логотип не загружен — 204 (это не ошибка: клиника может работать без логотипа).
     POST (multipart: file) — загрузить, DELETE — убрать; право «Клиника: изменение».
     """
 
@@ -94,7 +95,7 @@ class ClinicLogoView(APIView):
     def get(self, request: Request) -> HttpResponse:
         data = services.clinic_logo_bytes()
         if data is None:
-            return HttpResponse(status=404)
+            return HttpResponse(status=204)
         response = HttpResponse(data, content_type="image/png")
         response["X-Content-Type-Options"] = "nosniff"
         response["Cache-Control"] = "public, max-age=300"

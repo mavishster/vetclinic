@@ -50,6 +50,7 @@ PROJECT_APPS = [
     "laboratory",
     "reminders",
     "sync",
+    "vetmanager",
 ]
 
 INSTALLED_APPS = [
@@ -234,3 +235,7 @@ if env_bool("USE_HTTPS", default=False):
 # В рабочем режиме API отдаёт только JSON — без отладочных HTML-страниц и форм DRF.
 if not DEBUG:
     REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = ["rest_framework.renderers.JSONRenderer"]
+
+# Перенос из VetManager: адрес клиники и ключ REST API (только чтение их данных).
+VETMANAGER_URL = os.environ.get("VETMANAGER_URL", "")
+VETMANAGER_API_KEY = os.environ.get("VETMANAGER_API_KEY", "")

@@ -132,6 +132,7 @@
           <div v-if="Number(form.discount_total)">Скидка: −{{ money(form.discount_total) }}</div>
           <div class="text-h6">К оплате: {{ money(form.total) }}</div>
           <div v-if="executed && Number(form.paid_amount)">Оплачено: {{ money(form.paid_amount) }}</div>
+          <MarginBlock :margin="form.margin" />
           <div v-if="executed && Number(form.unpaid)" class="text-negative">Долг по счёту: {{ money(form.unpaid) }}</div>
           <div v-if="dirty && !executed" class="text-caption text-warning">Итоги со скидкой пересчитаются при сохранении</div>
         </div>
@@ -155,6 +156,7 @@ import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import DrugOption from '@/components/DrugOption.vue'
+import MarginBlock from '@/components/MarginBlock.vue'
 import { withHeaders } from '@/modules/catalog/sections'
 import { currency, money } from '@/modules/catalog/money'
 import ClientSelect from '@/modules/clients/ClientSelect.vue'

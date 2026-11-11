@@ -66,7 +66,8 @@ def _api_routes():
             yield "/" + route
 
 
-PUBLIC = {"/api/core/health/", "/api/core/auth/csrf/"}
+# Логотип клиники открыт нарочно: он виден на экране входа, до входа в систему.
+PUBLIC = {"/api/core/health/", "/api/core/auth/csrf/", "/api/core/clinic/logo/"}
 FOR_EVERY_EMPLOYEE = PUBLIC | {"/api/core/me/", "/api/core/clinic/"}
 
 

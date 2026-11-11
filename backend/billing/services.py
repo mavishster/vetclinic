@@ -850,11 +850,13 @@ def sales_by_day(date_from: date, date_to: date) -> list[dict[str, Any]]:
         .annotate(day=TruncDate("date", tzinfo=zone))
         .values("day")
         .annotate(
-            n=Count("id"), sum_subtotal=Sum("subtotal"), sum_discount=Sum("discount_total"),
+            n=Count("id"),
+            sum_subtotal=Sum("subtotal"),
+            sum_discount=Sum("discount_total"),
             sum_total=Sum("total"),
         )
         .order_by("day")
-    )  # fmt: skip
+    )
     start, end = _period(date_from, date_to)
     costs = {
         r["day"]: r["cost"] or ZERO
@@ -870,12 +872,15 @@ def sales_by_day(date_from: date, date_to: date) -> list[dict[str, Any]]:
     }
     return [
         {
-            "day": r["day"], "invoices": r["n"], "subtotal": r["sum_subtotal"] or ZERO,
-            "discount": r["sum_discount"] or ZERO, "total": r["sum_total"] or ZERO,
+            "day": r["day"],
+            "invoices": r["n"],
+            "subtotal": r["sum_subtotal"] or ZERO,
+            "discount": r["sum_discount"] or ZERO,
+            "total": r["sum_total"] or ZERO,
             "cost": costs.get(r["day"], ZERO),
         }
         for r in by_day
-    ]  # fmt: skip
+    ]
 
 
 def top_items(
@@ -900,12 +905,17 @@ def top_items(
     )
     return [
         {
-            "item": str(r["item"]), "name": r["item__name"], "kind": r["item__kind"],
-            "unit": r["item__base_unit__name"], "quantity": r["quantity"] or ZERO,
-            "amount": r["amount"] or ZERO, "cost": r["cost"] or ZERO, "invoices": r["invoices"],
+            "item": str(r["item"]),
+            "name": r["item__name"],
+            "kind": r["item__kind"],
+            "unit": r["item__base_unit__name"],
+            "quantity": r["quantity"] or ZERO,
+            "amount": r["amount"] or ZERO,
+            "cost": r["cost"] or ZERO,
+            "invoices": r["invoices"],
         }
         for r in rows
-    ]  # fmt: skip
+    ]
 
 
 def debtors() -> list[dict[str, Any]]:
@@ -925,11 +935,14 @@ def debtors() -> list[dict[str, Any]]:
         row = by_client.setdefault(
             invoice.client_id,
             {
-                "client": str(invoice.client_id), "name": invoice.client.full_name,
+                "client": str(invoice.client_id),
+                "name": invoice.client.full_name,
                 "phone": next((p.number for p in invoice.client.phones.all()), ""),
-                "debt": ZERO, "invoices": 0, "since": timezone.localdate(invoice.date),
+                "debt": ZERO,
+                "invoices": 0,
+                "since": timezone.localdate(invoice.date),
             },
-        )  # fmt: skip
+        )
         row["debt"] += invoice.unpaid
         row["invoices"] += 1
     return sorted(by_client.values(), key=lambda r: -r["debt"])
@@ -940,8 +953,85 @@ def create_invoice(
 ) -> Any:
     """Черновик счёта от другого модуля (например, стационара). Возвращает id счёта."""
     invoice = save_invoice(
-        Invoice(client_id=getattr(client, "pk", client), pet_id=getattr(pet, "pk", pet),
-                doctor_id=getattr(doctor, "pk", doctor), comment=comment),
+        Invoice(
+            client_id=getattr(client, "pk", client),
+            pet_id=getattr(pet, "pk", pet),
+            doctor_id=getattr(doctor, "pk", doctor),
+            comment=comment,
+        ),
         lines,
-    )  # fmt: skip
+    )
     return invoice.pk
+
+
+# --- Прибыль: по счёту и по приёму ---------------------------------------------------
+
+
+class Margin(TypedDict):
+    revenue: Decimal  # к оплате (со скидкой)
+    cost: Decimal  # себестоимость товаров и услуг
+    profit: Decimal
+    margin: Decimal | None  # прибыль в процентах от выручки; выручка 0 — None
+    unknown_cost: int  # позиций, у которых себестоимость не задана — прибыль завышена
+
+
+def line_cost(line: Any, invoice: Invoice) -> Decimal | None:
+    """Себестоимость строки: у выполненного счёта — фактическая, списанная по партиям;
+    у черновика — ожидаемая (партия, которая спишется первой, или цена из карточки)."""
+    if invoice.is_executed:
+        return Decimal(line.cost)
+    if line.item_unit_id is None:
+        return None  # заголовок комбинации: считается по её позициям
+    cost = unit_cost(line.item_unit, invoice.warehouse_id)
+    return None if cost is None else _money(cost * line.quantity)
+
+
+def invoice_margin(invoice: Invoice) -> Margin:
+    """Прибыль счёта: к оплате минус себестоимость. Комбинации — по позициям состава."""
+    lines = list(invoice.lines.select_related("item", "item_unit__item"))
+    leaves = [line for line in lines if not any(child.parent_id == line.pk for child in lines)]
+    cost, unknown = ZERO, 0
+    for line in leaves:
+        value = line_cost(line, invoice)
+        if value is None:
+            unknown += 1
+            continue
+        cost += value
+    revenue = Decimal(invoice.total)
+    profit = revenue - cost
+    return {
+        "revenue": revenue,
+        "cost": cost,
+        "profit": profit,
+        "margin": (profit / revenue * 100).quantize(Decimal("0.1")) if revenue else None,
+        "unknown_cost": unknown,
+    }
+
+
+def visit_margin(visit: Any) -> Margin:
+    """Прибыль приёма — по всем его счетам (черновики считаются по ожидаемой себестоимости)."""
+    totals: Margin = {
+        "revenue": ZERO,
+        "cost": ZERO,
+        "profit": ZERO,
+        "margin": None,
+        "unknown_cost": 0,
+    }
+    for invoice in Invoice.objects.filter(visit=visit).prefetch_related("lines__item_unit__item"):
+        part = invoice_margin(invoice)
+        for field in ("revenue", "cost", "profit", "unknown_cost"):
+            totals[field] += part[field]
+    if totals["revenue"]:
+        totals["margin"] = (totals["profit"] / totals["revenue"] * 100).quantize(Decimal("0.1"))
+    return totals
+
+
+def margin_text(margin: Margin) -> dict[str, Any]:
+    """Прибыль строками — для API и печати."""
+    return {
+        "revenue": str(margin["revenue"]),
+        "cost": str(margin["cost"]),
+        "profit": str(margin["profit"]),
+        "margin": str(margin["margin"]) if margin["margin"] is not None else None,
+        "unknown_cost": margin["unknown_cost"],
+    }

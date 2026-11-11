@@ -15,10 +15,12 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from billing import services as billing
 from catalog import services as catalog
 from clients.models import Pet
 from core import services as core
 from core.api.directories import DirectoryViewSet
+from core.api.permissions import can_view_cost
 from core.excel import xlsx_response
 from core.models import PrintTemplate
 from medical import services
@@ -205,6 +207,13 @@ class VisitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     appointment_status = serializers.CharField(
         source="appointment.status", read_only=True, default=""
     )
+    margin = serializers.SerializerMethodField()
+
+    def get_margin(self, visit: Visit) -> dict[str, Any] | None:
+        """Прибыль приёма по его счетам — только с правом «Видеть себестоимость»."""
+        if visit.pk is None or not can_view_cost(self.context.get("request")):
+            return None
+        return billing.margin_text(billing.visit_margin(visit))
 
     class Meta:
         model = Visit
@@ -215,7 +224,7 @@ class VisitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "appointment_status", "weight", "temperature", "treatment_html",
             "recommendations_html", "next_visit_date", "diagnoses", "items", "preventions",
             "prevention_suggestions",
-            "prescriptions",
+            "prescriptions", "margin",
             "created_at", "updated_at",
         ]  # fmt: skip
         read_only_fields = ["lab_code", "pet", "client", "appointment"]

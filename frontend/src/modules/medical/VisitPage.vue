@@ -16,6 +16,8 @@
             № для анализатора: <b>{{ visit.lab_code }}</b> ·
             владелец: <router-link :to="`/clients/${visit.client}`" class="text-grey-8">{{ visit.client_name }}</router-link>
           </div>
+          <!-- Прибыль приёма по его счетам — только с правом «Видеть себестоимость» -->
+          <MarginBlock :margin="visit.margin" dense />
         </div>
         <q-space />
         <div class="text-caption text-grey-7">
@@ -143,6 +145,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
+import MarginBlock from '@/components/MarginBlock.vue'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
 import RichEditor from './RichEditor.vue'
 import PrescriptionsPanel from './PrescriptionsPanel.vue'

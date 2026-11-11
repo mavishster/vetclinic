@@ -136,7 +136,9 @@ MODULE_ACTIONS: dict[str, tuple[str, ...]] = {
 # Сущности вне модулей проекта, которые показываются в таблице прав внутри раздела.
 _EXTRA_ENTITIES = {"core": ["auth.group"]}
 _ENTITY_TITLES = {"auth.group": "Роли и права"}
-_MODULE_TITLES = {"core": "Администрирование"}
+_MODULE_TITLES = {"core": "Администрирование", "vetmanager": "Перенос из VetManager"}
+# Особые права модулей без собственных строк в таблице прав.
+_EXTRA_SPECIALS = {"vetmanager": [("vetmanager.run_import", "Переносить данные из VetManager")]}
 
 
 class PermissionEntity(TypedDict):
@@ -268,7 +270,8 @@ def permission_modules() -> list[PermissionModule]:
             for model in models_with_rights
             for codename, name in model._meta.permissions
         ]
-        if entities:
+        special += [{"code": code, "title": title} for code, title in _EXTRA_SPECIALS.get(app, [])]
+        if entities or special:
             title = _MODULE_TITLES.get(app, str(config.verbose_name))
             result.append({"code": app, "title": title, "entities": entities, "special": special})
     return result

@@ -5,7 +5,7 @@
         <q-card flat bordered class="login-card">
           <q-card-section v-if="logoShown" class="text-center q-pb-none">
             <!-- Логотип клиники; нет логотипа — блок скрывается -->
-            <img src="/api/core/clinic/logo/" alt="" class="login-logo" @error="logoShown = false" />
+            <img src="/api/core/clinic/logo/" alt="" class="login-logo" @error="logoShown = false" @load="logoShown = $event.target.naturalWidth > 0" />
           </q-card-section>
           <q-card-section>
             <div class="text-h6">Вход в систему</div>

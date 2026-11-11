@@ -122,6 +122,13 @@ class InvoiceSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     client_discount = serializers.DecimalField(
         source="client.discount_percent", read_only=True, max_digits=5, decimal_places=2
     )
+    margin = serializers.SerializerMethodField()
+
+    def get_margin(self, invoice: Invoice) -> dict[str, Any] | None:
+        """Прибыль счёта — только с правом «Видеть себестоимость»."""
+        if not can_view_cost(self.context.get("request")) or invoice.pk is None:
+            return None
+        return services.margin_text(services.invoice_margin(invoice))
 
     class Meta:
         model = Invoice
@@ -147,6 +154,7 @@ class InvoiceSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "subtotal",
             "discount_total",
             "total",
+            "margin",
             "paid_amount",
             "is_quick",
             "unpaid",

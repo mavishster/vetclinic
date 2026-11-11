@@ -46,7 +46,7 @@ def test_api_upload_needs_right_and_logo_is_public(db) -> None:
     plain.force_authenticate(User.objects.create_user(username="plain"))
     anonymous = APIClient()
 
-    assert anonymous.get("/api/core/clinic/logo/").status_code == 404
+    assert anonymous.get("/api/core/clinic/logo/").status_code == 204  # логотипа нет — не ошибка
     denied = plain.post("/api/core/clinic/logo/", {"file": _picture("PNG")}, format="multipart")
     uploaded = admin.post("/api/core/clinic/logo/", {"file": _picture("PNG")}, format="multipart")
     shown = anonymous.get("/api/core/clinic/logo/")
@@ -56,5 +56,5 @@ def test_api_upload_needs_right_and_logo_is_public(db) -> None:
     assert uploaded.status_code == 200 and uploaded.json()["logo_version"]
     assert shown.status_code == 200 and shown["Content-Type"] == "image/png"
     assert removed.json()["logo_version"] is None
-    assert anonymous.get("/api/core/clinic/logo/").status_code == 404
+    assert anonymous.get("/api/core/clinic/logo/").status_code == 204  # логотипа нет — не ошибка
     assert services.common_print_context()["clinic"]["logo"] == ""
