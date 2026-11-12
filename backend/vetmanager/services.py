@@ -340,6 +340,24 @@ def _unit_for(unit_row: Any, external_id: Any, kind: str) -> Unit:
     return _same_name(Unit.objects.all(), fallback) or Unit.objects.create(name=fallback)
 
 
+def _limits(row: dict[str, Any], price: Decimal | None) -> tuple[Decimal | None, Decimal | None]:
+    """Границы цены из VetManager — только если они не спорят с самой ценой.
+
+    В выгрузке встречаются границы, в которые её же цена не укладывается (например,
+    цену подняли, а максимум остался прежним). Такие границы не переносим: иначе
+    позиция вовсе не перенесётся, а цена важнее.
+    """
+    low, high = _positive(row.get("min_price")), _positive(row.get("max_price"))
+    if low is not None and high is not None and low > high:
+        return None, None
+    if price is not None:
+        if low is not None and price < low:
+            low = None
+        if high is not None and price > high:
+            high = None
+    return low, high
+
+
 def _units_for(price_rows: list[dict[str, Any]], base_unit: Unit) -> list[catalog.UnitData]:
     """Единицы продажи с ценами. Цена по наценке (price_formation) переносится наценкой."""
     prepared: list[catalog.UnitData] = []
@@ -351,8 +369,17 @@ def _units_for(price_rows: list[dict[str, Any]], base_unit: Unit) -> list[catalo
             continue
         seen.add(unit.pk)
         ratio = _decimal(row.get("coefficient")) or Decimal("1")
+        if ratio == 1 and unit.pk != base_unit.pk:
+            # В VetManager у позиции бывает своя единица продажи с коэффициентом 1
+            # («упак.» при учёте в «шт.»): это та же единица, другого названия.
+            # Заводить её отдельной нельзя — продажа 1 упак. списывала бы 1 шт.
+            unit = base_unit
+            if unit.pk in seen:
+                continue
+            seen.add(unit.pk)
         by_markup = str(row.get("price_formation", "")).lower() == "markup"
         markup = _positive(row.get("markup"))
+        limits = _limits(row, None if by_markup else _decimal(row.get("price")))
         prepared.append(
             {
                 "unit": unit.pk,
@@ -360,8 +387,8 @@ def _units_for(price_rows: list[dict[str, Any]], base_unit: Unit) -> list[catalo
                 "pricing": ItemUnit.Pricing.MARKUP if by_markup else ItemUnit.Pricing.FIXED,
                 "price": None if by_markup else (_decimal(row.get("price")) or Decimal("0")),
                 "markup_percent": markup if by_markup else None,
-                "price_min": _positive(row.get("min_price")),
-                "price_max": _positive(row.get("max_price")),
+                "price_min": limits[0],
+                "price_max": limits[1],
                 "barcode": _text(row, "barcode")[:50],
                 "for_sale": True,
             }

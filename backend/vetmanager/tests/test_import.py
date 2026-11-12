@@ -426,3 +426,104 @@ def test_people_second_run_changes_nothing(people) -> None:
 
     assert again.created == 0 and again.skipped == 2
     assert Client.objects.filter(last_name="Пушкин").count() == 1 and Pet.objects.count() == 2
+
+
+# --- Случаи из боевой выгрузки (194 позиции не переносились) ---------------------------
+
+
+def test_sale_unit_with_coefficient_one_is_the_base_unit(db) -> None:
+    """«Габапентин-АСТРА»: учёт в «шт.», единица продажи «упак.» с коэффициентом 1 —
+    это та же единица под другим названием, отдельной её заводить нельзя."""
+    services.import_units([{"id": "1", "title": "шт"}, {"id": "2", "title": "упак."}])
+    goods = [
+        {
+            "id": 500,
+            "title": "Габапентин-АСТРА таблетки 50 мг",
+            "unit_storage_id": 1,
+            "is_warehouse_account": 1,
+            "is_active": 1,
+            "group": {"id": 66, "title": "Препараты", "is_service": 0},
+            "unitStorage": {"id": 1, "title": "шт"},
+            "goodSaleParams": [
+                {
+                    "good_id": 500,
+                    "price": "290.0000000000",
+                    "coefficient": 1,
+                    "unit_sale_id": 2,
+                    "status": "active",
+                    "is_last": 1,
+                }
+            ],
+        }
+    ]
+
+    result = services.import_items(goods)
+
+    item = Item.objects.get(name="Габапентин-АСТРА таблетки 50 мг")
+    assert result.created == 1 and not result.errors
+    assert [(u.unit.name, u.price) for u in item.units.all()] == [("шт.", D("290.00"))]
+
+
+def test_price_outside_limits_keeps_price_and_drops_limits(db) -> None:
+    """«Кастрация кота»: цену подняли, а максимум в VetManager остался прежним.
+    Цена важнее — границы не переносим, позиция сохраняется."""
+    goods = [
+        {
+            "id": 501,
+            "title": "Кастрация кота",
+            "unit_storage_id": 7,
+            "is_warehouse_account": 0,
+            "is_active": 1,
+            "group": {"id": 9, "title": "Услуги", "is_service": 1},
+            "unitStorage": {"id": 7, "title": "усл."},
+            "goodSaleParams": [
+                {
+                    "good_id": 501,
+                    "price": "3500.0000000000",
+                    "coefficient": 1,
+                    "unit_sale_id": 7,
+                    "min_price": "1000.0000000000",
+                    "max_price": "2000.0000000000",
+                    "status": "active",
+                    "is_last": 1,
+                }
+            ],
+        }
+    ]
+
+    result = services.import_items(goods)
+
+    unit = Item.objects.get(name="Кастрация кота").units.get()
+    assert result.created == 1 and not result.errors
+    assert unit.price == D("3500.00") and unit.price_min == D("1000.00") and unit.price_max is None
+
+
+def test_sane_limits_are_kept(db) -> None:
+    goods = [
+        {
+            "id": 502,
+            "title": "Приём врача",
+            "unit_storage_id": 7,
+            "is_warehouse_account": 0,
+            "is_active": 1,
+            "group": {"id": 9, "title": "Услуги", "is_service": 1},
+            "unitStorage": {"id": 7, "title": "усл."},
+            "goodSaleParams": [
+                {
+                    "good_id": 502,
+                    "price": "900.0000000000",
+                    "coefficient": 1,
+                    "unit_sale_id": 7,
+                    "min_price": "800.0000000000",
+                    "max_price": "1200.0000000000",
+                    "status": "active",
+                    "is_last": 1,
+                }
+            ],
+        }
+    ]
+
+    services.import_items(goods)
+
+    unit = Item.objects.get(name="Приём врача").units.get()
+    assert (unit.price_min, unit.price_max) == (D("800.00"), D("1200.00"))
