@@ -527,3 +527,13 @@ def test_sane_limits_are_kept(db) -> None:
 
     unit = Item.objects.get(name="Приём врача").units.get()
     assert (unit.price_min, unit.price_max) == (D("800.00"), D("1200.00"))
+
+
+def test_status_counts_species_and_breeds_apart(db) -> None:
+    """В шаге «Виды и породы» считаются и виды, и породы: иначе 433 породы не видно."""
+    services.import_species(PET_TYPES, BREEDS)
+
+    row = next(r for r in services.status() if r["step"] == "species")
+
+    assert row["imported"] == 4  # 2 вида + 2 породы (третья — без своего вида)
+    assert row["detail"] == "2 видов, 2 пород"

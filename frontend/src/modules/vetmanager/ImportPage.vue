@@ -22,7 +22,7 @@
         <q-item-section>
           <q-item-label class="text-weight-medium">{{ step.title }}</q-item-label>
           <q-item-label caption>
-            {{ step.imported ? `перенесено: ${step.imported}` : 'ещё не переносили' }}
+            {{ step.imported ? `перенесено: ${step.detail || step.imported}` : 'ещё не переносили' }}
             <span v-if="results[step.step]"> · {{ results[step.step].text }}</span>
           </q-item-label>
           <q-item-label v-if="results[step.step]?.errors?.length" caption class="text-negative">

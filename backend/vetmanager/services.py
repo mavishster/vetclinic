@@ -626,16 +626,30 @@ def run_step(step: str) -> StepResult:
 
 
 def status() -> list[dict[str, Any]]:
-    """Что уже перенесено — для экрана переноса."""
-    kinds = {
-        "units": "unit",
-        "item_groups": "item_group",
-        "items": "item",
-        "species": "species",
-        "clients": "client",
-        "pets": "pet",
+    """Что уже перенесено — для экрана переноса.
+
+    У шага может быть несколько видов записей (виды животных и породы) — считаем все
+    и показываем подробно, чтобы не выглядело, будто породы не перенеслись.
+    """
+    kinds: dict[str, list[tuple[str, str]]] = {
+        "units": [("unit", "единиц")],
+        "item_groups": [("item_group", "групп")],
+        "items": [("item", "позиций")],
+        "species": [("species", "видов"), ("breed", "пород")],
+        "clients": [("client", "клиентов")],
+        "pets": [("pet", "питомцев")],
     }
-    return [
-        {"step": step, "title": title, "imported": imported_count(kinds[step])}
-        for step, title in STEPS
-    ]
+    rows = []
+    for step, title in STEPS:
+        counts = [(imported_count(kind), label) for kind, label in kinds[step]]
+        total = sum(count for count, _ in counts)
+        detail = ", ".join(f"{count} {label}" for count, label in counts if count)
+        rows.append(
+            {
+                "step": step,
+                "title": title,
+                "imported": total,
+                "detail": detail if len(counts) > 1 else "",
+            }
+        )
+    return rows
