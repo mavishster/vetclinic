@@ -142,3 +142,34 @@ def test_base_unit_can_change_until_first_receipt_or_sale(drug) -> None:
     drug.base_unit = Unit.objects.get(name="фл.")
     with pytest.raises(services.CatalogError, match="нельзя менять после первого прихода"):
         services.save_item(drug)
+
+
+def test_list_ordering_by_columns(api, drug) -> None:
+    service_group = ItemGroup.objects.filter(kind=Kind.SERVICE).first()
+    services.save_item(
+        Item(kind=Kind.SERVICE, name="анализ крови", group=service_group, article="A-1",
+             base_unit=Unit.objects.get(name="усл.")),
+        [{"unit": Unit.objects.get(name="усл."), "price": Decimal("900")}],
+    )  # fmt: skip
+    services.save_item(
+        Item(
+            kind=Kind.GOODS, name="Бинт", group=drug.group, base_unit=Unit.objects.get(name="шт.")
+        ),
+        [{"unit": Unit.objects.get(name="шт."), "price": Decimal("15")}],
+    )
+
+    def names(ordering: str) -> list[str]:
+        rows = api.get(f"/api/catalog/items/?ordering={ordering}").json()["results"]
+        return [r["name"] for r in rows]
+
+    by_price = names("price")
+    assert names("name")[0] == "анализ крови" and names("-name")[-1] == "анализ крови"
+    assert by_price.index("Бинт") < by_price.index("анализ крови")
+    assert names("-price").index("анализ крови") < names("-price").index("Бинт")
+    assert names("unit")[-1] == "анализ крови"  # у услуги единицы нет — в конце
+    assert names("article")[0] == "анализ крови"  # пустые артикулы — в конце
+    groups = [
+        r["group_name"] for r in api.get("/api/catalog/items/?ordering=group").json()["results"]
+    ]
+    assert groups == sorted(groups, key=str.lower)
+    assert len(names("wrong")) == 3  # неизвестная колонка — порядок по умолчанию

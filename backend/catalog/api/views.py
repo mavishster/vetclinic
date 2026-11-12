@@ -179,6 +179,7 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     Фильтры: ?kind=goods|service|combo (можно через запятую), ?group=, ?active=true|false,
     ?tracked=yes|no (складской учёт), ?not_for_sale=true,
     ?search=текст (название по словам, точно — артикул и штрихкод).
+    ?ordering=name|group|unit|price|article («-» в начале — по убыванию).
     """
 
     serializer_class = ItemSerializer
@@ -208,6 +209,8 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         search = params.get("search", "").strip()
         if search and params.get("suggest") != "1":
             queryset = services.search_items(queryset, search)
+        if ordering := params.get("ordering"):
+            queryset = services.order_items(queryset, ordering)
         return queryset
 
     def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:

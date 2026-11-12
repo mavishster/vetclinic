@@ -34,7 +34,7 @@
       <q-btn flat label="Снять отметки" @click="selected = []" />
     </div>
 
-    <q-table v-model:pagination="pagination" v-model:selected="selected" :rows="rows" :columns="columns" row-key="id"
+    <q-table v-model:pagination="pagination" binary-state-sort v-model:selected="selected" :rows="rows" :columns="columns" row-key="id"
       :selection="canEditItems ? 'multiple' : 'none'" :loading="loading"
       flat bordered :rows-per-page-options="[25, 50, 100]" no-data-label="Ничего не найдено"
       rows-per-page-label="Строк на странице" @request="onRequest" @row-click="(e, row) => edit(row)">
@@ -86,7 +86,8 @@ const tracked = ref(null)
 const notForSale = ref(false)
 const TRACKED = [{ label: 'Товары с учётом', value: 'yes' }, { label: 'Товары без учёта', value: 'no' }]
 const groups = ref([])
-const pagination = ref({ page: 1, rowsPerPage: 50, rowsNumber: 0 })
+const pagination = ref({ page: 1, rowsPerPage: 50, rowsNumber: 0, sortBy: 'name', descending: false })
+const SORT_KEYS = { name: 'name', group: 'group', unit: 'unit', prices: 'price', article: 'article' }
 const editorOpen = ref(false)
 const editing = ref(null)
 const newKind = ref('goods')
@@ -103,17 +104,19 @@ const drugBulkOpen = ref(false)
 const canEditItems = can('catalog.change_item')
 
 const columns = [
-  { name: 'name', label: 'Название', field: 'name', align: 'left' },
-  { name: 'group', label: 'Группа', field: 'group_name', align: 'left' },
+  // Сортировка — на сервере (список постраничный): щелчок по заголовку.
+  { name: 'name', label: 'Название', field: 'name', align: 'left', sortable: true },
+  { name: 'group', label: 'Группа', field: 'group_name', align: 'left', sortable: true },
   // Единица учёта товара (в ней ведётся остаток); у услуг и комбинаций её нет — прочерк.
-  { name: 'unit', label: 'Ед. изм.', field: (r) => (r.kind === 'goods' ? r.base_unit_name || '—' : '—'), align: 'left' },
-  { name: 'prices', label: 'Цены', field: 'id', align: 'left' },
-  { name: 'article', label: 'Артикул', field: 'article', align: 'left' },
+  { name: 'unit', label: 'Ед. изм.', field: (r) => (r.kind === 'goods' ? r.base_unit_name || '—' : '—'), align: 'left', sortable: true },
+  { name: 'prices', label: 'Цены', field: 'id', align: 'left', sortable: true },
+  { name: 'article', label: 'Артикул', field: 'article', align: 'left', sortable: true },
 ]
 
 async function onRequest({ pagination: next }) {
   loading.value = true
   const params = new URLSearchParams({ page: next.page, page_size: next.rowsPerPage })
+  if (SORT_KEYS[next.sortBy]) params.set('ordering', `${next.descending ? '-' : ''}${SORT_KEYS[next.sortBy]}`)
   if (search.value) params.set('search', search.value)
   if (kind.value) params.set('kind', kind.value)
   if (group.value) params.set('group', group.value)

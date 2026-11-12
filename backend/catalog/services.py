@@ -220,6 +220,36 @@ def search_items(queryset: QuerySet[Item], text: str) -> QuerySet[Item]:
     return queryset.filter(exact | by_words).distinct()
 
 
+def order_items(queryset: QuerySet[Item], ordering: str) -> QuerySet[Item]:
+    """Сортировка списка прайса по колонке: name, group, unit, price, article
+    («-» в начале — по убыванию). Пустые значения — в конце; при равенстве — по названию.
+
+    unit — единица учёта товара (у услуг и комбинаций её нет — они в конце);
+    price — наименьшая фиксированная цена среди единиц для продажи.
+    """
+    from django.db.models import Case, CharField, Min, Value, When
+    from django.db.models.functions import Lower, NullIf
+
+    key, descending = ordering.lstrip("-"), ordering.startswith("-")
+    expressions: dict[str, Any] = {
+        "name": Lower("name"),
+        "group": Lower("group__name"),
+        "article": NullIf(Lower("article"), Value("")),
+        "unit": Case(
+            When(kind=Kind.GOODS, then=Lower("base_unit__name")), default=None,
+            output_field=CharField(),
+        ),
+        "price": Min("units__price", filter=Q(units__for_sale=True, units__is_deleted=False)),
+    }  # fmt: skip
+    if key not in expressions:
+        return queryset
+    queryset = queryset.annotate(sort_key=expressions[key])
+    order = (
+        F("sort_key").desc(nulls_last=True) if descending else F("sort_key").asc(nulls_last=True)
+    )
+    return queryset.order_by(order, "name", "pk")
+
+
 # --- Подбор препаратов: с опечатками, аналоги по веществу и по группе -----------------
 
 _LAYOUT = str.maketrans(
