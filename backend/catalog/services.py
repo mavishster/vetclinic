@@ -111,6 +111,18 @@ def _unit_id(data: UnitData) -> Any:
     return getattr(value, "pk", value)
 
 
+def _has_quantities(item: Item) -> bool:
+    """Есть ли по позиции количества в единицах учёта: складские документы, движения,
+    партии, строки счетов, минимумы и нормы. Пока их нет (прайс только заполняют, в том
+    числе после переноса из другой программы) — единицу учёта можно исправить.
+
+    Отметка «ведётся складской учёт» сама по себе ничего не значит: при переносе она
+    ставится по карточке товара, ещё до первого прихода. Откатанные документы не считаются.
+    """
+    records = core.usage_records(item)
+    return any(model._meta.app_label in {"inventory", "billing"} for model in records)
+
+
 @transaction.atomic
 def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
     """Сохранить товар или услугу вместе с единицами (если переданы).
@@ -126,12 +138,12 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
         raise CatalogError("Группа не подходит: выберите группу для товаров или для услуг.")
     if item.manual_cost is not None and item.manual_cost < 0:
         raise CatalogError("Себестоимость не может быть отрицательной.")
-    if not item._state.adding and item.stock_tracked:
+    if not item._state.adding:
         stored_unit = Item.objects.filter(pk=item.pk).values_list("base_unit_id", flat=True).first()
-        if stored_unit is not None and stored_unit != item.base_unit_id:
+        if stored_unit is not None and stored_unit != item.base_unit_id and _has_quantities(item):
             raise CatalogError(
-                "Единицу учёта нельзя менять после первого прихода: остатки уже ведутся в ней "
-                "и пересчитались бы неверно. Если ошиблись — заведите новую позицию."
+                "Единицу учёта нельзя менять после первого прихода или продажи: количества уже "
+                "записаны в ней и пересчитались бы неверно. Если ошиблись — заведите новую позицию."
             )
     item.save()
     if units is None:
