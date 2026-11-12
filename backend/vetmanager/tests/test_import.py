@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from catalog.models import Item, ItemGroup, Kind
@@ -231,6 +232,8 @@ def test_status_counts(imported) -> None:
         "species": 0,
         "clients": 0,
         "pets": 0,
+        "doctors": 0,
+        "visits": 0,
     }
 
 
@@ -264,6 +267,8 @@ def test_api_needs_right_and_reports_settings(db, django_user_model, settings) -
         "species",
         "clients",
         "pets",
+        "doctors",
+        "visits",
     ]
     assert refused.status_code == 403
     assert "Неизвестный шаг" in unknown.json()["non_field_errors"][0]
@@ -537,3 +542,98 @@ def test_status_counts_species_and_breeds_apart(db) -> None:
 
     assert row["imported"] == 4  # 2 вида + 2 породы (третья — без своего вида)
     assert row["detail"] == "2 видов, 2 пород"
+
+
+# --- Врачи и медкарты -----------------------------------------------------------------
+
+VM_USERS = [
+    {"id": 3, "last_name": "Петрова", "first_name": "Анна", "middle_name": ""},
+    {"id": 4, "last_name": "Уволенный", "first_name": "Пётр"},
+]
+ADMISSION_TYPES = [{"id": 1, "title": "Первичный"}, {"id": 2, "title": "Хирургия"}]
+ADMISSIONS = [
+    {
+        "id": 700,
+        "patient_id": 200,
+        "client_id": 100,
+        "user_id": 3,
+        "type_id": 2,
+        "admission_date": "2026-03-14 10:30:00",
+        "description": "<p>Осмотр, t 38,9</p><script>alert(1)</script>",
+    },
+    {
+        "id": 701,
+        "patient_id": 200,
+        "client_id": 100,
+        "user_id": 4,
+        "type_id": 1,
+        "admission_date": "2026-04-02 09:00:00",
+        "description": "Повторный осмотр",
+    },
+    {
+        "id": 702,
+        "patient_id": 999,
+        "client_id": 100,
+        "user_id": 3,
+        "admission_date": "2026-04-03 09:00:00",
+        "description": "Питомца не переносили",
+    },
+    {
+        "id": 703,
+        "patient_id": 200,
+        "client_id": 100,
+        "user_id": 3,
+        "admission_date": "0000-00-00 00:00:00",
+        "description": "Без даты",
+    },
+]
+
+
+@pytest.fixture
+def visits(people, django_user_model):
+    django_user_model.objects.create_user(
+        username="petrova", last_name="Петрова", first_name="Анна"
+    )
+    services.import_doctors(VM_USERS)
+    services.import_visit_purposes(ADMISSION_TYPES)
+    return services.import_visits(ADMISSIONS)
+
+
+def test_doctors_match_by_name(db, django_user_model) -> None:
+    django_user_model.objects.create_user(
+        username="petrova", last_name="Петрова", first_name="Анна"
+    )
+
+    result = services.import_doctors(VM_USERS)
+
+    assert result.updated == 1  # связали Петрову
+    assert len(result.errors) == 1 and "Уволенный" in result.errors[0]  # такого сотрудника нет
+
+
+def test_visits_imported_with_doctor_purpose_and_text(visits) -> None:
+    from medical.models import Visit
+
+    first = Visit.objects.get(treatment_html__contains="Осмотр")
+
+    assert visits.created == 2 and len(visits.errors) == 2  # нет питомца, нет даты
+    assert first.doctor.last_name == "Петрова" and first.purpose.name == "Хирургия"
+    assert first.pet.name == "Барсик" and first.client.last_name == "Пушкин"
+    assert str(timezone.localtime(first.date))[:16] == "2026-03-14 10:30"
+    assert "<script>" not in first.treatment_html  # текст очищается
+
+
+def test_unknown_doctor_goes_to_transfer_account(visits) -> None:
+    from medical.models import Visit
+
+    second = Visit.objects.get(treatment_html__contains="Повторный")
+
+    # Врача не нашли — приём не теряется, его можно переназначить потом.
+    assert second.doctor.last_name == services.TRANSFER_DOCTOR and not second.doctor.is_active
+
+
+def test_visits_second_run_changes_nothing(visits) -> None:
+    from medical.models import Visit
+
+    again = services.import_visits(ADMISSIONS)
+
+    assert again.created == 0 and again.skipped == 2 and Visit.objects.count() == 2

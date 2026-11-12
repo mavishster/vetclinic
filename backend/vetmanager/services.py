@@ -13,11 +13,16 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from django.db import transaction
+from django.utils import timezone
 
 from catalog import services as catalog
 from catalog.models import Item, ItemGroup, ItemUnit, Kind, Unit
 from clients import services as clients_services
 from clients.models import Breed, City, Client, Pet, Species
+from core.html import clean
+from core.models import User
+from medical.models import Visit
+from scheduling.models import VisitPurpose
 from vetmanager import client
 from vetmanager.models import Imported
 
@@ -31,6 +36,8 @@ STEPS = [
     ("species", "Виды и породы"),
     ("clients", "Клиенты"),
     ("pets", "Питомцы"),
+    ("doctors", "Врачи"),
+    ("visits", "Медкарты"),
 ]
 
 
@@ -418,6 +425,22 @@ _SEX = {
 }
 
 
+def _moment(value: Any) -> Any:
+    """Дата и время из VetManager: «2026-11-12 14:30:00»; нули и пустое — None."""
+    from datetime import datetime
+
+    text = str(value or "").strip()
+    if not text or text.startswith(("0000", "1970-01-01")):
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            naive = datetime.strptime(text[:19], fmt)
+        except ValueError:
+            continue
+        return timezone.make_aware(naive, timezone.get_current_timezone())
+    return None
+
+
 def _date(value: Any) -> Any:
     """Дата из VetManager: «2019-05-17» или «2019-05-17 00:00:00»; нули — пусто."""
     text = str(value or "").strip()
@@ -608,6 +631,157 @@ def import_pets(rows: list[dict[str, Any]] | None = None) -> StepResult:
     return result
 
 
+# --- Врачи и медкарты -----------------------------------------------------------------
+
+# Цель обращения в VetManager задаётся типом приёма; что не узнали — «Первичный».
+DEFAULT_PURPOSE = "Первичный"
+TRANSFER_DOCTOR = "Врач (перенос из VetManager)"
+
+
+def _full_name(row: dict[str, Any]) -> str:
+    parts = [_text(row, "last_name"), _text(row, "first_name"), _text(row, "middle_name")]
+    return " ".join(part for part in parts if part)
+
+
+@transaction.atomic
+def import_doctors(rows: list[dict[str, Any]] | None = None) -> StepResult:
+    """Врачи VetManager → наши сотрудники: связываем по фамилии и имени.
+
+    Новые учётные записи не создаются: это право администратора клиники. Кого не нашли —
+    пишем в ошибки, их приёмы попадут на «Врач (перенос из VetManager)», и врача
+    в таких записях можно поменять потом.
+    """
+    rows = client.fetch("User") if rows is None else rows
+    result = StepResult("doctors", "Врачи", total=len(rows))
+    employees = list(User.objects.all())
+    for row in rows:
+        external_id = str(row.get("id") or "")
+        last_name = _text(row, "last_name")
+        if not last_name:
+            result.skipped += 1
+            continue
+        if _link("doctor", external_id):
+            result.skipped += 1
+            continue
+        first_name = _text(row, "first_name")
+        found = next(
+            (
+                user
+                for user in employees
+                if simplify(user.last_name) == simplify(last_name)
+                and (
+                    not first_name
+                    or not user.first_name
+                    or simplify(user.first_name)[:1] == simplify(first_name)[:1]
+                )
+            ),
+            None,
+        )
+        if found is None:
+            result.errors.append(
+                f"«{_full_name(row)}»: нет такого сотрудника — заведите его в «Сотрудниках»."
+            )
+            continue
+        _remember("doctor", external_id, found.pk)
+        result.updated += 1
+    return result
+
+
+def _transfer_doctor() -> User:
+    """Учётная запись, на которую ложатся приёмы врачей, которых не нашли."""
+    user = User.objects.filter(username="vetmanager-transfer").first()
+    if user is None:
+        user = User.objects.create_user(
+            username="vetmanager-transfer", last_name=TRANSFER_DOCTOR, is_active=False
+        )
+        user.set_unusable_password()
+        user.save(update_fields=["password"])
+    return user
+
+
+def _purpose_for(row: dict[str, Any], default: VisitPurpose) -> VisitPurpose:
+    link = _link("visit_purpose", str(row.get("type_id") or ""))
+    found = VisitPurpose.objects.filter(pk=link.target_id).first() if link else None
+    return found or default
+
+
+@transaction.atomic
+def import_visit_purposes(rows: list[dict[str, Any]] | None = None) -> StepResult:
+    """Типы приёмов VetManager → цели обращения (для медкарт)."""
+    rows = client.fetch("AdmissionType") if rows is None else rows
+    result = StepResult("visit_purposes", "Цели обращения", total=len(rows))
+    for row in rows:
+        name = _text(row, "title", "name")[:100]
+        if not name or _link("visit_purpose", str(row.get("id") or "")):
+            continue
+        purpose = _same_name(VisitPurpose.objects.all(), name)
+        if purpose is None:
+            purpose = VisitPurpose.objects.create(name=name)
+            result.created += 1
+        else:
+            result.updated += 1
+        _remember("visit_purpose", row["id"], purpose.pk)
+    return result
+
+
+@transaction.atomic
+def import_visits(rows: list[dict[str, Any]] | None = None) -> StepResult:
+    """Приёмы VetManager → записи медкарты.
+
+    Переносятся дата, питомец и владелец, врач, цель обращения и описание приёма.
+    Питомец должен быть перенесён заранее — без него запись не к кому привязать.
+    """
+    if rows is None:
+        with contextlib.suppress(VetManagerError):
+            import_visit_purposes()
+        rows = client.fetch("Admission")
+    result = StepResult("visits", "Медкарты", total=len(rows))
+    default_purpose = (
+        _same_name(VisitPurpose.objects.all(), DEFAULT_PURPOSE) or VisitPurpose.objects.first()
+    )
+    if default_purpose is None:
+        raise VetManagerError("Нет ни одной цели обращения — заполните справочник.")
+    fallback_doctor: User | None = None
+    for row in rows:
+        external_id = str(row.get("id") or "")
+        if _link("visit", external_id):
+            result.skipped += 1
+            continue
+        pet_link = _link("pet", str(row.get("patient_id") or ""))
+        pet = (
+            Pet.objects.filter(pk=pet_link.target_id).select_related("owner").first()
+            if pet_link
+            else None
+        )
+        if pet is None:
+            result.errors.append(
+                f"Приём {external_id}: питомец не перенесён — сначала перенесите питомцев."
+            )
+            continue
+        when = _moment(row.get("admission_date")) or _moment(row.get("create_date"))
+        if when is None:
+            result.errors.append(
+                f"Приём {external_id}: не разобрали дату «{row.get('admission_date')}»."
+            )
+            continue
+        doctor_link = _link("doctor", str(row.get("user_id") or ""))
+        doctor = User.objects.filter(pk=doctor_link.target_id).first() if doctor_link else None
+        if doctor is None:
+            fallback_doctor = fallback_doctor or _transfer_doctor()
+            doctor = fallback_doctor
+        visit = Visit.objects.create(
+            pet=pet,
+            client=pet.owner,
+            doctor=doctor,
+            date=when,
+            purpose=_purpose_for(row, default_purpose),
+            treatment_html=clean(_text(row, "description")),
+        )
+        _remember("visit", external_id, visit.pk)
+        result.created += 1
+    return result
+
+
 def run_step(step: str) -> StepResult:
     """Выполнить шаг переноса: данные берутся из VetManager по его API."""
     if step == "units":
@@ -622,6 +796,10 @@ def run_step(step: str) -> StepResult:
         return import_clients()
     if step == "pets":
         return import_pets()
+    if step == "doctors":
+        return import_doctors()
+    if step == "visits":
+        return import_visits()
     raise VetManagerError(f"Неизвестный шаг переноса: {step}.")
 
 
@@ -638,6 +816,8 @@ def status() -> list[dict[str, Any]]:
         "species": [("species", "видов"), ("breed", "пород")],
         "clients": [("client", "клиентов")],
         "pets": [("pet", "питомцев")],
+        "doctors": [("doctor", "врачей")],
+        "visits": [("visit", "приёмов")],
     }
     rows = []
     for step, title in STEPS:
