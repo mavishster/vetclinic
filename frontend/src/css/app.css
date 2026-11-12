@@ -22,3 +22,29 @@
 .row-highlight-warning {
   background: rgba(196, 140, 30, 0.18);
 }
+
+/* Автозаполнение браузера (логин и пароль) рисует свой светлый фон поверх темы —
+   поле становится нечитаемым в тёмной. Оставляем фон и цвет текста от темы. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: currentColor;
+  -webkit-background-clip: text;
+  background-clip: text;
+  caret-color: currentColor;
+  transition: background-color 600000s 0s;
+}
+
+/* Плашки-подсказки: цвет поверх фона темы, читаются и в светлой, и в тёмной. */
+.banner-warning {
+  background: rgba(196, 140, 30, 0.18);
+}
+.banner-positive {
+  background: rgba(60, 122, 78, 0.18);
+}
+.banner-info {
+  background: rgba(36, 86, 106, 0.18);
+}

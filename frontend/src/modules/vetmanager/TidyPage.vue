@@ -10,7 +10,7 @@
       вы не нажмёте «Объединить». Делать это лучше до приходов и счетов — использованные позиции не объединяются.
     </p>
 
-    <q-banner v-if="!loading && !rows.length" class="bg-green-1">
+    <q-banner v-if="!loading && !rows.length" class="banner-positive">
       <template #avatar><q-icon name="check_circle" color="positive" /></template>
       Похожих позиций не нашлось — прайс в порядке.
     </q-banner>

@@ -49,7 +49,7 @@
           </div>
           <q-input v-model="form.note" label="Заметка для врача" type="textarea" autogrow outlined dense />
 
-          <q-banner v-if="warnings.length" rounded class="bg-orange-1 text-dark">
+          <q-banner v-if="warnings.length" rounded class="banner-warning">
             <template #avatar><q-icon name="warning" color="warning" /></template>
             <div v-for="w in warnings" :key="w">{{ w }}</div>
           </q-banner>

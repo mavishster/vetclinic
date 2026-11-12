@@ -6,7 +6,7 @@
       Шаги выполняются по порядку; повторный запуск ничего не задваивает — переносится только новое.
     </p>
 
-    <q-banner v-if="status && !status.configured" class="bg-orange-1 q-mb-md">
+    <q-banner v-if="status && !status.configured" class="banner-warning q-mb-md">
       <template #avatar><q-icon name="warning" color="warning" /></template>
       Не заданы адрес и ключ VetManager. Добавьте в файл <code>.env</code> строки
       <code>VETMANAGER_URL</code> и <code>VETMANAGER_API_KEY</code> и перезапустите систему.

@@ -74,7 +74,7 @@
             <q-tab name="files" label="Файлы" />
           </q-tabs>
           <q-separator />
-          <q-banner v-if="canEdit && visit.prevention_suggestions.length" dense class="bg-blue-1 text-dark q-mt-sm" rounded>
+          <q-banner v-if="canEdit && visit.prevention_suggestions.length" dense class="banner-info q-mt-sm" rounded>
             <template #avatar><q-icon name="health_and_safety" color="primary" /></template>
             В записи отмечено то, что стоит внести в профилактику:
             <q-btn v-for="s in visit.prevention_suggestions" :key="s.type + s.item" flat dense no-caps color="primary"
