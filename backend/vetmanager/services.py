@@ -6,7 +6,9 @@
 Бизнес-правила живут здесь, а не в моделях и не в API (ENGINEERING.md).
 """
 
+import contextlib
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -14,6 +16,8 @@ from django.db import transaction
 
 from catalog import services as catalog
 from catalog.models import Item, ItemGroup, ItemUnit, Kind, Unit
+from clients import services as clients_services
+from clients.models import Breed, City, Client, Pet, Species
 from vetmanager import client
 from vetmanager.models import Imported
 
@@ -24,6 +28,9 @@ STEPS = [
     ("units", "Единицы измерения"),
     ("item_groups", "Группы прайса"),
     ("items", "Товары и услуги"),
+    ("species", "Виды и породы"),
+    ("clients", "Клиенты"),
+    ("pets", "Питомцы"),
 ]
 
 
@@ -372,6 +379,208 @@ def _units_for(price_rows: list[dict[str, Any]], base_unit: Unit) -> list[catalo
     return prepared
 
 
+# --- Клиенты и питомцы ----------------------------------------------------------------
+
+_SEX = {
+    "мальчик": Pet.Sex.MALE,
+    "male": Pet.Sex.MALE,
+    "м": Pet.Sex.MALE,
+    "девочка": Pet.Sex.FEMALE,
+    "female": Pet.Sex.FEMALE,
+    "ж": Pet.Sex.FEMALE,
+}
+
+
+def _date(value: Any) -> Any:
+    """Дата из VetManager: «2019-05-17» или «2019-05-17 00:00:00»; нули — пусто."""
+    text = str(value or "").strip()
+    if not text or text.startswith(("0000", "1970-01-01")):
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+@transaction.atomic
+def import_species(
+    types: list[dict[str, Any]] | None = None, breeds: list[dict[str, Any]] | None = None
+) -> StepResult:
+    """Виды животных и породы VetManager → наши справочники."""
+    types = client.fetch("PetType") if types is None else types
+    breeds = client.fetch("Breed") if breeds is None else breeds
+    result = StepResult("species", "Виды и породы", total=len(types) + len(breeds))
+    for row in types:
+        name = _text(row, "title", "name")[:100]
+        if not name or _link("species", str(row.get("id") or "")):
+            result.skipped += 1 if name else 0
+            continue
+        species = _same_name(Species.objects.all(), name)
+        if species is None:
+            species = Species.objects.create(name=name)
+            result.created += 1
+        else:
+            result.updated += 1
+        _remember("species", row["id"], species.pk)
+    for row in breeds:
+        name = _text(row, "title", "name")[:100]
+        link = _link("species", str(row.get("pet_type_id") or ""))
+        species = Species.objects.filter(pk=link.target_id).first() if link else None
+        if not name or species is None:
+            result.errors.append(f"Порода {row.get('id')}: не нашёлся вид животного.")
+            continue
+        if _link("breed", str(row["id"])):
+            result.skipped += 1
+            continue
+        breed = _same_name(Breed.objects.filter(species=species), name)
+        if breed is None:
+            breed = Breed.objects.create(name=name, species=species)
+            result.created += 1
+        else:
+            result.updated += 1
+        _remember("breed", row["id"], breed.pk)
+    return result
+
+
+def _phones(row: dict[str, Any]) -> list[clients_services.PhoneData]:
+    """Телефоны клиента: мобильный — основной, домашний и рабочий — следом."""
+    prefix = _text(row, "phone_prefix")
+    found: list[clients_services.PhoneData] = []
+    for source, kind in (("cell_phone", "mobile"), ("home_phone", "home"), ("work_phone", "work")):
+        number = _text(row, source)
+        if not number:
+            continue
+        if prefix and not number.startswith(("+", prefix)):
+            number = f"{prefix}{number}"
+        found.append({"number": number[:30], "kind": kind, "is_primary": not found})
+    return found
+
+
+@transaction.atomic
+def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
+    """Клиенты VetManager → карточки клиентов с телефонами.
+
+    Чёрный список, отказ от рассылки, скидка и номер по журналу переносятся;
+    баланс не переносится — он складывается из счетов и оплат.
+    """
+    rows = client.fetch("Client") if rows is None else rows
+    result = StepResult("clients", "Клиенты", total=len(rows))
+    for row in rows:
+        external_id = str(row.get("id") or "")
+        last_name = _text(row, "last_name")
+        if not last_name:
+            last_name = (
+                _text(row, "first_name") or _text(row, "cell_phone") or f"Без имени {external_id}"
+            )
+        if _link("client", external_id):
+            result.skipped += 1
+            continue
+        city_name = _text(row, "city")
+        city = None
+        if city_name:
+            city = _same_name(City.objects.all(), city_name) or City.objects.create(
+                name=city_name[:100]
+            )
+        house = " ".join(part for part in (_text(row, "address"), _text(row, "apartment")) if part)
+        status = Client.Status.ACTIVE
+        if str(row.get("status", "")).upper() in ("DELETED", "INACTIVE", "ARCHIVE"):
+            status = Client.Status.INACTIVE
+        record = Client(
+            last_name=last_name[:100],
+            first_name=_text(row, "first_name")[:100],
+            middle_name=_text(row, "middle_name")[:100],
+            passport=_text(row, "passport_series")[:50],
+            city=city,
+            house=house[:100],
+            zip_code=_text(row, "zip")[:10],
+            email=_text(row, "email")[:254] if "@" in _text(row, "email") else "",
+            discount_percent=_positive(row.get("discount")) or Decimal("0"),
+            journal_number=_text(row, "number_of_journal")[:50],
+            no_mailing=_flag(row, "unsubscribe"),
+            in_blacklist=_flag(row, "in_blacklist"),
+            description=_text(row, "note"),
+            status=status,
+        )
+        try:
+            saved = clients_services.save_client(record, _phones(row))
+        except clients_services.ClientError as error:
+            result.errors.append(f"«{last_name}»: {error}")
+            continue
+        _remember("client", external_id, saved.pk)
+        result.created += 1
+    return result
+
+
+def _fallback_species() -> Species:
+    name = "Не указан"
+    return _same_name(Species.objects.all(), name) or Species.objects.create(name=name)
+
+
+def _fallback_breed(species: Species) -> Breed:
+    name = "Не указана"
+    return _same_name(Breed.objects.filter(species=species), name) or Breed.objects.create(
+        name=name, species=species
+    )
+
+
+@transaction.atomic
+def import_pets(rows: list[dict[str, Any]] | None = None) -> StepResult:
+    """Питомцы VetManager → карточки питомцев их владельцев.
+
+    Вид и порода берутся из перенесённых справочников; если их нет — «Не указан».
+    Умершие переносятся со статусом «умер», вес — первой записью истории веса.
+    """
+    rows = client.fetch("Pet") if rows is None else rows
+    result = StepResult("pets", "Питомцы", total=len(rows))
+    for row in rows:
+        external_id = str(row.get("id") or "")
+        name = _text(row, "alias", "name")[:100] or f"Без клички {external_id}"
+        owner_link = _link("client", str(row.get("owner_id") or ""))
+        owner = Client.objects.filter(pk=owner_link.target_id).first() if owner_link else None
+        if owner is None:
+            result.errors.append(f"«{name}»: владелец не перенесён — сначала перенесите клиентов.")
+            continue
+        if _link("pet", external_id):
+            result.skipped += 1
+            continue
+        species_link = _link("species", str(row.get("type_id") or ""))
+        species = (
+            Species.objects.filter(pk=species_link.target_id).first() if species_link else None
+        )
+        species = species or _fallback_species()
+        breed_link = _link("breed", str(row.get("breed_id") or ""))
+        breed = Breed.objects.filter(pk=breed_link.target_id).first() if breed_link else None
+        if breed is None or breed.species_id != species.pk:
+            breed = _fallback_breed(species)
+        death = _date(row.get("deathdate"))
+        pet = Pet(
+            owner=owner,
+            name=name,
+            species=species,
+            breed=breed,
+            sex=_SEX.get(_text(row, "sex").lower(), Pet.Sex.UNKNOWN),
+            birth_date=_date(row.get("birthday")),
+            chip_number=_text(row, "chip_number")[:50],
+            lab_number=_text(row, "lab_number")[:50],
+            notes=" ".join(part for part in (_text(row, "note"), _text(row, "deathnote")) if part),
+            status=Pet.Status.DEAD if death else Pet.Status.ACTIVE,
+            death_date=death,
+        )
+        try:
+            saved = clients_services.save_pet(pet)
+        except clients_services.ClientError as error:
+            result.errors.append(f"«{name}»: {error}")
+            continue
+        weight = _positive(row.get("weight"))
+        if weight is not None:
+            # Вес из карточки VetManager — первой записью истории веса (дата регистрации).
+            with contextlib.suppress(clients_services.ClientError):
+                clients_services.add_weight(saved, weight, _date(row.get("date_register")))
+        _remember("pet", external_id, saved.pk)
+        result.created += 1
+    return result
+
+
 def run_step(step: str) -> StepResult:
     """Выполнить шаг переноса: данные берутся из VetManager по его API."""
     if step == "units":
@@ -380,12 +589,25 @@ def run_step(step: str) -> StepResult:
         return import_item_groups()
     if step == "items":
         return import_items()
+    if step == "species":
+        return import_species()
+    if step == "clients":
+        return import_clients()
+    if step == "pets":
+        return import_pets()
     raise VetManagerError(f"Неизвестный шаг переноса: {step}.")
 
 
 def status() -> list[dict[str, Any]]:
     """Что уже перенесено — для экрана переноса."""
-    kinds = {"units": "unit", "item_groups": "item_group", "items": "item"}
+    kinds = {
+        "units": "unit",
+        "item_groups": "item_group",
+        "items": "item",
+        "species": "species",
+        "clients": "client",
+        "pets": "pet",
+    }
     return [
         {"step": step, "title": title, "imported": imported_count(kinds[step])}
         for step, title in STEPS

@@ -224,7 +224,14 @@ def test_second_run_changes_nothing(imported) -> None:
 def test_status_counts(imported) -> None:
     status = {row["step"]: row["imported"] for row in services.status()}
 
-    assert status == {"units": 6, "item_groups": 4, "items": 4}
+    assert status == {
+        "units": 6,
+        "item_groups": 4,
+        "items": 4,
+        "species": 0,
+        "clients": 0,
+        "pets": 0,
+    }
 
 
 def test_fetch_pages_and_errors(monkeypatch) -> None:
@@ -250,7 +257,14 @@ def test_api_needs_right_and_reports_settings(db, django_user_model, settings) -
     unknown = admin.post("/api/vetmanager/run/", {"step": "ничего"}, format="json")
 
     assert status.json()["configured"] is False
-    assert [s["step"] for s in status.json()["steps"]] == ["units", "item_groups", "items"]
+    assert [s["step"] for s in status.json()["steps"]] == [
+        "units",
+        "item_groups",
+        "items",
+        "species",
+        "clients",
+        "pets",
+    ]
     assert refused.status_code == 403
     assert "Неизвестный шаг" in unknown.json()["non_field_errors"][0]
 
@@ -277,3 +291,138 @@ def test_probe_shows_fields(db, monkeypatch, django_user_model) -> None:
 
     assert found["total"] == 7 and "is_warehouse_account" in found["fields"]
     assert found["rows"][0]["title"] == "Вакцина Нобивак DHPPI"
+
+
+# --- Клиенты и питомцы (ответы боевого аккаунта) --------------------------------------
+
+PET_TYPES = [{"id": 1, "title": "Собаки"}, {"id": 2, "title": "Кошки"}]
+BREEDS = [
+    {"id": 10, "title": "Метис", "pet_type_id": 1},
+    {"id": 11, "title": "Британская", "pet_type_id": 2},
+    {"id": 12, "title": "Без вида", "pet_type_id": 99},
+]
+CLIENTS = [
+    {
+        "id": 100,
+        "last_name": "Пушкин",
+        "first_name": "Александр",
+        "middle_name": "Сергеевич",
+        "cell_phone": "555098765",
+        "home_phone": "",
+        "work_phone": "312900900",
+        "phone_prefix": "+996",
+        "email": "pushkin@example.com",
+        "address": "Жантошева 70",
+        "apartment": "12",
+        "city": "Бишкек",
+        "zip": "720005",
+        "discount": "5.0000000000",
+        "note": "постоянный клиент",
+        "in_blacklist": 0,
+        "unsubscribe": 0,
+        "status": "ACTIVE",
+        "number_of_journal": "А-12",
+        "passport_series": "AN1234567",
+    },
+    {
+        "id": 101,
+        "last_name": "",
+        "first_name": "",
+        "cell_phone": "700111222",
+        "status": "ACTIVE",
+        "in_blacklist": 1,
+        "unsubscribe": 1,
+        "discount": "0.0000000000",
+    },
+]
+PETS = [
+    {
+        "id": 200,
+        "alias": "Барсик",
+        "owner_id": 100,
+        "type_id": 2,
+        "breed_id": 11,
+        "sex": "male",
+        "birthday": "2019-05-17",
+        "chip_number": "643094",
+        "weight": "4.5",
+        "note": "боится машин",
+        "status": "ACTIVE",
+        "deathdate": "0000-00-00",
+        "date_register": "2020-01-10",
+        "lab_number": "77",
+    },
+    {
+        "id": 201,
+        "alias": "Рекс",
+        "owner_id": 100,
+        "type_id": 1,
+        "breed_id": 10,
+        "sex": "девочка",
+        "birthday": "0000-00-00",
+        "deathdate": "2025-03-01",
+        "deathnote": "по возрасту",
+        "weight": "0",
+    },
+    {"id": 202, "alias": "Ничей", "owner_id": 999, "type_id": 1, "breed_id": 10},
+]
+
+
+@pytest.fixture
+def people(db):
+    services.import_species(PET_TYPES, BREEDS)
+    services.import_clients(CLIENTS)
+    return services.import_pets(PETS)
+
+
+def test_species_and_breeds(db) -> None:
+    from clients.models import Breed, Species
+
+    result = services.import_species(PET_TYPES, BREEDS)
+
+    assert Species.objects.filter(name="Собаки").exists()
+    assert Breed.objects.get(name="Британская").species.name == "Кошки"
+    assert len(result.errors) == 1  # порода без своего вида
+
+
+def test_clients_with_phones_and_fields(db) -> None:
+    from clients.models import Client
+
+    services.import_clients(CLIENTS)
+
+    pushkin = Client.objects.get(last_name="Пушкин")
+    assert (pushkin.first_name, pushkin.middle_name) == ("Александр", "Сергеевич")
+    assert [(p.number, p.kind, p.is_primary) for p in pushkin.phones.all()] == [
+        ("+996555098765", "mobile", True),
+        ("+996312900900", "work", False),
+    ]
+    assert pushkin.discount_percent == D("5.00") and pushkin.city.name == "Бишкек"
+    assert pushkin.house == "Жантошева 70 12" and pushkin.description == "постоянный клиент"
+    assert pushkin.journal_number == "А-12" and pushkin.passport == "AN1234567"
+    # Клиент без ФИО: фамилией становится телефон — карточку видно и можно поправить.
+    nameless = Client.objects.exclude(pk=pushkin.pk).get()
+    assert nameless.last_name == "700111222" and nameless.in_blacklist and nameless.no_mailing
+
+
+def test_pets_with_species_breed_and_death(people) -> None:
+    from clients.models import Pet
+
+    barsik = Pet.objects.get(name="Барсик")
+    rex = Pet.objects.get(name="Рекс")
+
+    assert people.created == 2 and len(people.errors) == 1  # питомец без перенесённого владельца
+    assert barsik.species.name == "Кошки" and barsik.breed.name == "Британская"
+    assert barsik.sex == Pet.Sex.MALE and str(barsik.birth_date) == "2019-05-17"
+    assert barsik.chip_number == "643094" and barsik.weights.get().weight == D("4.500")
+    assert rex.sex == Pet.Sex.FEMALE and rex.birth_date is None  # «0000-00-00» — пусто
+    assert rex.status == Pet.Status.DEAD and str(rex.death_date) == "2025-03-01"
+    assert "по возрасту" in rex.notes
+
+
+def test_people_second_run_changes_nothing(people) -> None:
+    from clients.models import Client, Pet
+
+    again = services.import_pets(PETS)
+
+    assert again.created == 0 and again.skipped == 2
+    assert Client.objects.filter(last_name="Пушкин").count() == 1 and Pet.objects.count() == 2

@@ -8,7 +8,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from vetmanager import client, services
+from vetmanager import client, services, tidy
 from vetmanager.models import Imported
 
 
@@ -53,6 +53,24 @@ class UnitPlanView(_ImportView):
             return Response(services.unit_plan())
         except services.VetManagerError as error:
             raise ValidationError({"non_field_errors": [str(error)]}) from error
+
+
+class TidyView(_ImportView):
+    """Наведение порядка в прайсе после переноса.
+
+    GET — что можно объединить: дубли и фасовки одной позиции.
+    POST {"name", "parts": [{"item", "quantity", "unit"}]} — объединить в одну позицию.
+    """
+
+    def get(self, request: Request) -> Response:
+        return Response(tidy.suggestions())
+
+    def post(self, request: Request) -> Response:
+        try:
+            item = tidy.merge(str(request.data.get("name") or ""), request.data.get("parts") or [])
+        except tidy.catalog.CatalogError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+        return Response({"id": str(item.pk), "name": item.name})
 
 
 class RunStepView(_ImportView):

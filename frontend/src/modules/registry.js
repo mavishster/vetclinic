@@ -93,6 +93,7 @@ export default [
       { title: 'Печатные формы', icon: 'description', to: '/print-templates', perm: 'core.view_printtemplate' },
       { title: 'Сотрудники', icon: 'badge', to: '/staff/employees', perm: 'staff.view_employee' },
       { title: 'Перенос из VetManager', icon: 'move_to_inbox', to: '/vetmanager-import', perm: 'vetmanager.run_import' },
+      { title: 'Порядок в прайсе', icon: 'merge', to: '/vetmanager-tidy', perm: 'vetmanager.run_import' },
     ],
   },
 ]
