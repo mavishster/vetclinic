@@ -4,8 +4,8 @@
     <template v-else>
       <div class="row items-center q-gutter-sm q-mb-md">
         <q-btn flat round dense icon="arrow_back" to="/inventory/documents" />
-        <q-icon :name="DOC_KINDS[form.kind].icon" :color="DOC_KINDS[form.kind].color" size="28px" />
-        <h1 class="text-h5 q-my-none">{{ DOC_KINDS[form.kind].label }}{{ form.number ? ` № ${form.number}` : '' }}</h1>
+        <q-icon :name="docKind(form.kind).icon" :color="docKind(form.kind).color" size="28px" />
+        <h1 class="text-h5 q-my-none">{{ docKind(form.kind).label }}{{ form.number ? ` № ${form.number}` : '' }}</h1>
         <q-badge v-if="form.id" :color="executed ? 'positive' : 'grey-6'" :label="executed ? 'выполнен' : 'черновик'" />
         <q-space />
         <template v-if="!executed && canEdit">
@@ -130,7 +130,7 @@ import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, existingByName, fieldErrors, openPostedFile } from '@/api'
 import { can } from '@/session'
 import { money } from '@/modules/catalog/money'
-import { DOC_KINDS } from './routes'
+import { docKind } from './routes'
 
 const props = defineProps({ id: { type: String, required: true } })
 const route = useRoute()

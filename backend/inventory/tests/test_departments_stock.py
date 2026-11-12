@@ -207,9 +207,10 @@ def test_rollback_issue_returns_stock(main, surgery, pills) -> None:
 
 
 def test_qty_text_packs_and_pieces(pills) -> None:
-    assert catalog.qty_text(pills, D("42")) == "5,25 упак. / 5 упак. 2 таб."
-    assert catalog.qty_text(pills, D("16")) == "2 упак."
-    assert catalog.qty_text(pills, D("3")) == "0,375 упак. / 3 таб."
+    """Сначала точный остаток в единице учёта, затем — он же упаковками."""
+    assert catalog.qty_text(pills, D("42")) == "42 таб. (5 упак. 2 таб.)"
+    assert catalog.qty_text(pills, D("16")) == "16 таб. (2 упак.)"
+    assert catalog.qty_text(pills, D("3")) == "3 таб."  # меньше упаковки — разбивка не нужна
 
 
 # --- API -----------------------------------------------------------------------------
@@ -256,14 +257,17 @@ def test_api_issue_count_reports_and_permissions(main, surgery, pills) -> None:
     assert issued.status_code == 201, issued.json()
     assert denied.status_code == 403
     assert counted.status_code == 201, counted.json()
-    assert balances["rows"][0]["qty_text"] == "1,25 упак. / 1 упак. 2 таб."
+    assert balances["rows"][0]["qty_text"] == "10 таб. (1 упак. 2 таб.)"
     assert balances["totals"][0]["qty"] == "10.000"
     assert [u["unit"] for u in sheet[0]["units"]] == ["упак.", "таб."]
-    assert summary[0]["consumed_text"] == "0,75 упак. / 6 таб."
+    assert summary[0]["consumed_text"] == "6 таб."
     assert [j["operation"] for j in journal] == ["consumed", "issue"]
     assert excel["Content-Type"].startswith("application/vnd.openxml")
     assert norm.status_code == 200 and norm_denied.status_code == 403
-    assert stock[0]["qty_text"] == "8 упак." and stock[0]["warehouse_name"] == "Основной склад"
+    assert (
+        stock[0]["qty_text"] == "64 таб. (8 упак.)"
+        and stock[0]["warehouse_name"] == "Основной склад"
+    )
     assert "Отделение «Хирургия»" not in {w["name"] for w in warehouses}
 
 

@@ -20,7 +20,7 @@
       :rows-per-page-options="[25, 50, 100]" no-data-label="Документов нет" rows-per-page-label="Строк на странице"
       @request="onRequest" @row-click="(e, row) => $router.push(`/inventory/documents/${row.id}`)">
       <template #body-cell-kind="props">
-        <q-td :props="props"><q-icon :name="DOC_KINDS[props.row.kind].icon" :color="DOC_KINDS[props.row.kind].color" class="q-mr-xs" />{{ props.row.kind_label }}</q-td>
+        <q-td :props="props"><q-icon :name="docKind(props.row.kind).icon" :color="docKind(props.row.kind).color" class="q-mr-xs" />{{ props.row.kind_label }}</q-td>
       </template>
       <template #body-cell-status="props">
         <q-td :props="props"><q-badge :color="props.row.status === 'executed' ? 'positive' : 'grey-6'" :label="props.row.status_label" /></q-td>
@@ -35,7 +35,7 @@ import { onMounted, ref } from 'vue'
 import { apiGet } from '@/api'
 import { can } from '@/session'
 import { money } from '@/modules/catalog/money'
-import { DOC_KINDS } from './routes'
+import { DOC_KINDS, docKind } from './routes'
 import StockImportDialog from './StockImportDialog.vue'
 
 const importOpen = ref(false)

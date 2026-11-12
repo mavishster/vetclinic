@@ -732,9 +732,9 @@ def _number(value: Decimal) -> str:
 def _qty_text(qty: Decimal, base: str, units: list[tuple[Decimal, str]]) -> str:
     """Остаток в единицах учёта → текст для человека.
 
-    Если у товара есть упаковка и штучная единица (таб., фл., мл), остаток показывается
-    дробно в упаковках и через «/» — целыми упаковками и штуками: «5,25 упак. / 5 упак. 2 таб.».
-    Иначе — просто «12 шт.».
+    Сначала точное количество в той единице, в которой ведётся склад, затем — то же
+    крупными единицами: «437 мл (4 фл. 37 мл)», «42 таб. (5 упак. 2 таб.)».
+    Если крупной единицы нет или разбивка ничего не добавляет — просто «12 шт.».
     """
     ratios = sorted({(ratio, name) for ratio, name in units if ratio > 0})
     if len({ratio for ratio, _ in ratios}) < 2:
@@ -744,10 +744,9 @@ def _qty_text(qty: Decimal, base: str, units: list[tuple[Decimal, str]]) -> str:
         return f"{_number(qty)} {base}"
     piece_ratio, piece = ratios[0]
     pack_ratio, pack = ratios[-1]
-    packs = qty / pack_ratio
-    main = f"{_number(packs)} {pack}"
+    main = f"{_number(qty / piece_ratio)} {piece}" if piece_ratio != 1 else f"{_number(qty)} {base}"
     sign = "-" if qty < 0 else ""
-    whole = int(abs(packs).to_integral_value(rounding="ROUND_FLOOR"))
+    whole = int((abs(qty) / pack_ratio).to_integral_value(rounding="ROUND_FLOOR"))
     pieces = (abs(qty) - whole * pack_ratio) / piece_ratio
     nearest = pieces.to_integral_value(rounding=ROUND_HALF_UP)
     if abs(pieces - nearest) < D("0.02"):
@@ -755,16 +754,17 @@ def _qty_text(qty: Decimal, base: str, units: list[tuple[Decimal, str]]) -> str:
     per_pack = pack_ratio / piece_ratio
     if pieces >= per_pack:  # округление дало целую упаковку
         whole, pieces = whole + 1, pieces - per_pack
-    if pieces == 0:
-        return main
-    parts = [f"{whole} {pack}"] if whole else []
-    parts.append(f"{_number(pieces)} {piece}")
-    return f"{main} / {sign}{' '.join(parts)}"
+    if not whole:
+        return main  # меньше одной упаковки — разбивка ничего не добавит
+    parts = [f"{whole} {pack}"]
+    if pieces:
+        parts.append(f"{_number(pieces)} {piece}")
+    return f"{main} ({sign}{' '.join(parts)})"
 
 
 def qty_formatter(item_ids: Iterable[Any]) -> Callable[[Any, Decimal | None], str]:
     """Функция «товар, остаток в единицах учёта → текст» для многих товаров сразу (один запрос
-    единиц на всех). Пример: «5,25 упак. / 5 упак. 2 таб.»."""
+    единиц на всех). Пример: «42 таб. (5 упак. 2 таб.)»."""
     ids = {getattr(i, "pk", i) for i in item_ids}
     bases = dict(Item.objects.filter(pk__in=ids).values_list("pk", "base_unit__name"))
     units: dict[Any, list[tuple[Decimal, str]]] = {}

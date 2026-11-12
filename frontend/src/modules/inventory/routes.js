@@ -8,6 +8,9 @@ export const DOC_KINDS = {
   return: { label: 'Возврат поставщику', icon: 'assignment_return', color: 'deep-orange' },
 }
 
+// Неизвестный вид документа не должен ломать экран: показываем нейтральный значок.
+export const docKind = (code) => DOC_KINDS[code] || { label: code || '—', icon: 'description', color: 'grey-7' }
+
 // Раздел «Отделения»: смотреть остатки, выдавать, вносить остатки, задавать нормы (ADR-024).
 export const DEPARTMENT_PERMS = ['inventory.view_department', 'inventory.add_stockdocument', 'inventory.count_department', 'inventory.manage_department']
 

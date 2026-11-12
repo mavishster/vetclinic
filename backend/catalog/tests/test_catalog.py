@@ -205,3 +205,19 @@ def test_non_base_unit_equal_to_base_is_rejected(db) -> None:
          {"unit": Unit.objects.get(name="таб."), "ratio": Decimal("0.125"), "price": Decimal("100")}],
     )  # fmt: skip
     assert item.units.get(unit__name="таб.").ratio == Decimal("0.125")  # доля упаковки — можно
+
+
+def test_qty_text_shows_stock_unit_then_packs(db) -> None:
+    """Остаток «на отлив»: сначала точное количество в единице учёта, затем — флаконами.
+
+    Веткокцин: учёт в мл, продаётся по 1 мл, по 10 мл и флаконом 100 мл.
+    """
+    from catalog.services import _qty_text
+
+    units = [(D("1"), "мл"), (D("10"), "10 мл"), (D("100"), "фл.")]
+
+    assert _qty_text(D("437"), "мл", units) == "437 мл (4 фл. 37 мл)"
+    assert _qty_text(D("400"), "мл", units) == "400 мл (4 фл.)"
+    assert _qty_text(D("37"), "мл", units) == "37 мл"  # меньше флакона — разбивка не нужна
+    assert _qty_text(D("-137"), "мл", units) == "-137 мл (-1 фл. 37 мл)"
+    assert _qty_text(D("12"), "шт.", [(D("1"), "шт.")]) == "12 шт."  # одна единица — как есть
