@@ -239,3 +239,22 @@ if not DEBUG:
 # Перенос из VetManager: адрес клиники и ключ REST API (только чтение их данных).
 VETMANAGER_URL = os.environ.get("VETMANAGER_URL", "")
 VETMANAGER_API_KEY = os.environ.get("VETMANAGER_API_KEY", "")
+
+# Журнал: ошибки сервера видны в логах контейнера (docker compose logs backend).
+# Без этого Django в рабочем режиме молчит, и поломка выглядит просто как «500».
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {"format": "{asctime} {levelname} {name}: {message}", "style": "{"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "simple"},
+    },
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {
+        # Ошибки обработки запросов — с полным описанием места, где они произошли.
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        "django.security": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
+}

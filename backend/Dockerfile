@@ -36,7 +36,7 @@ COPY . .
 # Сервер работает не от root: при взломе процесс не получит права на весь контейнер.
 RUN useradd --create-home --uid 1000 vetclinic \
     && mkdir -p /app/media /app/staticfiles /backups \
-    && chown -R vetclinic /app/media /app/staticfiles
+    && chown -R vetclinic /app/media /app/staticfiles /backups
 USER vetclinic
 EXPOSE 8000
 # Миграции → статика для админки → gunicorn. Число процессов — GUNICORN_WORKERS

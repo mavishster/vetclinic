@@ -177,6 +177,28 @@ Docker `pgdata`. Наружу не открыта: к ней обращаетс�
 
 Узкое место — одновременная печать большого числа PDF: каждый занимает процесс до секунды.
 
+## 8в. Если что-то не работает
+
+Сервер приложения пишет ошибки в журнал контейнера:
+
+```
+docker compose -f docker-compose.prod.yml logs backend --tail 100
+```
+
+Частые случаи:
+
+- **Загрузка файлов или логотипа отвечает ошибкой.** Проверьте, что хранилище файлов
+  доступно приложению на запись:
+  ```
+  docker compose -f docker-compose.prod.yml exec backend sh -lc 'touch /app/media/.probe && echo ок'
+  ```
+  Если запись запрещена, выдайте права (приложение работает не от root — так безопаснее):
+  ```
+  docker compose -f docker-compose.prod.yml exec -u root backend chown -R 1000 /app/media /app/staticfiles
+  ```
+- **«Не удалось войти, проверьте связь с сервером» сразу после обновления** — перезапустите
+  nginx: `docker compose -f docker-compose.prod.yml restart web`.
+
 ## 9. Обновление системы
 
 Обновление перезапускает и сервер приложения, и nginx: без перезапуска nginx продолжает
