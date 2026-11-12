@@ -105,6 +105,8 @@ const canEditItems = can('catalog.change_item')
 const columns = [
   { name: 'name', label: 'Название', field: 'name', align: 'left' },
   { name: 'group', label: 'Группа', field: 'group_name', align: 'left' },
+  // Единица учёта товара (в ней ведётся остаток); у услуг и комбинаций её нет — прочерк.
+  { name: 'unit', label: 'Ед. изм.', field: (r) => (r.kind === 'goods' ? r.base_unit_name || '—' : '—'), align: 'left' },
   { name: 'prices', label: 'Цены', field: 'id', align: 'left' },
   { name: 'article', label: 'Артикул', field: 'article', align: 'left' },
 ]
