@@ -59,6 +59,9 @@ prod-admin:    ## Сервер: создать администратора
 prod-update:   ## Сервер: обновить после git pull (копия → сборка → перезапуск)
 	$(PROD) exec backup sh /scripts/backup.sh
 	$(PROD) up --build -d
+	@# nginx должен увидеть перезапущенный backend (иначе «не удалось войти»).
+	$(PROD) restart web
+	@echo "Готово. Если открыта вкладка системы — обновите страницу."
 
 backup:        ## Сервер: сделать резервную копию сейчас
 	$(PROD) exec backup sh /scripts/backup.sh
