@@ -11,10 +11,16 @@
           </q-item-section>
           <q-item-section>
             <q-item-label>{{ block.title }}</q-item-label>
-            <q-item-label caption>{{ block.column === 'left' ? 'слева' : 'справа' }}</q-item-label>
+            <q-item-label caption>
+              {{ block.column === 'left' ? 'слева' : 'справа' }}{{ block.collapsed ? ' · свёрнут' : '' }}
+            </q-item-label>
           </q-item-section>
           <q-item-section side class="row no-wrap">
             <div class="row no-wrap">
+              <q-btn flat dense round size="sm" :icon="block.collapsed ? 'unfold_more' : 'unfold_less'"
+                :disable="!block.visible" @click="layout.collapse(block)">
+                <q-tooltip>{{ block.collapsed ? 'Развернуть' : 'Свернуть' }}</q-tooltip>
+              </q-btn>
               <q-btn flat dense round size="sm" icon="arrow_upward" :disable="!block.visible" @click="layout.move(block, -1)" />
               <q-btn flat dense round size="sm" icon="arrow_downward" :disable="!block.visible" @click="layout.move(block, 1)" />
               <q-btn flat dense round size="sm" :icon="block.column === 'left' ? 'arrow_forward' : 'arrow_back'"
@@ -22,6 +28,15 @@
                 <q-tooltip>{{ block.column === 'left' ? 'Перенести вправо' : 'Перенести влево' }}</q-tooltip>
               </q-btn>
             </div>
+          </q-item-section>
+        </q-item>
+        <q-separator spaced />
+        <q-item-label header class="q-pt-none">Ширина столбцов</q-item-label>
+        <q-item>
+          <q-item-section>
+            <q-slider :model-value="layout.state.leftWidth" :min="3" :max="9" :step="1" markers label
+              :label-value="`${layout.state.leftWidth} / ${12 - layout.state.leftWidth}`"
+              @update:model-value="layout.setWidth" />
           </q-item-section>
         </q-item>
         <q-separator spaced />

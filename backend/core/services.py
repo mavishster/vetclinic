@@ -928,7 +928,8 @@ MAX_LAYOUT_BLOCKS = 40
 
 
 def _clean_layouts(layouts: Any) -> dict[str, Any]:
-    """Расклад блоков по экранам: какие показывать, в каком столбце и в каком порядке.
+    """Расклад блоков по экранам: какие показывать, в каком столбце, в каком порядке,
+    какие свёрнуты и какой ширины столбцы.
 
     Проверяем строго: в настройки попадает только то, что система понимает.
     """
@@ -941,13 +942,16 @@ def _clean_layouts(layouts: Any) -> dict[str, Any]:
         blocks = (layout or {}).get("blocks") if isinstance(layout, dict) else None
         if not isinstance(blocks, list):
             continue
+        width = (layout or {}).get("leftWidth")
         cleaned[screen] = {
             "preset": str((layout or {}).get("preset") or "")[:30],
+            "leftWidth": int(width) if isinstance(width, int | float) and 3 <= width <= 9 else 5,
             "blocks": [
                 {
                     "name": str(block.get("name"))[:40],
                     "column": block["column"] if block.get("column") in LAYOUT_COLUMNS else "left",
                     "visible": bool(block.get("visible", True)),
+                    "collapsed": bool(block.get("collapsed", False)),
                 }
                 for block in blocks[:MAX_LAYOUT_BLOCKS]
                 if isinstance(block, dict) and block.get("name")

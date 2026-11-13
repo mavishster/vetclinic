@@ -41,9 +41,11 @@
       <!-- Обзор: слева — о клиенте (контакты, питомцы, напоминания), справа — счета и медкарты -->
       <!-- Обзор: блоки настраиваются каждым сотрудником (кнопка «Настроить блоки») -->
       <div v-if="tab === 'overview'" class="row q-col-gutter-md">
-        <div v-for="side in ['left', 'right']" :key="side" :class="side === 'left' ? 'col-12 col-md-5' : 'col-12 col-md-7'">
+        <div v-for="side in ['left', 'right']" :key="side" class="col-12"
+          :class="`col-md-${side === 'left' ? layout.state.leftWidth : 12 - layout.state.leftWidth}`">
           <div class="q-gutter-y-md">
             <template v-for="block in layout.column(side)" :key="block.name">
+              <BlockShell :title="block.title" :collapsed="block.collapsed" @expand="layout.collapse(block)">
               <div v-if="block.name === 'contacts'">
                 <q-card flat bordered>
                 <q-list dense>
@@ -75,6 +77,7 @@
               <ClientContracts v-else-if="block.name === 'contracts' && can('clients.view_clientcontract')"
                 :client-id="client.id" @changed="reloadClient" />
               <ClientAppointments v-else-if="block.name === 'appointments' && can('scheduling.view_appointment')" :client="client" />
+                          </BlockShell>
             </template>
           </div>
         </div>
@@ -105,6 +108,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch } from '@/api'
 import { can } from '@/session'
+import BlockShell from '@/components/BlockShell.vue'
 import LayoutMenu from '@/components/LayoutMenu.vue'
 import { useLayout } from '@/modules/core/layout'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'

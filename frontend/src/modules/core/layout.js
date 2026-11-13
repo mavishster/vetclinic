@@ -16,11 +16,13 @@ export const PRESETS = {
   },
 }
 
-export function useLayout(screen, blocks, presets) {
+export function useLayout(screen, blocks, presets, defaultWidth = 5) {
   const saved = session.user?.ui_settings?.layouts?.[screen]
   const state = reactive({
     blocks: normalize(saved?.blocks, blocks),
     preset: saved?.preset || '',
+    // Ширина левого столбца в долях из 12: правый занимает остальное.
+    leftWidth: Number(saved?.leftWidth) >= 3 && Number(saved?.leftWidth) <= 9 ? Number(saved.leftWidth) : defaultWidth,
   })
 
   // Блоки одного столбца по порядку; скрытые не показываются.
@@ -42,6 +44,17 @@ export function useLayout(screen, blocks, presets) {
     save()
   }
 
+  // Свёрнутый блок виден полоской с названием — место занимает, а данные скрыты.
+  function collapse(block) {
+    block.collapsed = !block.collapsed
+    save()
+  }
+
+  function setWidth(value) {
+    state.leftWidth = Math.min(9, Math.max(3, Number(value) || defaultWidth))
+    save()
+  }
+
   function moveToColumn(block, name) {
     block.column = name
     save()
@@ -58,6 +71,7 @@ export function useLayout(screen, blocks, presets) {
   function reset() {
     state.blocks = normalize(null, blocks)
     state.preset = ''
+    state.leftWidth = defaultWidth
     save()
   }
 
@@ -65,14 +79,15 @@ export function useLayout(screen, blocks, presets) {
     const layouts = { ...(session.user?.ui_settings?.layouts || {}) }
     layouts[screen] = {
       preset: state.preset,
-      blocks: state.blocks.map(({ name, column, visible }) => ({ name, column, visible })),
+      leftWidth: state.leftWidth,
+      blocks: state.blocks.map(({ name, column, visible, collapsed }) => ({ name, column, visible, collapsed: !!collapsed })),
     }
     const settings = { ...(session.user?.ui_settings || {}), layouts }
     if (session.user) session.user.ui_settings = settings
     await apiPatch('core/me/ui/', { layouts })
   }
 
-  return { state, column, move, toggle, moveToColumn, applyPreset, reset }
+  return { state, column, move, toggle, collapse, moveToColumn, setWidth, applyPreset, reset }
 }
 
 // Сохранённый расклад + блоки, которых тогда ещё не было (появились с обновлением).
@@ -83,9 +98,14 @@ function normalize(saved, blocks) {
   for (const row of saved || []) {
     const block = byName.get(row.name)
     if (!block) continue // блок убрали из системы
-    result.push({ ...block, column: row.column ?? block.column, visible: row.visible ?? true })
+    result.push({
+      ...block,
+      column: row.column ?? block.column,
+      visible: row.visible ?? true,
+      collapsed: !!row.collapsed,
+    })
     byName.delete(row.name)
   }
-  for (const block of byName.values()) result.push({ ...block, visible: true })
+  for (const block of byName.values()) result.push({ ...block, visible: true, collapsed: false })
   return result
 }

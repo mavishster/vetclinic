@@ -23,9 +23,11 @@
 
       <!-- Блоки настраиваются каждым сотрудником (кнопка «Настроить блоки») -->
       <div class="row q-col-gutter-md">
-        <div v-for="side in ['left', 'right']" :key="side" class="col-12 col-md-6">
+        <div v-for="side in ['left', 'right']" :key="side" class="col-12"
+          :class="`col-md-${side === 'left' ? layout.state.leftWidth : 12 - layout.state.leftWidth}`">
           <div class="q-gutter-y-md">
             <template v-for="block in layout.column(side)" :key="block.name">
+              <BlockShell :title="block.title" :collapsed="block.collapsed" @expand="layout.collapse(block)">
               <PetVisits v-if="block.name === 'visits' && can('medical.view_visit')" :pet="pet" />
               <PetPrevention v-else-if="block.name === 'prevention' && can('medical.view_prevention')" :key="pet.updated_at" :pet="pet" />
               <div v-else-if="block.name === 'about'">
@@ -71,6 +73,7 @@
               </div>
               <AttachmentsBlock v-else-if="block.name === 'files' && can('core.view_attachment')" owner-type="clients.pet" :owner-id="pet.id"
             title="Файлы и снимки" class="q-mt-md" />
+                          </BlockShell>
             </template>
           </div>
         </div>
@@ -106,6 +109,7 @@ import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
+import BlockShell from '@/components/BlockShell.vue'
 import LayoutMenu from '@/components/LayoutMenu.vue'
 import { useLayout } from '@/modules/core/layout'
 // Медкарта — блок модуля «Медкарта», встраивается в карточку питомца.
