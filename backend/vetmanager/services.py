@@ -523,8 +523,10 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
             last_name = (
                 _text(row, "first_name") or _text(row, "cell_phone") or f"Без имени {external_id}"
             )
-        if _link("client", external_id):
-            result.skipped += 1
+        link = _link("client", external_id)
+        existing = Client.objects.filter(pk=link.target_id).first() if link else None
+        if link is not None and existing is None:
+            result.skipped += 1  # карточку удалили у нас — заново не заводим
             continue
         city_name = _text(row, "city")
         city = None
@@ -536,7 +538,9 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
         status = Client.Status.ACTIVE
         if str(row.get("status", "")).upper() in ("DELETED", "INACTIVE", "ARCHIVE"):
             status = Client.Status.INACTIVE
-        record = Client(
+        record = existing or Client()
+        _fill(
+            record,
             last_name=last_name[:100],
             first_name=_text(row, "first_name")[:100],
             middle_name=_text(row, "middle_name")[:100],
@@ -558,8 +562,18 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
             result.errors.append(f"«{last_name}»: {error}")
             continue
         _remember("client", external_id, saved.pk)
-        result.created += 1
+        if existing is None:
+            result.created += 1
+        else:
+            result.updated += 1  # повторный перенос: подтянули изменения из VetManager
     return result
+
+
+def _fill(record: Any, **values: Any) -> Any:
+    """Заполнить поля записи — новой или уже перенесённой (повторный перенос)."""
+    for name, value in values.items():
+        setattr(record, name, value)
+    return record
 
 
 def _fallback_species() -> Species:
@@ -591,8 +605,10 @@ def import_pets(rows: list[dict[str, Any]] | None = None) -> StepResult:
         if owner is None:
             result.errors.append(f"«{name}»: владелец не перенесён — сначала перенесите клиентов.")
             continue
-        if _link("pet", external_id):
-            result.skipped += 1
+        link = _link("pet", external_id)
+        existing = Pet.objects.filter(pk=link.target_id).first() if link else None
+        if link is not None and existing is None:
+            result.skipped += 1  # карточку удалили у нас — заново не заводим
             continue
         species_link = _link("species", str(row.get("type_id") or ""))
         species = (
@@ -604,7 +620,8 @@ def import_pets(rows: list[dict[str, Any]] | None = None) -> StepResult:
         if breed is None or breed.species_id != species.pk:
             breed = _fallback_breed(species)
         death = _date(row.get("deathdate"))
-        pet = Pet(
+        pet = _fill(
+            existing or Pet(),
             owner=owner,
             name=name,
             species=species,
@@ -628,7 +645,10 @@ def import_pets(rows: list[dict[str, Any]] | None = None) -> StepResult:
             with contextlib.suppress(clients_services.ClientError):
                 clients_services.add_weight(saved, weight, _date(row.get("date_register")))
         _remember("pet", external_id, saved.pk)
-        result.created += 1
+        if existing is None:
+            result.created += 1
+        else:
+            result.updated += 1  # повторный перенос: подтянули изменения из VetManager
     return result
 
 
@@ -636,6 +656,7 @@ def import_pets(rows: list[dict[str, Any]] | None = None) -> StepResult:
 
 # Цель обращения в VetManager задаётся типом приёма; что не узнали — «Первичный».
 DEFAULT_PURPOSE = "Первичный"
+VISITS_BATCH = 200  # по столько приёмов за раз: обрыв связи не отменит перенесённое
 TRANSFER_DOCTOR = "Врач (перенос из VetManager)"
 
 
@@ -856,7 +877,6 @@ def import_visit_purposes(rows: list[dict[str, Any]] | None = None) -> StepResul
     return result
 
 
-@transaction.atomic
 def import_visits(rows: list[dict[str, Any]] | None = None) -> StepResult:
     """Приёмы VetManager → записи медкарты.
 
@@ -874,6 +894,25 @@ def import_visits(rows: list[dict[str, Any]] | None = None) -> StepResult:
     if default_purpose is None:
         raise VetManagerError("Нет ни одной цели обращения — заполните справочник.")
     fallback_doctor: User | None = None
+    # Порциями: приёмов тысячи, и обрыв посреди переноса не должен отменять уже сделанное.
+    for batch_start in range(0, len(rows), VISITS_BATCH):
+        with transaction.atomic():
+            fallback_doctor = _import_visits_batch(
+                rows[batch_start : batch_start + VISITS_BATCH],
+                result,
+                default_purpose,
+                fallback_doctor,
+            )
+    return result
+
+
+def _import_visits_batch(
+    rows: list[dict[str, Any]],
+    result: StepResult,
+    default_purpose: VisitPurpose,
+    fallback_doctor: User | None,
+) -> User | None:
+    """Одна порция приёмов — отдельной транзакцией (см. import_visits)."""
     for row in rows:
         external_id = str(row.get("id") or "")
         if _link("visit", external_id):
@@ -911,7 +950,7 @@ def import_visits(rows: list[dict[str, Any]] | None = None) -> StepResult:
         )
         _remember("visit", external_id, visit.pk)
         result.created += 1
-    return result
+    return fallback_doctor
 
 
 def run_step(step: str) -> StepResult:

@@ -425,11 +425,12 @@ def test_pets_with_species_breed_and_death(people) -> None:
 
 
 def test_people_second_run_changes_nothing(people) -> None:
+    """Повторный перенос не задваивает: те же записи обновляются, новых нет."""
     from clients.models import Client, Pet
 
     again = services.import_pets(PETS)
 
-    assert again.created == 0 and again.skipped == 2
+    assert again.created == 0 and again.updated == 2
     assert Client.objects.filter(last_name="Пушкин").count() == 1 and Pet.objects.count() == 2
 
 
@@ -671,3 +672,119 @@ def test_visits_second_run_changes_nothing(visits) -> None:
     again = services.import_visits(ADMISSIONS)
 
     assert again.created == 0 and again.skipped == 2 and Visit.objects.count() == 2
+
+
+# --- Повторный перенос и устойчивость к обрывам ---------------------------------------
+
+
+def test_second_run_updates_clients_and_pets(people) -> None:
+    """Клиника продолжает работать в VetManager: повторный перенос подтягивает изменения."""
+    from clients.models import Client, Pet
+
+    changed_client = [
+        {
+            **CLIENTS[0],
+            "cell_phone": "700777888",
+            "discount": "10.0000000000",
+            "note": "сменил телефон",
+        }
+    ]
+    changed_pet = [{**PETS[0], "alias": "Барсик Второй", "chip_number": "999111"}]
+
+    clients_result = services.import_clients(changed_client)
+    pets_result = services.import_pets(changed_pet)
+
+    pushkin = Client.objects.get(journal_number="А-12")
+    assert (clients_result.created, clients_result.updated) == (0, 1)
+    assert pushkin.discount_percent == D("10.00") and pushkin.description == "сменил телефон"
+    assert [p.number for p in pushkin.phones.all()] == ["+996700777888", "+996312900900"]
+    assert (pets_result.created, pets_result.updated) == (0, 1)
+    assert Pet.objects.get(chip_number="999111").name == "Барсик Второй"
+    assert Client.objects.count() == 2 and Pet.objects.count() == 2  # ничего не задвоилось
+
+
+def test_deleted_card_is_not_created_again(people) -> None:
+    """Карточку удалили у нас — повторный перенос не заводит её заново."""
+    from clients.models import Pet
+
+    Pet.objects.get(name="Барсик").delete()
+
+    result = services.import_pets(PETS)
+
+    assert result.created == 0  # заново не завели
+    assert Pet.objects.filter(name="Барсик").count() == 0  # осталась удалённой
+
+
+def test_network_hiccup_is_retried(monkeypatch) -> None:
+    """Разовая заминка в сети не обрывает перенос: пробуем ещё раз."""
+    import json
+    import urllib.error
+
+    calls = {"n": 0}
+
+    class FakeResponse:
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *args):  # type: ignore[no-untyped-def]
+            return False
+
+        def read(self):  # type: ignore[no-untyped-def]
+            payload = {
+                "success": True,
+                "data": {"totalCount": 1, "unit": [{"id": "1", "title": "шт"}]},
+            }
+            return json.dumps(payload).encode()
+
+    def flaky(request, timeout=None):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.URLError("Temporary failure in name resolution")
+        return FakeResponse()
+
+    monkeypatch.setattr(client, "RETRY_PAUSE", 0)
+    monkeypatch.setattr(client.urllib.request, "urlopen", flaky)
+    monkeypatch.setattr(client.settings, "VETMANAGER_URL", "https://clinic.vetmanager.cloud")
+    monkeypatch.setattr(client.settings, "VETMANAGER_API_KEY", "key")
+
+    assert client.fetch("Unit") == [{"id": "1", "title": "шт"}]
+    assert calls["n"] == 2  # первая попытка сорвалась, вторая прошла
+
+
+def test_no_connection_says_what_to_check(monkeypatch, settings) -> None:
+    import urllib.error
+
+    settings.VETMANAGER_URL = "https://clinic.vetmanager.cloud"
+    settings.VETMANAGER_API_KEY = "key"
+    monkeypatch.setattr(client, "RETRY_PAUSE", 0)
+    monkeypatch.setattr(
+        client.urllib.request,
+        "urlopen",
+        lambda *a, **kw: (_ for _ in ()).throw(urllib.error.URLError("name resolution")),
+    )
+
+    with pytest.raises(client.VetManagerError, match="Проверьте интернет на сервере"):
+        client.fetch("Unit")
+
+
+def test_visits_are_imported_in_batches(visits, monkeypatch) -> None:
+    """Приёмы переносятся порциями: обрыв посреди не отменяет уже перенесённое."""
+    from medical.models import Visit
+
+    monkeypatch.setattr(services, "VISITS_BATCH", 1)
+    Visit.objects.all().delete()
+    services.Imported.objects.filter(kind="visit").delete()
+    broken = [
+        *ADMISSIONS[:1],
+        {
+            "id": 704,
+            "patient_id": 200,
+            "user_id": 3,
+            "admission_date": "2026-05-01 10:00:00",
+            "description": "Вторая порция",
+        },
+    ]
+
+    services.import_visits(broken)
+
+    assert Visit.objects.count() == 2

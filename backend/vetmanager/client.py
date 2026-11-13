@@ -5,6 +5,7 @@ VETMANAGER_API_KEY — ключ REST API. Данные только читают
 """
 
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -14,6 +15,8 @@ from django.conf import settings
 
 PAGE_SIZE = 500
 TIMEOUT = 120
+RETRIES = 3  # разовая заминка в сети не должна обрывать перенос
+RETRY_PAUSE = 2  # секунд между попытками (вторая пауза — вдвое длиннее)
 
 
 class VetManagerError(Exception):
@@ -34,24 +37,41 @@ def _request(path: str, params: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(
         url, headers={"X-REST-API-KEY": settings.VETMANAGER_API_KEY, "Accept": "application/json"}
     )
-    try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310 — адрес из настроек
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        hint = (
-            "Проверьте ключ REST API." if error.code in (401, 403) else "Проверьте адрес клиники."
-        )
-        raise VetManagerError(f"VetManager ответил {error.code}. {hint}") from error
-    except (urllib.error.URLError, TimeoutError) as error:
-        raise VetManagerError(f"Не удалось связаться с VetManager: {error}") from error
-    except json.JSONDecodeError as error:
-        raise VetManagerError("VetManager вернул не JSON — проверьте адрес клиники.") from error
+    payload = _read(request)
     if not payload.get("success", True):
         raise VetManagerError(str(payload.get("message") or "VetManager вернул ошибку."))
     data = payload.get("data")
     if not isinstance(data, dict):
         raise VetManagerError("Неожиданный ответ VetManager: нет раздела data.")
     return data
+
+
+def _read(request: urllib.request.Request) -> dict[str, Any]:
+    """Ответ VetManager. Разовую заминку в сети пережидаем и пробуем ещё раз:
+    из-за секундного сбоя перенос не должен обрываться."""
+    last: Exception | None = None
+    for attempt in range(RETRIES):
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310 — адрес из настроек
+                data: dict[str, Any] = json.loads(response.read().decode("utf-8"))
+                return data
+        except urllib.error.HTTPError as error:
+            hint = (
+                "Проверьте ключ REST API."
+                if error.code in (401, 403)
+                else "Проверьте адрес клиники в настройках."
+            )
+            raise VetManagerError(f"VetManager ответил {error.code}. {hint}") from error
+        except json.JSONDecodeError as error:
+            raise VetManagerError("VetManager вернул не JSON — проверьте адрес клиники.") from error
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            last = error
+            if attempt < RETRIES - 1:
+                time.sleep(RETRY_PAUSE * (attempt + 1))
+    raise VetManagerError(
+        "Не удалось связаться с VetManager. Проверьте интернет на сервере и адрес клиники "
+        f"в настройках ({settings.VETMANAGER_URL}). Попробуйте ещё раз через минуту."
+    ) from last
 
 
 def _rows(data: dict[str, Any], model: str) -> list[dict[str, Any]]:
