@@ -5,7 +5,7 @@
         <q-btn flat round dense icon="menu" aria-label="Меню" @click="drawerOpen = !drawerOpen" />
         <q-toolbar-title class="row items-center no-wrap">
           <!-- Логотип клиники — из «Настроек клиники»; на белой подложке, чтобы был виден на цветной шапке -->
-          <img v-if="logo" :src="logo" alt="" class="header-logo q-mr-sm" />
+          <img v-if="logo && !logoBroken" :src="logo" alt="" class="header-logo q-mr-sm" @error="logoBroken = true" />
           <span class="ellipsis">{{ clinicTitle }}</span>
         </q-toolbar-title>
         <!-- Стационар: напоминания о назначениях моим пациентам -->
@@ -96,6 +96,8 @@ const drawerOpen = ref(false)
 const router = useRouter()
 const clinicTitle = computed(() => session.user?.clinic || 'Ветклиника')
 const logo = computed(() => logoUrl(session.user?.clinic_logo))
+// Файл логотипа пропал — шапка просто без него, без битой картинки.
+const logoBroken = ref(false)
 watchEffect(() => applyFavicon(session.user?.clinic_logo))
 
 // Пункты без права perm скрываются; пустые подменю и разделы — тоже.

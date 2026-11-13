@@ -22,7 +22,7 @@
         <q-card-section class="q-pt-none row items-center q-col-gutter-md">
           <div class="col-auto">
             <div class="logo-preview row flex-center">
-              <img v-if="logoSrc" :src="logoSrc" alt="Логотип" />
+              <img v-if="logoSrc && !logoBroken" :src="logoSrc" alt="Логотип" @error="logoBroken = true" />
               <span v-else class="text-grey-6 text-caption">Логотипа нет</span>
             </div>
           </div>
@@ -94,6 +94,8 @@ const errors = ref({})
 const saving = ref(false)
 const logoFile = ref(null)
 const logoBusy = ref(false)
+// Файл логотипа не открылся — показываем «Логотипа нет», а не битую картинку.
+const logoBroken = ref(false)
 const logoSrc = computed(() => logoUrl(form.value.logo_version))
 
 // Логотип сохраняется сразу при выборе файла; шапка и значок вкладки обновятся сами.
@@ -110,6 +112,7 @@ async function uploadLogo(file) {
   body.append('file', file)
   const { ok, data } = await apiUpload('core/clinic/logo/', body)
   logoBusy.value = false
+  logoBroken.value = false
   logoFile.value = null
   if (!ok) return (errors.value = fieldErrors(data))
   logoChanged(data)
@@ -120,6 +123,7 @@ async function removeLogo() {
   logoBusy.value = true
   const { ok, data } = await apiDelete('core/clinic/logo/')
   logoBusy.value = false
+  logoBroken.value = false
   if (ok) logoChanged(data)
 }
 

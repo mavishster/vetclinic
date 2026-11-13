@@ -58,3 +58,21 @@ def test_api_upload_needs_right_and_logo_is_public(db) -> None:
     assert removed.json()["logo_version"] is None
     assert anonymous.get("/api/core/clinic/logo/").status_code == 204  # логотипа нет — не ошибка
     assert services.common_print_context()["clinic"]["logo"] == ""
+
+
+def test_missing_file_counts_as_no_logo(db) -> None:
+    """Файл логотипа пропал (например, пересоздали хранилище): система считает, что
+    логотипа нет, и не показывает битую картинку."""
+    from pathlib import Path
+
+    from core.models import Clinic
+
+    services.set_clinic_logo(_picture())
+    clinic = Clinic.objects.first()
+    assert services.clinic_logo_version(clinic) is not None
+
+    Path(clinic.logo.path).unlink()  # файла больше нет
+
+    assert services.clinic_logo_version(Clinic.objects.first()) is None
+    assert services.clinic_logo_bytes() is None
+    assert APIClient().get("/api/core/clinic/logo/").status_code == 204

@@ -683,9 +683,21 @@ def remove_clinic_logo() -> Clinic:
 
 
 def clinic_logo_version(clinic: Clinic | None = None) -> str | None:
-    """«Версия» логотипа (меняется при замене) — для адреса картинки без старого кэша."""
+    """«Версия» логотипа (меняется при замене) — для адреса картинки без старого кэша.
+
+    Если файл пропал (например, хранилище пересоздали), считаем, что логотипа нет:
+    иначе система показывала бы битую картинку вместо него.
+    """
     clinic = clinic or current_clinic()
-    return clinic.logo.name.rsplit("-", 1)[-1].split(".")[0] if clinic.logo else None
+    if not clinic.logo:
+        return None
+    try:
+        if not clinic.logo.storage.exists(clinic.logo.name):
+            return None
+    except OSError:
+        return None
+    version: str = clinic.logo.name.rsplit("-", 1)[-1].split(".")[0]
+    return version
 
 
 def clinic_logo_bytes() -> bytes | None:
