@@ -419,14 +419,30 @@ def _units_for(price_rows: list[dict[str, Any]], base_unit: Unit) -> list[catalo
 
 # --- Клиенты и питомцы ----------------------------------------------------------------
 
+# Пол в VetManager одним полем, вместе со стерилизацией; у нас это пол и отдельный
+# признак «стерилизован / кастрирован» — так принято и в других системах.
 _SEX = {
-    "мальчик": Pet.Sex.MALE,
-    "male": Pet.Sex.MALE,
-    "м": Pet.Sex.MALE,
-    "девочка": Pet.Sex.FEMALE,
-    "female": Pet.Sex.FEMALE,
-    "ж": Pet.Sex.FEMALE,
+    "male": (Pet.Sex.MALE, False),
+    "м": (Pet.Sex.MALE, False),
+    "самец": (Pet.Sex.MALE, False),
+    "мальчик": (Pet.Sex.MALE, False),
+    "кастрирован": (Pet.Sex.MALE, True),
+    "кастрат": (Pet.Sex.MALE, True),
+    "castrated": (Pet.Sex.MALE, True),
+    "female": (Pet.Sex.FEMALE, False),
+    "ж": (Pet.Sex.FEMALE, False),
+    "самка": (Pet.Sex.FEMALE, False),
+    "девочка": (Pet.Sex.FEMALE, False),
+    "стерилизована": (Pet.Sex.FEMALE, True),
+    "стерилизована(ый)": (Pet.Sex.FEMALE, True),
+    "sterilized": (Pet.Sex.FEMALE, True),
 }
+
+
+def _sex_of(row: dict[str, Any]) -> tuple[str, bool]:
+    """Пол и признак стерилизации из одного поля VetManager."""
+    value = simplify(_text(row, "sex", "gender"))
+    return _SEX.get(value, (Pet.Sex.UNKNOWN, False))
 
 
 def _moment(value: Any) -> Any:
@@ -726,18 +742,25 @@ def import_pets(rows: list[dict[str, Any]] | None = None) -> StepResult:
         if breed is None or breed.species_id != species.pk:
             breed = _fallback_breed(species)
         death = _date(row.get("deathdate"))
+        sex, sterilized = _sex_of(row)
+        status = Pet.Status.ACTIVE
+        if death:
+            status = Pet.Status.DEAD
+        elif str(row.get("status", "ACTIVE")).upper() in ("DELETED", "INACTIVE", "ARCHIVE", "0"):
+            status = Pet.Status.INACTIVE  # в VetManager питомец не активен
         pet = _fill(
             existing or Pet(),
             owner=owner,
             name=name,
             species=species,
             breed=breed,
-            sex=_SEX.get(_text(row, "sex").lower(), Pet.Sex.UNKNOWN),
+            sex=sex,
+            sterilized=sterilized,
             birth_date=_date(row.get("birthday")),
             chip_number=_text(row, "chip_number")[:50],
             lab_number=_text(row, "lab_number")[:50],
             notes=" ".join(part for part in (_text(row, "note"), _text(row, "deathnote")) if part),
-            status=Pet.Status.DEAD if death else Pet.Status.ACTIVE,
+            status=status,
             death_date=death,
         )
         try:

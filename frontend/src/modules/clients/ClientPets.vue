@@ -7,11 +7,12 @@
     </q-card-section>
     <q-list separator>
       <q-item v-for="pet in pets" :key="pet.id" clickable :to="`/pets/${pet.id}`">
-        <q-item-section avatar><q-icon name="pets" :color="pet.status === 'dead' ? 'grey-5' : 'primary'" /></q-item-section>
+        <q-item-section avatar><q-icon name="pets" :color="pet.status === 'active' ? 'primary' : 'grey-5'" /></q-item-section>
         <q-item-section>
           <q-item-label class="text-weight-medium">
             {{ pet.name }}
             <q-badge v-if="pet.status === 'dead'" color="grey-6" label="умер" class="q-ml-xs" />
+            <q-badge v-else-if="pet.status === 'inactive'" color="grey-6" outline label="неактивный" class="q-ml-xs" />
           </q-item-label>
           <q-item-label caption>
             {{ [pet.species_name, pet.breed_name, sexLabel(pet).toLowerCase(), ageText(pet)].filter(Boolean).join(' · ') }}

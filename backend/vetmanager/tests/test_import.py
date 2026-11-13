@@ -371,6 +371,24 @@ PETS = [
         "weight": "0",
     },
     {"id": 202, "alias": "Ничей", "owner_id": 999, "type_id": 1, "breed_id": 10},
+    {
+        "id": 203,
+        "alias": "Чомар",
+        "owner_id": 100,
+        "type_id": 2,
+        "breed_id": 11,
+        "sex": "Кастрирован",  # в VetManager пол и стерилизация — одно поле
+        "status": "DELETED",  # питомец не активен
+        "chip_number": "990000000072581",
+    },
+    {
+        "id": 204,
+        "alias": "Муся",
+        "owner_id": 100,
+        "type_id": 2,
+        "breed_id": 11,
+        "sex": "Стерилизована",
+    },
 ]
 
 
@@ -416,7 +434,7 @@ def test_pets_with_species_breed_and_death(people) -> None:
     barsik = Pet.objects.get(name="Барсик")
     rex = Pet.objects.get(name="Рекс")
 
-    assert people.created == 2 and len(people.errors) == 1  # питомец без перенесённого владельца
+    assert people.created == 4 and len(people.errors) == 1  # питомец без перенесённого владельца
     assert barsik.species.name == "Кошки" and barsik.breed.name == "Британская"
     assert barsik.sex == Pet.Sex.MALE and str(barsik.birth_date) == "2019-05-17"
     assert barsik.chip_number == "643094" and barsik.weights.get().weight == D("4.500")
@@ -431,8 +449,8 @@ def test_people_second_run_changes_nothing(people) -> None:
 
     again = services.import_pets(PETS)
 
-    assert again.created == 0 and again.updated == 2
-    assert Client.objects.filter(last_name="Пушкин").count() == 1 and Pet.objects.count() == 2
+    assert again.created == 0 and again.updated == 4
+    assert Client.objects.filter(last_name="Пушкин").count() == 1 and Pet.objects.count() == 4
 
 
 # --- Случаи из боевой выгрузки (194 позиции не переносились) ---------------------------
@@ -711,7 +729,7 @@ def test_second_run_updates_clients_and_pets(people) -> None:
     assert [p.number for p in pushkin.phones.all()] == ["+996700777888", "+996312900900"]
     assert (pets_result.created, pets_result.updated) == (0, 1)
     assert Pet.objects.get(chip_number="999111").name == "Барсик Второй"
-    assert Client.objects.count() == 2 and Pet.objects.count() == 2  # ничего не задвоилось
+    assert Client.objects.count() == 2 and Pet.objects.count() == 4  # ничего не задвоилось
 
 
 def test_deleted_card_is_not_created_again(people) -> None:
@@ -947,3 +965,25 @@ def test_rerun_fills_missing_contacts(db) -> None:
     assert again.skipped == 1  # заново не заводим
     assert petrova.email == "petrova@clinic.kg"
     assert Employee.objects.get(user=petrova).phone == "+996555112233"
+
+
+def test_sex_and_sterilization_are_split(people) -> None:
+    """В VetManager пол и стерилизация в одном поле, у нас — пол и отдельный признак."""
+    from clients.models import Pet
+
+    chomar = Pet.objects.get(name="Чомар")
+    musya = Pet.objects.get(name="Муся")
+    barsik = Pet.objects.get(name="Барсик")
+
+    assert (chomar.sex, chomar.sterilized) == (Pet.Sex.MALE, True)
+    assert (musya.sex, musya.sterilized) == (Pet.Sex.FEMALE, True)
+    assert (barsik.sex, barsik.sterilized) == (Pet.Sex.MALE, False)
+
+
+def test_inactive_pet_keeps_status(people) -> None:
+    """Неактивный в VetManager питомец не становится у нас активным."""
+    from clients.models import Pet
+
+    assert Pet.objects.get(name="Чомар").status == Pet.Status.INACTIVE
+    assert Pet.objects.get(name="Барсик").status == Pet.Status.ACTIVE
+    assert Pet.objects.get(name="Рекс").status == Pet.Status.DEAD

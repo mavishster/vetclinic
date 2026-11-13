@@ -15,6 +15,7 @@
           <q-btn outline color="primary" icon="edit" label="Изменить" @click="editorOpen = true" />
           <q-btn flat icon="swap_horiz" label="Сменить владельца" @click="transferOpen = true" />
           <q-btn v-if="pet.status === 'active'" flat icon="sentiment_dissatisfied" label="Питомец умер" @click="markDead" />
+          <q-btn v-if="pet.status === 'inactive'" flat color="primary" icon="undo" label="Сделать активным" @click="makeActive" />
           <q-btn v-else flat icon="undo" label="Отменить отметку о смерти" @click="revive" />
         </template>
         <q-btn v-if="can('clients.delete_pet')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
@@ -211,6 +212,13 @@ async function transfer() {
   transferOpen.value = false
   newOwner.value = null
   $q.notify({ type: 'positive', message: `Питомец передан: ${data.owner_name}` })
+}
+
+// Питомец, не наблюдающийся в клинике (перенесён из VetManager неактивным), — обратно в работу.
+async function makeActive() {
+  const { ok, data } = await apiPatch(`clients/pets/${pet.value.id}/`, { status: 'active' })
+  if (ok) pet.value = data
+  else $q.notify({ type: 'negative', message: 'Не удалось изменить статус' })
 }
 
 function markDead() {

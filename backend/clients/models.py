@@ -241,6 +241,9 @@ class Pet(ClinicScopedModel):
 
     class Status(models.TextChoices):
         ACTIVE = "active", "активный"
+        # Питомец больше не наблюдается (переехал, отдали): в списках не предлагается,
+        # но история приёмов и счетов сохраняется.
+        INACTIVE = "inactive", "неактивный"
         DEAD = "dead", "умер"
 
     owner = models.ForeignKey(
