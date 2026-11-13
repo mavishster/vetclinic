@@ -34,6 +34,7 @@
 
       <q-tabs v-model="tab" dense align="left" no-caps active-color="primary" indicator-color="primary" class="q-mb-md">
         <q-tab name="overview" label="Обзор" />
+        <q-tab v-if="can('medical.view_visit')" name="medical" label="Медкарта" />
         <q-tab v-if="can('scheduling.view_appointment')" name="appointments" label="Записи на приём" />
         <q-tab v-if="can('clients.view_clientcontract') || can('core.view_attachment')" name="documents" label="Договоры и файлы" />
       </q-tabs>
@@ -83,6 +84,8 @@
         </div>
       </div>
 
+      <ClientMedicalTab v-else-if="tab === 'medical' && can('medical.view_visit')" :client="client" />
+
       <ClientAppointments v-else-if="tab === 'appointments'" :key="appointmentsVersion" :client="client" history />
 
       <div v-else-if="tab === 'documents'" class="q-gutter-y-md">
@@ -122,6 +125,7 @@ import ClientReminders from '@/modules/reminders/ClientReminders.vue'
 import ClientInvoices from '@/modules/billing/ClientInvoices.vue'
 // Медкарты клиента — блок модуля «Медкарта»; запись на приём — окно модуля «Календарь».
 import ClientVisits from '@/modules/medical/ClientVisits.vue'
+import ClientMedicalTab from '@/modules/medical/ClientMedicalTab.vue'
 import AppointmentDialog from '@/modules/scheduling/AppointmentDialog.vue'
 import ClientContracts from './ClientContracts.vue'
 import ClientEditDialog from './ClientEditDialog.vue'

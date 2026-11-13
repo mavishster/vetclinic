@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Any
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -284,9 +284,14 @@ class VisitViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             if value := params.get(field):
                 queryset = queryset.filter(**{field: value})
         if search := params.get("search", "").strip():
+            # Ищем и по тексту приёма: врачу нужно найти, когда он писал про «отит».
             for word in search.split():
-                queryset = queryset.filter(pet__name__icontains=word) | queryset.filter(
-                    client__last_name__icontains=word
+                queryset = queryset.filter(
+                    Q(pet__name__icontains=word)
+                    | Q(client__last_name__icontains=word)
+                    | Q(treatment_html__icontains=word)
+                    | Q(recommendations_html__icontains=word)
+                    | Q(diagnoses__diagnosis__name__icontains=word)
                 )
         return queryset.distinct()
 
