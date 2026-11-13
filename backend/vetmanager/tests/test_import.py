@@ -547,8 +547,15 @@ def test_status_counts_species_and_breeds_apart(db) -> None:
 # --- Врачи и медкарты -----------------------------------------------------------------
 
 VM_USERS = [
-    {"id": 3, "last_name": "Петрова", "first_name": "Анна", "middle_name": ""},
-    {"id": 4, "last_name": "Уволенный", "first_name": "Пётр"},
+    {"id": 3, "last_name": "Петрова", "first_name": "Анна", "middle_name": "", "is_active": 1},
+    {
+        "id": 4,
+        "last_name": "Сидоров",
+        "first_name": "Пётр",
+        "is_active": 0,
+        "position": {"id": 2, "title": "Ассистент"},
+    },
+    {"id": 5, "last_name": "Кассирова", "first_name": "Ольга", "is_active": 1},  # приёмов нет
 ]
 ADMISSION_TYPES = [{"id": 1, "title": "Первичный"}, {"id": 2, "title": "Хирургия"}]
 ADMISSIONS = [
@@ -565,7 +572,7 @@ ADMISSIONS = [
         "id": 701,
         "patient_id": 200,
         "client_id": 100,
-        "user_id": 4,
+        "user_id": 99,  # такого врача нет даже в выгрузке VetManager
         "type_id": 1,
         "admission_date": "2026-04-02 09:00:00",
         "description": "Повторный осмотр",
@@ -594,20 +601,47 @@ def visits(people, django_user_model):
     django_user_model.objects.create_user(
         username="petrova", last_name="Петрова", first_name="Анна"
     )
-    services.import_doctors(VM_USERS)
+    services.import_doctors(VM_USERS, only_with_visits=False)
     services.import_visit_purposes(ADMISSION_TYPES)
     return services.import_visits(ADMISSIONS)
 
 
-def test_doctors_match_by_name(db, django_user_model) -> None:
+def test_doctors_link_known_and_create_missing(db, django_user_model) -> None:
+    """Кого нашли — связываем, кого нет — заводим: вход закрыт, права не выдаются."""
+    from staff.models import Employee
+
     django_user_model.objects.create_user(
         username="petrova", last_name="Петрова", first_name="Анна"
     )
 
-    result = services.import_doctors(VM_USERS)
+    result = services.import_doctors(VM_USERS, only_with_visits=False)
 
-    assert result.updated == 1  # связали Петрову
-    assert len(result.errors) == 1 and "Уволенный" in result.errors[0]  # такого сотрудника нет
+    assert (result.updated, result.created) == (1, 2)
+    sidorov = django_user_model.objects.get(last_name="Сидоров")
+    assert sidorov.username == "sidorov" and not sidorov.is_active  # уволенный
+    assert not sidorov.has_usable_password() and not sidorov.groups.exists()
+    assert Employee.objects.get(user=sidorov).position.name == "Ассистент"
+
+
+def test_doctors_without_visits_are_skipped(db, monkeypatch) -> None:
+    """Переносим только тех, у кого есть приёмы: кассиры и администраторы не нужны."""
+    monkeypatch.setattr(services, "_doctors_with_visits", lambda: {"3", "4"})
+
+    plan = services.doctor_rows(VM_USERS)
+
+    assert [row["name"] for row in plan] == ["Петрова Анна", "Сидоров Пётр"]
+
+
+def test_login_does_not_repeat(db, django_user_model) -> None:
+    django_user_model.objects.create_user(
+        username="sidorov", last_name="Сидоров", first_name="Иван"
+    )
+
+    plan = services.doctor_rows(
+        [{"id": 9, "last_name": "Сидоров", "first_name": "Пётр"}], only_with_visits=False
+    )
+
+    assert plan[0]["action"] == "create" and plan[0]["login"] == "sidorovp"
 
 
 def test_visits_imported_with_doctor_purpose_and_text(visits) -> None:
@@ -627,7 +661,7 @@ def test_unknown_doctor_goes_to_transfer_account(visits) -> None:
 
     second = Visit.objects.get(treatment_html__contains="Повторный")
 
-    # Врача не нашли — приём не теряется, его можно переназначить потом.
+    # Врача нет даже в выгрузке — приём не теряется, его можно переназначить потом.
     assert second.doctor.last_name == services.TRANSFER_DOCTOR and not second.doctor.is_active
 
 

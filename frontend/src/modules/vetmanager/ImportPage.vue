@@ -32,6 +32,8 @@
         <q-item-section side class="row items-center no-wrap q-gutter-sm">
           <q-btn v-if="step.step === 'units'" flat color="primary" label="Как сведутся" :loading="planning"
             :disable="!status?.configured || !!running" @click="showUnitPlan" />
+          <q-btn v-if="step.step === 'doctors'" flat color="primary" label="Кого заведём" :loading="planning"
+            :disable="!status?.configured || !!running" @click="showDoctorPlan" />
           <q-btn :color="step.imported ? 'grey-7' : 'primary'" :outline="!!step.imported" unelevated
             :label="step.imported ? 'Перенести ещё раз' : 'Перенести'" :loading="running === step.step"
             :disable="!status?.configured || !!running" @click="run(step)" />
@@ -110,6 +112,29 @@ async function showUnitPlan() {
     message: rows.length
       ? `Переносятся только те, что используются в товарах и ценах:<br>${rows.join('<br>')}`
       : 'В VetManager не нашлось единиц измерения.',
+    html: true,
+    ok: { label: 'Понятно', color: 'primary', flat: true },
+  })
+}
+
+// Врачи: кого свяжем с нашими сотрудниками, а кого заведём — показываем до переноса.
+async function showDoctorPlan() {
+  error.value = ''
+  planning.value = true
+  const { ok, data } = await apiGet('vetmanager/doctor-plan/')
+  planning.value = false
+  if (!ok) return (error.value = Object.values(fieldErrors(data || {}))[0] || 'Не удалось получить список')
+  const rows = data.map((row) => {
+    const what = row.action === 'link' ? 'свяжем с сотрудником' : `заведём, логин <b>${row.login}</b>`
+    const fired = row.active ? '' : ' · уволен'
+    return `• ${row.name} <span class="text-grey-7">(${row.position})</span> — ${what}${fired}`
+  })
+  $q.dialog({
+    title: 'Врачи',
+    message: rows.length
+      ? `Переносятся только те, у кого есть приёмы. Пароль не задаётся — войти нельзя,
+         пока администратор не задаст его и не назначит роль.<br><br>${rows.join('<br>')}`
+      : 'Врачей с приёмами не нашлось.',
     html: true,
     ok: { label: 'Понятно', color: 'primary', flat: true },
   })

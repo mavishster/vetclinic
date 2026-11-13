@@ -23,6 +23,7 @@ from core.html import clean
 from core.models import User
 from medical.models import Visit
 from scheduling.models import VisitPurpose
+from staff.models import Employee, Position
 from vetmanager import client
 from vetmanager.models import Imported
 
@@ -643,47 +644,178 @@ def _full_name(row: dict[str, Any]) -> str:
     return " ".join(part for part in parts if part)
 
 
-@transaction.atomic
-def import_doctors(rows: list[dict[str, Any]] | None = None) -> StepResult:
-    """Врачи VetManager → наши сотрудники: связываем по фамилии и имени.
+# Как латиницей записать логин: по фамилии («Иванова» → ivanova).
+_TRANSLIT = {
+    "а": "a",
+    "б": "b",
+    "в": "v",
+    "г": "g",
+    "д": "d",
+    "е": "e",
+    "ё": "e",
+    "ж": "zh",
+    "з": "z",
+    "и": "i",
+    "й": "y",
+    "к": "k",
+    "л": "l",
+    "м": "m",
+    "н": "n",
+    "о": "o",
+    "п": "p",
+    "р": "r",
+    "с": "s",
+    "т": "t",
+    "у": "u",
+    "ф": "f",
+    "х": "h",
+    "ц": "c",
+    "ч": "ch",
+    "ш": "sh",
+    "щ": "sch",
+    "ъ": "",
+    "ы": "y",
+    "ь": "",
+    "э": "e",
+    "ю": "yu",
+    "я": "ya",
+}
 
-    Новые учётные записи не создаются: это право администратора клиники. Кого не нашли —
-    пишем в ошибки, их приёмы попадут на «Врач (перенос из VetManager)», и врача
-    в таких записях можно поменять потом.
-    """
+
+def _login_for(last_name: str, first_name: str) -> str:
+    """Свободный логин латиницей: ivanova, при совпадении — ivanova2."""
+    base = "".join(
+        _TRANSLIT.get(letter, letter) for letter in last_name.lower() if letter.isalnum()
+    )
+    base = "".join(letter for letter in base if letter.isascii()) or "doctor"
+    if User.objects.filter(username__iexact=base).exists() and first_name:
+        initial = _TRANSLIT.get(first_name[:1].lower(), first_name[:1].lower())
+        base = f"{base}{initial}" if initial.isascii() else base
+    login, number = base, 1
+    while User.objects.filter(username__iexact=login).exists():
+        number += 1
+        login = f"{base}{number}"
+    return login
+
+
+def _position_for(row: dict[str, Any]) -> Position:
+    """Должность из VetManager, иначе «Врач»."""
+    nested = row.get("position")
+    name = (
+        _text(nested, "title", "name")
+        if isinstance(nested, dict)
+        else _text(row, "position", "post")
+    )
+    name = name[:100] or "Врач"
+    return _same_name(Position.objects.all(), name) or Position.objects.create(name=name)
+
+
+def _match_employee(row: dict[str, Any], employees: list[User]) -> User | None:
+    """Наш сотрудник с такой же фамилией (и именем, если оно есть у обоих)."""
+    last_name, first_name = _text(row, "last_name"), _text(row, "first_name")
+    return next(
+        (
+            user
+            for user in employees
+            if simplify(user.last_name) == simplify(last_name)
+            and (
+                not first_name
+                or not user.first_name
+                or simplify(user.first_name)[:1] == simplify(first_name)[:1]
+            )
+        ),
+        None,
+    )
+
+
+def _doctors_with_visits() -> set[str] | None:
+    """Врачи, у которых есть приёмы. None — если список приёмов недоступен."""
+    try:
+        return {str(row.get("user_id") or "") for row in client.fetch("Admission")} - {""}
+    except VetManagerError:
+        return None
+
+
+def doctor_rows(
+    rows: list[dict[str, Any]] | None = None, only_with_visits: bool = True
+) -> list[dict[str, Any]]:
+    """Врачи VetManager и что с ними будет: связать с нашим сотрудником или завести."""
     rows = client.fetch("User") if rows is None else rows
-    result = StepResult("doctors", "Врачи", total=len(rows))
+    with_visits = _doctors_with_visits() if only_with_visits else None
     employees = list(User.objects.all())
+    plan = []
     for row in rows:
-        external_id = str(row.get("id") or "")
         last_name = _text(row, "last_name")
         if not last_name:
-            result.skipped += 1
             continue
-        if _link("doctor", external_id):
-            result.skipped += 1
-            continue
-        first_name = _text(row, "first_name")
-        found = next(
-            (
-                user
-                for user in employees
-                if simplify(user.last_name) == simplify(last_name)
-                and (
-                    not first_name
-                    or not user.first_name
-                    or simplify(user.first_name)[:1] == simplify(first_name)[:1]
-                )
-            ),
-            None,
+        if with_visits is not None and str(row.get("id")) not in with_visits:
+            continue  # администраторы и кассиры в медкартах не нужны
+        found = _match_employee(row, employees)
+        plan.append(
+            {
+                "external_id": str(row.get("id") or ""),
+                "name": _full_name(row),
+                "position": _position_name(row),
+                "active": _flag(row, "is_active", default=True),
+                "action": "link" if found is not None else "create",
+                "login": found.username
+                if found is not None
+                else _login_for(last_name, _text(row, "first_name")),
+                "row": row,
+            }
         )
-        if found is None:
-            result.errors.append(
-                f"«{_full_name(row)}»: нет такого сотрудника — заведите его в «Сотрудниках»."
-            )
+    return plan
+
+
+def _position_name(row: dict[str, Any]) -> str:
+    nested = row.get("position")
+    name = (
+        _text(nested, "title", "name")
+        if isinstance(nested, dict)
+        else _text(row, "position", "post")
+    )
+    return name or "Врач"
+
+
+@transaction.atomic
+def import_doctors(
+    rows: list[dict[str, Any]] | None = None, only_with_visits: bool = True
+) -> StepResult:
+    """Врачи VetManager → наши сотрудники.
+
+    Кого нашли по фамилии и имени — связываем. Кого нет — заводим: должность из
+    VetManager (иначе «Врач»), логин латиницей, уволенные — неактивными.
+    Пароль не задаётся и права не выдаются: войти нельзя, пока администратор
+    не задаст пароль и не назначит роль.
+    """
+    plan = doctor_rows(rows, only_with_visits)
+    result = StepResult("doctors", "Врачи", total=len(plan))
+    for entry in plan:
+        if _link("doctor", entry["external_id"]):
+            result.skipped += 1
             continue
-        _remember("doctor", external_id, found.pk)
-        result.updated += 1
+        row = entry["row"]
+        if entry["action"] == "link":
+            found = _match_employee(row, list(User.objects.all()))
+            if found is not None:
+                _remember("doctor", entry["external_id"], found.pk)
+                result.updated += 1
+                continue
+        user = User.objects.create(
+            username=entry["login"],
+            last_name=_text(row, "last_name")[:150],
+            first_name=_text(row, "first_name")[:150],
+            middle_name=_text(row, "middle_name")[:150],
+            is_active=entry["active"],
+        )
+        user.set_unusable_password()  # вход закрыт, пока администратор не задаст пароль
+        user.save(update_fields=["password"])
+        employee = Employee.objects.filter(user=user).first() or Employee(user=user)
+        employee.position = _position_for(row)
+        employee.in_schedule = entry["active"]
+        employee.save()
+        _remember("doctor", entry["external_id"], user.pk)
+        result.created += 1
     return result
 
 

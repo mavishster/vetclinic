@@ -45,6 +45,17 @@ class ProbeView(_ImportView):
             raise ValidationError({"non_field_errors": [str(error)]}) from error
 
 
+class DoctorPlanView(_ImportView):
+    """GET — кого свяжем с нашими сотрудниками, а кого заведём (до переноса)."""
+
+    def get(self, request: Request) -> Response:
+        try:
+            plan = services.doctor_rows()
+        except services.VetManagerError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+        return Response([{key: row[key] for key in row if key != "row"} for row in plan])
+
+
 class UnitPlanView(_ImportView):
     """GET — что с чем сведётся при переносе единиц: «шт, шт., штука → шт.»."""
 
