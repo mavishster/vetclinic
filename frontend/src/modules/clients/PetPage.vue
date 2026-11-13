@@ -18,54 +18,61 @@
           <q-btn v-else flat icon="undo" label="Отменить отметку о смерти" @click="revive" />
         </template>
         <q-btn v-if="can('clients.delete_pet')" flat color="negative" icon="delete" label="Удалить" @click="remove" />
+        <LayoutMenu :layout="layout" :presets="PET_PRESETS" />
       </div>
 
+      <!-- Блоки настраиваются каждым сотрудником (кнопка «Настроить блоки») -->
       <div class="row q-col-gutter-md">
-        <div class="col-12 col-md-6">
-          <PetVisits v-if="can('medical.view_visit')" :pet="pet" class="q-mb-md" />
-          <PetPrevention v-if="can('medical.view_prevention')" :key="pet.updated_at" :pet="pet" class="q-mb-md" />
-          <q-card flat bordered>
-            <q-list dense>
-              <q-item clickable :to="`/clients/${pet.owner}`">
-                <q-item-section avatar><q-icon name="person" color="primary" /></q-item-section>
-                <q-item-section>
-                  <q-item-label class="text-primary">{{ pet.owner_name }}</q-item-label>
-                  <q-item-label caption>Владелец</q-item-label>
-                </q-item-section>
-              </q-item>
-              <q-separator spaced />
-              <q-item v-for="row in details" :key="row.label">
-                <q-item-section class="text-grey-7 col-5">{{ row.label }}</q-item-section>
-                <q-item-section>{{ row.value }}</q-item-section>
-              </q-item>
-            </q-list>
-            <q-card-section v-if="pet.notes" class="text-body2" style="white-space: pre-line">{{ pet.notes }}</q-card-section>
-          </q-card>
-        </div>
-
-        <div class="col-12 col-md-6">
-          <q-card flat bordered>
-            <q-card-section class="text-subtitle1">Вес</q-card-section>
-            <q-card-section v-if="can('clients.change_pet')" class="q-pt-none">
-              <q-form class="row q-col-gutter-sm items-start" @submit="addWeight">
-                <q-input v-model="newWeight" type="number" step="0.001" min="0" outlined dense label="Вес, кг"
-                  class="col-5" :error="!!weightError" :error-message="weightError" />
-                <q-input v-model="newWeightDate" type="date" outlined dense label="Дата" stack-label :max="today" class="col-5" />
-                <div class="col-2"><q-btn type="submit" color="primary" unelevated icon="add" class="full-width" /></div>
-              </q-form>
-            </q-card-section>
-            <q-list dense separator>
-              <q-item v-for="w in weights" :key="w.id">
-                <q-item-section>{{ Number(w.weight) }} кг</q-item-section>
-                <q-item-section side>{{ formatDate(w.date) }}</q-item-section>
-              </q-item>
-              <q-item v-if="!weights.length">
-                <q-item-section class="text-grey-7">Взвешиваний пока нет</q-item-section>
-              </q-item>
-            </q-list>
-          </q-card>
-          <AttachmentsBlock v-if="can('core.view_attachment')" owner-type="clients.pet" :owner-id="pet.id"
+        <div v-for="side in ['left', 'right']" :key="side" class="col-12 col-md-6">
+          <div class="q-gutter-y-md">
+            <template v-for="block in layout.column(side)" :key="block.name">
+              <PetVisits v-if="block.name === 'visits' && can('medical.view_visit')" :pet="pet" />
+              <PetPrevention v-else-if="block.name === 'prevention' && can('medical.view_prevention')" :key="pet.updated_at" :pet="pet" />
+              <div v-else-if="block.name === 'about'">
+                <q-card flat bordered>
+                <q-list dense>
+                  <q-item clickable :to="`/clients/${pet.owner}`">
+                    <q-item-section avatar><q-icon name="person" color="primary" /></q-item-section>
+                    <q-item-section>
+                      <q-item-label class="text-primary">{{ pet.owner_name }}</q-item-label>
+                      <q-item-label caption>Владелец</q-item-label>
+                    </q-item-section>
+                  </q-item>
+                  <q-separator spaced />
+                  <q-item v-for="row in details" :key="row.label">
+                    <q-item-section class="text-grey-7 col-5">{{ row.label }}</q-item-section>
+                    <q-item-section>{{ row.value }}</q-item-section>
+                  </q-item>
+                </q-list>
+                <q-card-section v-if="pet.notes" class="text-body2" style="white-space: pre-line">{{ pet.notes }}</q-card-section>
+              </q-card>
+              </div>
+              <div v-else-if="block.name === 'weight'">
+                <q-card flat bordered>
+                <q-card-section class="text-subtitle1">Вес</q-card-section>
+                <q-card-section v-if="can('clients.change_pet')" class="q-pt-none">
+                  <q-form class="row q-col-gutter-sm items-start" @submit="addWeight">
+                    <q-input v-model="newWeight" type="number" step="0.001" min="0" outlined dense label="Вес, кг"
+                      class="col-5" :error="!!weightError" :error-message="weightError" />
+                    <q-input v-model="newWeightDate" type="date" outlined dense label="Дата" stack-label :max="today" class="col-5" />
+                    <div class="col-2"><q-btn type="submit" color="primary" unelevated icon="add" class="full-width" /></div>
+                  </q-form>
+                </q-card-section>
+                <q-list dense separator>
+                  <q-item v-for="w in weights" :key="w.id">
+                    <q-item-section>{{ Number(w.weight) }} кг</q-item-section>
+                    <q-item-section side>{{ formatDate(w.date) }}</q-item-section>
+                  </q-item>
+                  <q-item v-if="!weights.length">
+                    <q-item-section class="text-grey-7">Взвешиваний пока нет</q-item-section>
+                  </q-item>
+                </q-list>
+              </q-card>
+              </div>
+              <AttachmentsBlock v-else-if="block.name === 'files' && can('core.view_attachment')" owner-type="clients.pet" :owner-id="pet.id"
             title="Файлы и снимки" class="q-mt-md" />
+            </template>
+          </div>
         </div>
       </div>
 
@@ -99,6 +106,8 @@ import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
+import LayoutMenu from '@/components/LayoutMenu.vue'
+import { useLayout } from '@/modules/core/layout'
 // Медкарта — блок модуля «Медкарта», встраивается в карточку питомца.
 import PetPrevention from '@/modules/medical/PetPrevention.vue'
 import PetVisits from '@/modules/medical/PetVisits.vue'
@@ -114,6 +123,40 @@ const pet = ref(null)
 const loading = ref(true)
 const weights = ref([])
 const editorOpen = ref(false)
+
+// Блоки карточки питомца: по умолчанию слева лечение, справа вес и файлы.
+const PET_BLOCKS = [
+  { name: 'visits', title: 'Медкарты', column: 'left' },
+  { name: 'prevention', title: 'Профилактика', column: 'left' },
+  { name: 'about', title: 'О питомце и владелец', column: 'left' },
+  { name: 'weight', title: 'Вес', column: 'right' },
+  { name: 'files', title: 'Файлы', column: 'right' },
+]
+const PET_PRESETS = {
+  doctor: {
+    title: 'Для врача',
+    hint: 'Сверху медкарты, профилактика и вес',
+    blocks: [
+      { name: 'visits', column: 'left', visible: true },
+      { name: 'prevention', column: 'left', visible: true },
+      { name: 'about', column: 'left', visible: true },
+      { name: 'weight', column: 'right', visible: true },
+      { name: 'files', column: 'right', visible: true },
+    ],
+  },
+  short: {
+    title: 'Покороче',
+    hint: 'Только карточка питомца и медкарты',
+    blocks: [
+      { name: 'about', column: 'left', visible: true },
+      { name: 'visits', column: 'left', visible: true },
+      { name: 'weight', column: 'right', visible: true },
+      { name: 'prevention', column: 'right', visible: false },
+      { name: 'files', column: 'right', visible: false },
+    ],
+  },
+}
+const layout = useLayout('pet', PET_BLOCKS, PET_PRESETS)
 const transferOpen = ref(false)
 const newOwner = ref(null)
 const transferError = ref('')

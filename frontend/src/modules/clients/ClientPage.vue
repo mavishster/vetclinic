@@ -23,6 +23,7 @@
         <q-space />
         <q-btn v-if="can('scheduling.add_appointment')" color="primary" unelevated icon="event" label="Записать на приём" @click="appointmentOpen = true" />
         <q-btn v-if="can('clients.add_signaturerequest')" outline color="primary" icon="draw" label="На подпись" @click="signOpen = true" />
+        <LayoutMenu v-if="tab === 'overview'" :layout="layout" :presets="CLIENT_PRESETS" />
         <q-btn v-if="can('clients.change_client')" flat color="primary" icon="photo_camera" label="Фото" @click="openPhoto" />
         <q-btn v-if="can('clients.change_client')" outline color="primary" icon="edit" label="Изменить"
           @click="editorOpen = true" />
@@ -38,39 +39,43 @@
       </q-tabs>
 
       <!-- Обзор: слева — о клиенте (контакты, питомцы, напоминания), справа — счета и медкарты -->
+      <!-- Обзор: блоки настраиваются каждым сотрудником (кнопка «Настроить блоки») -->
       <div v-if="tab === 'overview'" class="row q-col-gutter-md">
-        <div class="col-12 col-md-5">
+        <div v-for="side in ['left', 'right']" :key="side" :class="side === 'left' ? 'col-12 col-md-5' : 'col-12 col-md-7'">
           <div class="q-gutter-y-md">
-            <q-card flat bordered>
-            <q-list dense>
-              <q-item v-for="phone in client.phones" :key="phone.number">
-                <q-item-section avatar><q-icon :name="phone.is_primary ? 'phone' : 'phone_in_talk'" color="primary" /></q-item-section>
-                <q-item-section>
-                  <q-item-label><a :href="`tel:${phone.number}`" class="text-primary">{{ phone.number }}</a></q-item-label>
-                  <q-item-label caption>{{ kindLabel(phone.kind) }}{{ phone.is_primary ? ' · основной' : '' }}</q-item-label>
-                </q-item-section>
-              </q-item>
-              <q-item v-if="!client.phones.length">
-                <q-item-section class="text-grey-7">Телефон не указан</q-item-section>
-              </q-item>
-              <q-separator spaced />
-              <q-item v-for="row in details" :key="row.label">
-                <q-item-section class="text-grey-7 col-5">{{ row.label }}</q-item-section>
-                <q-item-section>{{ row.value }}</q-item-section>
-              </q-item>
-            </q-list>
-            <q-card-section v-if="client.description" class="text-body2" style="white-space: pre-line">
-              {{ client.description }}
-            </q-card-section>
-          </q-card>
-            <ClientPets v-if="can('clients.view_pet')" :client="client" />
-            <ClientReminders v-if="can('reminders.view_reminder')" :client="client" />
-          </div>
-        </div>
-        <div class="col-12 col-md-7">
-          <div class="q-gutter-y-md">
-            <ClientInvoices v-if="can('billing.view_invoice')" :client="client" />
-            <ClientVisits v-if="can('medical.view_visit')" :client="client" />
+            <template v-for="block in layout.column(side)" :key="block.name">
+              <div v-if="block.name === 'contacts'">
+                <q-card flat bordered>
+                <q-list dense>
+                  <q-item v-for="phone in client.phones" :key="phone.number">
+                    <q-item-section avatar><q-icon :name="phone.is_primary ? 'phone' : 'phone_in_talk'" color="primary" /></q-item-section>
+                    <q-item-section>
+                      <q-item-label><a :href="`tel:${phone.number}`" class="text-primary">{{ phone.number }}</a></q-item-label>
+                      <q-item-label caption>{{ kindLabel(phone.kind) }}{{ phone.is_primary ? ' · основной' : '' }}</q-item-label>
+                    </q-item-section>
+                  </q-item>
+                  <q-item v-if="!client.phones.length">
+                    <q-item-section class="text-grey-7">Телефон не указан</q-item-section>
+                  </q-item>
+                  <q-separator spaced />
+                  <q-item v-for="row in details" :key="row.label">
+                    <q-item-section class="text-grey-7 col-5">{{ row.label }}</q-item-section>
+                    <q-item-section>{{ row.value }}</q-item-section>
+                  </q-item>
+                </q-list>
+                <q-card-section v-if="client.description" class="text-body2" style="white-space: pre-line">
+                  {{ client.description }}
+                </q-card-section>
+              </q-card>
+              </div>
+              <ClientPets v-else-if="block.name === 'pets' && can('clients.view_pet')" :client="client" />
+              <ClientReminders v-else-if="block.name === 'reminders' && can('reminders.view_reminder')" :client="client" />
+              <ClientInvoices v-else-if="block.name === 'invoices' && can('billing.view_invoice')" :client="client" />
+              <ClientVisits v-else-if="block.name === 'visits' && can('medical.view_visit')" :client="client" />
+              <ClientContracts v-else-if="block.name === 'contracts' && can('clients.view_clientcontract')"
+                :client-id="client.id" @changed="reloadClient" />
+              <ClientAppointments v-else-if="block.name === 'appointments' && can('scheduling.view_appointment')" :client="client" />
+            </template>
           </div>
         </div>
       </div>
@@ -100,6 +105,8 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { apiDelete, apiGet, apiPatch } from '@/api'
 import { can } from '@/session'
+import LayoutMenu from '@/components/LayoutMenu.vue'
+import { useLayout } from '@/modules/core/layout'
 import AttachmentsBlock from '@/components/AttachmentsBlock.vue'
 import PhotoDialog from '@/modules/signing/PhotoDialog.vue'
 import SendForSignatureDialog from '@/modules/signing/SendForSignatureDialog.vue'
@@ -125,6 +132,46 @@ const loading = ref(true)
 const editorOpen = ref(false)
 const signOpen = ref(false)
 const tab = ref('overview')
+
+// Блоки обзора: порядок и столбец по умолчанию; каждый сотрудник настраивает под себя.
+const CLIENT_BLOCKS = [
+  { name: 'contacts', title: 'Контакты и адрес', column: 'left' },
+  { name: 'pets', title: 'Питомцы', column: 'left' },
+  { name: 'reminders', title: 'Напоминания', column: 'left' },
+  { name: 'invoices', title: 'Счета', column: 'right' },
+  { name: 'visits', title: 'Медкарты', column: 'right' },
+  { name: 'contracts', title: 'Договоры', column: 'right' },
+  { name: 'appointments', title: 'Ближайшие записи', column: 'right' },
+]
+const CLIENT_PRESETS = {
+  doctor: {
+    title: 'Для врача',
+    hint: 'Питомцы и медкарты сверху, счета ниже',
+    blocks: [
+      { name: 'pets', column: 'left', visible: true },
+      { name: 'contacts', column: 'left', visible: true },
+      { name: 'reminders', column: 'left', visible: true },
+      { name: 'visits', column: 'right', visible: true },
+      { name: 'appointments', column: 'right', visible: true },
+      { name: 'invoices', column: 'right', visible: true },
+      { name: 'contracts', column: 'right', visible: false },
+    ],
+  },
+  operator: {
+    title: 'Для оператора',
+    hint: 'Счета и баланс сверху, медкарты ниже',
+    blocks: [
+      { name: 'contacts', column: 'left', visible: true },
+      { name: 'pets', column: 'left', visible: true },
+      { name: 'reminders', column: 'left', visible: true },
+      { name: 'invoices', column: 'right', visible: true },
+      { name: 'contracts', column: 'right', visible: true },
+      { name: 'appointments', column: 'right', visible: true },
+      { name: 'visits', column: 'right', visible: false },
+    ],
+  },
+}
+const layout = useLayout('client', CLIENT_BLOCKS, CLIENT_PRESETS)
 const appointmentOpen = ref(false)
 const appointmentsVersion = ref(0)
 const filesVersion = ref(0) // подписанный PDF и фото появляются в «Файлах» сразу

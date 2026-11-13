@@ -904,8 +904,8 @@ _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def save_ui_settings(user: User, changes: dict[str, Any]) -> dict[str, Any]:
-    """Сохранить личное оформление: тема (светлая / тёмная / как в системе) и основной
-    цвет (#RRGGBB). Неизвестные ключи игнорируются."""
+    """Сохранить личное оформление: тема (светлая / тёмная / как в системе), основной
+    цвет (#RRGGBB) и расклад блоков по экранам. Неизвестные ключи игнорируются."""
     settings_ = dict(user.ui_settings or {})
     if "theme" in changes:
         if changes["theme"] not in UI_THEMES:
@@ -916,9 +916,44 @@ def save_ui_settings(user: User, changes: dict[str, Any]) -> dict[str, Any]:
         if color and not _HEX.match(color):
             raise ValueError("Цвет задаётся в виде #RRGGBB.")
         settings_["primary"] = color
+    if "layouts" in changes:
+        settings_["layouts"] = _clean_layouts(changes["layouts"])
     user.ui_settings = settings_
     user.save(update_fields=["ui_settings"])
     return settings_
+
+
+LAYOUT_COLUMNS = ("left", "right")
+MAX_LAYOUT_BLOCKS = 40
+
+
+def _clean_layouts(layouts: Any) -> dict[str, Any]:
+    """Расклад блоков по экранам: какие показывать, в каком столбце и в каком порядке.
+
+    Проверяем строго: в настройки попадает только то, что система понимает.
+    """
+    if not isinstance(layouts, dict):
+        raise ValueError("Расклад блоков задаётся по экранам.")
+    cleaned: dict[str, Any] = {}
+    for screen, layout in list(layouts.items())[:20]:
+        if not isinstance(screen, str) or not screen.isidentifier():
+            continue
+        blocks = (layout or {}).get("blocks") if isinstance(layout, dict) else None
+        if not isinstance(blocks, list):
+            continue
+        cleaned[screen] = {
+            "preset": str((layout or {}).get("preset") or "")[:30],
+            "blocks": [
+                {
+                    "name": str(block.get("name"))[:40],
+                    "column": block["column"] if block.get("column") in LAYOUT_COLUMNS else "left",
+                    "visible": bool(block.get("visible", True)),
+                }
+                for block in blocks[:MAX_LAYOUT_BLOCKS]
+                if isinstance(block, dict) and block.get("name")
+            ],
+        }
+    return cleaned
 
 
 # --- Резервные копии ---------------------------------------------------------------

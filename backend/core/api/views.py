@@ -51,7 +51,8 @@ def backup_status(request: Request) -> Response:
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
 def my_ui_settings(request: Request) -> Response:
-    """Личное оформление: {"theme": "light|dark|auto", "primary": "#RRGGBB"}."""
+    """Личное оформление: {"theme": "light|dark|auto", "primary": "#RRGGBB",
+    "layouts": {"client": {"preset": "...", "blocks": [...]}}}."""
     user: User = request.user  # type: ignore[assignment]
     try:
         return Response(services.save_ui_settings(user, dict(request.data)))
