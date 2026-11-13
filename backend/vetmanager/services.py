@@ -940,10 +940,16 @@ def import_doctors(
     plan = doctor_rows(rows, only_with_visits)
     result = StepResult("doctors", "Врачи", total=len(plan))
     for entry in plan:
-        if _link("doctor", entry["external_id"]):
+        row = entry["row"]
+        link = _link("doctor", entry["external_id"])
+        if link is not None:
+            # Врач уже перенесён: заново не заводим, но пустые контакты дозаполняем —
+            # телефон и почту могли добавить в VetManager после переноса.
+            existing = User.objects.filter(pk=link.target_id).first()
+            if existing is not None:
+                _fill_contacts(existing, row)
             result.skipped += 1
             continue
-        row = entry["row"]
         if entry["action"] == "link":
             found = _match_employee(row, list(User.objects.all()))
             if found is not None:

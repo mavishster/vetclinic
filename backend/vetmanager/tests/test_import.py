@@ -930,3 +930,20 @@ def test_existing_employee_contacts_are_not_overwritten(db, django_user_model) -
     user.refresh_from_db()
     assert user.email == "my@clinic.kg"  # своё не трогаем
     assert Employee.objects.get(user=user).phone == "+996555112233"  # пустое заполнили
+
+
+def test_rerun_fills_missing_contacts(db) -> None:
+    """Повторный запуск шага дозаполняет контакты уже перенесённых врачей."""
+    from staff.models import Employee
+
+    without_contacts = [{"id": 3, "last_name": "Петрова", "first_name": "Анна", "is_active": 1}]
+    services.import_doctors(without_contacts, only_with_visits=False)
+    petrova = get_user_model().objects.get(last_name="Петрова")
+    assert Employee.objects.get(user=petrova).phone == ""
+
+    again = services.import_doctors(VM_USERS, only_with_visits=False)
+
+    petrova.refresh_from_db()
+    assert again.skipped == 1  # заново не заводим
+    assert petrova.email == "petrova@clinic.kg"
+    assert Employee.objects.get(user=petrova).phone == "+996555112233"
