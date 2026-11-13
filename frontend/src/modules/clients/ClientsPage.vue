@@ -8,7 +8,7 @@
 
     <div class="row q-col-gutter-sm q-mb-md items-center">
       <q-input v-model="search" dense outlined clearable debounce="300" autofocus
-        placeholder="ФИО, кличка, телефон, № по журналу, дисконтная карта" class="col-12 col-md-5"
+        placeholder="№, ФИО, кличка, телефон, дисконтная карта" class="col-12 col-md-5"
         @update:model-value="reload">
         <template #prepend><q-icon name="search" /></template>
       </q-input>
@@ -33,6 +33,11 @@
             :label="badge.label" class="q-ml-sm" />
         </q-td>
       </template>
+      <template #body-cell-balance="props">
+        <q-td :props="props" :class="Number(props.row.balance) < 0 ? 'text-negative' : ''">
+          {{ money(props.row.balance) }}
+        </q-td>
+      </template>
       <template #body-cell-contract="props">
         <q-td :props="props">
           <template v-if="props.row.contract_number">
@@ -54,6 +59,8 @@ import { useRouter } from 'vue-router'
 import { apiGet } from '@/api'
 import { can } from '@/session'
 import ClientEditDialog from './ClientEditDialog.vue'
+import { money } from '@/modules/catalog/money'
+import { formatDate } from './pets'
 import { clientBadges } from './statuses'
 
 const router = useRouter()
@@ -81,12 +88,15 @@ const statusOptions = [
 ]
 const primaryPhone = (row) => (row.phones.find((p) => p.is_primary) ?? row.phones[0])?.number ?? ''
 const columns = [
+  { name: 'number', label: '№', field: 'number', align: 'left' },
   { name: 'full_name', label: 'Клиент', field: 'full_name', align: 'left' },
   { name: 'pets', label: 'Питомцы', field: (row) => row.pet_names.join(', '), align: 'left' },
   { name: 'phone', label: 'Телефон', field: primaryPhone, align: 'left' },
   { name: 'city', label: 'Город', field: 'city_name', align: 'left' },
+  { name: 'address', label: 'Адрес', field: 'address', align: 'left' },
   { name: 'type', label: 'Тип', field: 'client_type_name', align: 'left' },
-  { name: 'journal', label: '№ по журналу', field: 'journal_number', align: 'left' },
+  { name: 'balance', label: 'Баланс', field: 'balance', align: 'right' },
+  { name: 'last_invoice', label: 'Послед. счёт', field: 'last_invoice_at', align: 'left', format: formatDate },
   { name: 'contract', label: 'Договор', field: 'contract_number', align: 'left' },
 ]
 

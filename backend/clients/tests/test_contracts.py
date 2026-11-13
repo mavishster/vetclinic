@@ -150,3 +150,17 @@ def test_new_client_gets_usual_type_by_default(db) -> None:
         services.save_client(Client(last_name="Заводчик", client_type=breeder)).client_type
         == breeder
     )
+
+
+def test_list_shows_address(api, client_) -> None:
+    from clients.models import City, Street
+
+    city = City.objects.create(name="Бишкек")
+    client_.city, client_.street = city, Street.objects.create(name="улица Ленина", city=city)
+    client_.house = "72 кв. 3"
+    services.save_client(client_)
+
+    row = api.get("/api/clients/clients/").json()["results"][0]
+
+    assert row["address"] == "улица Ленина, 72 кв. 3"
+    assert row["balance"] == "0" and row["last_invoice_at"] is None

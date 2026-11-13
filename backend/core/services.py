@@ -534,6 +534,7 @@ def module_actions(role: Group, module: str) -> set[str]:
 
 next_number = numbering.next_number
 next_value = numbering.next_value
+reserve_value = numbering.reserve
 
 
 def execute_document[D: Document](document: D) -> D:

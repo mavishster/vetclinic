@@ -153,6 +153,7 @@ const details = computed(() =>
     { label: 'Адрес', value: address.value },
     { label: 'Email', value: client.value.email },
     { label: 'Скидка', value: Number(client.value.discount_percent) ? `${Number(client.value.discount_percent)} %` : '' },
+    { label: '№ клиента', value: client.value.number },
     { label: '№ по журналу', value: client.value.journal_number },
     { label: 'Дисконтная карта', value: client.value.discount_card },
     { label: 'Тип', value: client.value.client_type_name },

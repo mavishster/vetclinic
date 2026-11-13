@@ -323,3 +323,22 @@ def test_combo_separate_discounts_for_goods_and_services(client_, visit_service,
 
     service, goods = invoice.lines.get(parent=None).children.all()
     assert (service.discount_percent, goods.discount_percent) == (D("10"), D("5"))
+
+
+def test_client_list_shows_balance_and_last_invoice(client_, vial) -> None:
+    """Выполнили счёт — в списке клиентов долг и дата последнего счёта; откатили — их нет."""
+    from rest_framework.test import APIClient
+
+    api = APIClient()
+    api.force_authenticate(get_user_model().objects.create_superuser(username="adm", password="x"))
+
+    def row():
+        return api.get("/api/clients/clients/").json()["results"][0]
+
+    assert row()["last_invoice_at"] is None
+
+    invoice = core.execute_document(make(client_, [{"item_unit": vial, "quantity": D("2")}]))
+    assert D(row()["balance"]) == D("-1400") and row()["last_invoice_at"] is not None
+
+    core.rollback_document(invoice)
+    assert D(row()["balance"]) == 0 and row()["last_invoice_at"] is None

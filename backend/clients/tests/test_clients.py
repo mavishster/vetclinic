@@ -145,3 +145,17 @@ def test_phone_match_is_listed_first() -> None:
     found = services.find_duplicates(last_name="Иванова", first_name="Анна", phones=["9000000001"])
 
     assert found[0]["id"] == str(by_phone.pk)
+
+
+def test_numbers_are_issued_and_imported_number_is_kept(db) -> None:
+    first = services.save_client(Client(last_name="Первый"))
+    second = services.save_client(Client(last_name="Второй"), number=2122)  # номер из VetManager
+    third = services.save_client(Client(last_name="Третий"))
+    busy = services.save_client(Client(last_name="Занято"), number=2122)
+
+    assert first.number == 1 and second.number == 2122
+    # Счётчик ушёл за номер из переноса — новые номера не пересекаются с ним.
+    assert third.number == 2123 and busy.number == 2124
+    # Повторное сохранение номер не меняет.
+    assert services.save_client(second).number == 2122
+    assert services.search_clients(Client.objects.all(), "2122").get() == second

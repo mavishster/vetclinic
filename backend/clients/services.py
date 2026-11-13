@@ -13,13 +13,14 @@ from typing import Any, TypedDict
 
 from django.contrib.postgres.search import TrigramSimilarity
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Q, QuerySet, Subquery, Value
-from django.db.models.functions import Concat
+from django.db.models import Exists, OuterRef, Q, QuerySet, Subquery, Sum, Value
+from django.db.models.functions import Coalesce, Concat
 from django.utils import timezone
 
 from clients.models import (
     Client,
     ClientContract,
+    ClientLedger,
     ClientPhone,
     ClientType,
     Pet,
@@ -78,6 +79,7 @@ def _replace_phones(client: Client, phones: list[PhoneData]) -> None:
 
 
 DEFAULT_CLIENT_TYPE = "Обычный"
+CLIENT_COUNTER = "client_number"
 
 
 def default_client_type() -> ClientType | None:
@@ -86,11 +88,29 @@ def default_client_type() -> ClientType | None:
 
 
 @transaction.atomic
-def save_client(client: Client, phones: list[PhoneData] | None = None) -> Client:
+def _assign_number(client: Client, wanted: int | None) -> None:
+    """Выдать клиенту № — желаемый (из VetManager), если свободен, иначе следующий."""
+    if wanted and not Client.all_objects.filter(number=wanted).exclude(pk=client.pk).exists():
+        client.number = wanted
+        core_services.reserve_value(CLIENT_COUNTER, wanted)
+        return
+    while True:
+        number = core_services.next_value(CLIENT_COUNTER)
+        if not Client.all_objects.filter(number=number).exists():
+            client.number = number
+            return
+
+
+def save_client(
+    client: Client, phones: list[PhoneData] | None = None, number: int | None = None
+) -> Client:
     """Сохранить карточку клиента вместе с телефонами (если переданы).
 
-    У нового клиента без типа ставится «Обычный».
+    У нового клиента без типа ставится «Обычный». Клиенту без № выдаётся номер:
+    number — желаемый (при переносе из VetManager), если он свободен.
     """
+    if client.number is None:
+        _assign_number(client, number)
     if client._state.adding and client.client_type_id is None and not client.is_guest:
         client.client_type = default_client_type()
     client.last_name = client.last_name.strip()
@@ -128,6 +148,8 @@ def search_clients(queryset: QuerySet[Client], text: str) -> QuerySet[Client]:
             | Q(discount_card__iexact=word)
             | Q(pets__name__icontains=word)
         )
+        if word.isdigit() and len(word) < 10:
+            condition |= Q(number=int(word))
         digits = re.sub(r"\D", "", word)
         if len(digits) >= 3:
             condition |= Q(phones__search_key__contains=digits[-10:])
@@ -333,6 +355,45 @@ def with_contract_flag(queryset: QuerySet[Client]) -> QuerySet[Client]:
             .order_by(*newest)
             .values("number")[:1]
         ),
+    )
+
+
+def _invoice_charges() -> QuerySet[ClientLedger]:
+    """Начисления по счетам — без откатанных. Клиенты стоят ниже счетов по слоям, поэтому
+    «последний счёт» берётся из журнала расчётов: каждый выполненный счёт пишет туда запись."""
+    return ClientLedger.objects.filter(
+        document_type__model="invoice",
+        amount__gt=0,
+        reversal_of__isnull=True,
+        reversed_by__isnull=True,
+    )
+
+
+def with_balance_columns(queryset: QuerySet[Client]) -> QuerySet[Client]:
+    """Добавить к клиентам баланс и дату последнего счёта — для списка, одним запросом."""
+    total = (
+        ClientLedger.objects.filter(client=OuterRef("pk"))
+        .order_by()
+        .values("client")
+        .annotate(total=Sum("amount"))
+        .values("total")
+    )
+    last = _invoice_charges().filter(client=OuterRef("pk")).order_by("-posted_at")
+    return queryset.annotate(
+        balance_value=Coalesce(-Subquery(total), Decimal("0")),
+        last_invoice_value=Subquery(last.values("posted_at")[:1]),
+    )
+
+
+def last_invoice_at(client: Client) -> Any:
+    row = _invoice_charges().filter(client=client).order_by("-posted_at").first()
+    return row.posted_at if row else None
+
+
+def address_line(client: Client) -> str:
+    """Адрес одной строкой: улица, дом, квартира (город — в отдельной колонке)."""
+    return ", ".join(
+        part for part in (client.street.name if client.street else "", client.house) if part
     )
 
 

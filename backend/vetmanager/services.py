@@ -577,7 +577,9 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
             status=status,
         )
         try:
-            saved = clients_services.save_client(record, _phones(row))
+            saved = clients_services.save_client(
+                record, _phones(row), number=int(external_id) if external_id.isdigit() else None
+            )
         except clients_services.ClientError as error:
             result.errors.append(f"«{last_name}»: {error}")
             continue

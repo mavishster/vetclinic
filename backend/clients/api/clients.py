@@ -32,17 +32,21 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     has_contract = serializers.SerializerMethodField()
     contract_number = serializers.SerializerMethodField()
     contract_expired = serializers.SerializerMethodField()
+    address = serializers.SerializerMethodField()
+    balance = serializers.SerializerMethodField()
+    last_invoice_at = serializers.SerializerMethodField()
     photo = serializers.SerializerMethodField()
 
     class Meta:
         model = Client
         fields = [
-            "id", "full_name", "last_name", "first_name", "middle_name", "passport",
+            "id", "number", "full_name", "last_name", "first_name", "middle_name", "passport",
             "city", "city_name", "street", "street_name", "house", "zip_code", "email",
             "discount_percent", "journal_number", "discount_card",
             "client_type", "client_type_name", "source", "source_name",
             "no_mailing", "in_blacklist", "description", "status", "phones", "pet_names",
-            "has_contract", "contract_number", "contract_expired", "photo", "photo_consent_at",
+            "has_contract", "contract_number", "contract_expired",
+            "address", "balance", "last_invoice_at", "photo", "photo_consent_at",
             "created_at", "updated_at",
         ]  # fmt: skip
         read_only_fields = ["photo", "photo_consent_at"]
@@ -61,6 +65,18 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
 
     def get_contract_expired(self, client: Client) -> bool:
         return services.contract_summary(client)[1]
+
+    def get_address(self, client: Client) -> str:
+        return services.address_line(client)
+
+    def get_balance(self, client: Client) -> str:
+        value = getattr(client, "balance_value", None)  # в списке — посчитан одним запросом
+        return str(services.balance(client) if value is None else value)
+
+    def get_last_invoice_at(self, client: Client) -> Any:
+        if hasattr(client, "last_invoice_value"):
+            return client.last_invoice_value
+        return services.last_invoice_at(client)
 
     def get_pet_names(self, client: Client) -> list[str]:
         return [pet.name for pet in client.pets.all() if pet.status == Pet.Status.ACTIVE]
@@ -99,8 +115,10 @@ class ClientViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
     queryset = Client.objects.all()
 
     def get_queryset(self) -> QuerySet[Client]:
-        queryset = services.with_contract_flag(
-            Client.objects.select_related("city", "street", "client_type", "source")
+        queryset = services.with_balance_columns(
+            services.with_contract_flag(
+                Client.objects.select_related("city", "street", "client_type", "source")
+            )
         ).prefetch_related("phones", "pets")
         params = self.request.query_params
         if search := params.get("search", "").strip():

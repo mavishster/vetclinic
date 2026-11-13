@@ -111,6 +111,9 @@ class Client(ClinicScopedModel):
         TEMPORARY = "temporary", "временный"
         INACTIVE = "inactive", "неактивный"
 
+    # Сквозной номер клиента — по нему клиента называют по телефону и ищут. Выдаётся сам;
+    # при переносе из VetManager сохраняется его номер.
+    number = models.PositiveIntegerField("№ клиента", unique=True, null=True, editable=False)
     last_name = models.CharField("фамилия", max_length=100)
     first_name = models.CharField("имя", max_length=100, blank=True)
     middle_name = models.CharField("отчество", max_length=100, blank=True)

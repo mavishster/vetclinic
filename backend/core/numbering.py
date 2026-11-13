@@ -33,6 +33,19 @@ def next_value(counter_name: str) -> int:
     return int(counter.last_number)
 
 
+def reserve(counter_name: str, value: int) -> None:
+    """Поднять счётчик не ниже value: номера, занятые вручную или при переносе,
+    больше не выдаются заново."""
+    next_value(counter_name)  # счётчик гарантированно существует
+    with transaction.atomic():
+        counter = DocumentCounter.objects.select_for_update().get(
+            doc_type=counter_name, node_id=settings.NODE_ID
+        )
+        if counter.last_number < value:
+            counter.last_number = value
+            counter.save(update_fields=["last_number"])
+
+
 def next_number(doc_type: str) -> str:
     """Следующий номер документа данного типа на этом узле: «K1-000123»."""
     if not doc_type:
