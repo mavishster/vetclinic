@@ -551,7 +551,7 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
         if link is not None and existing is None:
             result.skipped += 1  # карточку удалили у нас — заново не заводим
             continue
-        city = _city_for(row)
+        city = _city_for(row, streets)
         street = _street_for(row, city, streets)
         house = " ".join(part for part in (_text(row, "address"), _text(row, "apartment")) if part)
         status = Client.Status.ACTIVE
@@ -597,25 +597,62 @@ def _vetmanager_streets() -> dict[str, dict[str, Any]]:
         return {}
 
 
-def _city_for(row: dict[str, Any]) -> Any:
-    name = _text(row, "city")
+def _nested(row: dict[str, Any], name: str) -> dict[str, Any]:
+    """Вложенная запись из ответа VetManager (city_data, street_data) — или пусто."""
+    value = row.get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def _city_for(row: dict[str, Any], streets: dict[str, dict[str, Any]] | None = None) -> Any:
+    """Город клиента. В VetManager текстовое поле city обычно пусто: город выбран
+    из справочника и приходит вложенной записью city_data (или вместе с улицей)."""
+    street = _nested(row, "street_data") or (streets or {}).get(str(row.get("street_id") or ""), {})
+    name = (
+        _text(_nested(row, "city_data"), "title", "name")
+        or _text(row, "city")
+        or _text(_nested(street, "city"), "title", "name")
+    )
     if not name:
         return None
     return _same_name(City.objects.all(), name) or City.objects.create(name=name[:100])
 
 
+# Тип улицы VetManager отдаёт английским словом — в название пишем по-русски.
+STREET_KINDS = {
+    "street": "улица",
+    "microdistrict": "микрорайон",
+    "district": "район",
+    "lane": "переулок",
+    "avenue": "проспект",
+    "prospect": "проспект",
+    "boulevard": "бульвар",
+    "highway": "шоссе",
+    "square": "площадь",
+    "passage": "проезд",
+    "drive": "проезд",
+    "embankment": "набережная",
+    "quarter": "квартал",
+    "village": "село",
+    "residential": "жилмассив",
+    "blind_alley": "тупик",
+    "alley": "аллея",
+}
+
+
 def _street_for(row: dict[str, Any], city: Any, streets: dict[str, dict[str, Any]]) -> Any:
-    """Улица клиента: в VetManager она лежит отдельным справочником, в карточке — номер.
+    """Улица клиента: приходит вложенной записью street_data, иначе берётся из
+    справочника улиц VetManager по номеру.
 
     Тип улицы («улица», «микрорайон») сохраняем в названии, как в VetManager.
     """
-    source = streets.get(str(row.get("street_id") or ""))
-    if source is None or city is None:
+    source = _nested(row, "street_data") or streets.get(str(row.get("street_id") or ""))
+    if not source or city is None:
         return None
     name = _text(source, "title", "name")
     if not name:
         return None
     kind = _text(source, "type_title", "street_type", "type")
+    kind = STREET_KINDS.get(kind.lower(), kind)
     full = f"{kind} {name}".strip() if kind and kind.lower() not in name.lower() else name
     found = _same_name(Street.objects.filter(city=city), full)
     return found or Street.objects.create(name=full[:100], city=city)

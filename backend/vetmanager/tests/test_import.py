@@ -816,3 +816,50 @@ def test_phone_formats(db) -> None:
     assert services._phone_number("555287246", "996") == "+996555287246"
     assert services._phone_number("(703) 840-008", "") == "+996703840008"
     assert services._phone_number("", "") == ""
+
+
+def test_city_and_street_come_as_nested_records(db, monkeypatch) -> None:
+    """Так отвечает настоящий VetManager: city пусто, город и улица — в city_data
+    и street_data, тип улицы — английским словом."""
+    from clients.models import Client
+
+    monkeypatch.setattr(services, "_vetmanager_streets", lambda: {})
+    row = {
+        "id": 2122,
+        "last_name": "Burcin",
+        "first_name": "Catak",
+        "cell_phone": "555287246",
+        "address": "",
+        "apartment": "дом 30 кв",
+        "city": "",
+        "city_id": 252,
+        "street_id": 124,
+        "city_data": {"id": 252, "title": "Бишкек", "type_id": 1},
+        "street_data": {"id": 124, "title": "Джал", "city_id": 252, "type": "microdistrict"},
+        "status": "ACTIVE",
+    }
+
+    services.import_clients([row])
+
+    found = Client.objects.get(last_name="Burcin")
+    assert found.city.name == "Бишкек" and found.street.name == "микрорайон Джал"
+    assert found.house == "дом 30 кв"
+
+    # Повторный перенос не плодит города и улицы.
+    services.import_clients([row])
+    assert found.city.streets.count() == 1
+
+
+def test_city_is_taken_from_street_directory(db, monkeypatch) -> None:
+    """В списке клиентов вложенных записей может не быть — город берём у улицы из справочника."""
+    from clients.models import Client
+
+    street = {"id": 124, "title": "Джал", "type": "microdistrict", "city": {"title": "Бишкек"}}
+    monkeypatch.setattr(services, "_vetmanager_streets", lambda: {"124": street})
+
+    services.import_clients(
+        [{"id": 7, "last_name": "Иванов", "city": "", "city_id": 252, "street_id": 124}]
+    )
+
+    found = Client.objects.get(last_name="Иванов")
+    assert found.city.name == "Бишкек" and found.street.name == "микрорайон Джал"
