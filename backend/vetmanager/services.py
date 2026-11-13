@@ -825,6 +825,15 @@ def _login_for(last_name: str, first_name: str) -> str:
     return login
 
 
+def _doctor_phone(row: dict[str, Any]) -> str:
+    """Телефон врача: в VetManager он лежит в одном из нескольких полей."""
+    for name in ("phone", "cell_phone", "mobile_phone", "mobile", "tel", "work_phone"):
+        number = _phone_number(_text(row, name), _text(row, "phone_prefix"))
+        if len(number) >= 7:
+            return number
+    return ""
+
+
 def _position_for(row: dict[str, Any]) -> Position:
     """Должность из VetManager, иначе «Врач»."""
     nested = row.get("position")
@@ -904,6 +913,19 @@ def _position_name(row: dict[str, Any]) -> str:
     return name or "Врач"
 
 
+def _fill_contacts(user: User, row: dict[str, Any]) -> None:
+    """Телефон и почта у уже заведённого сотрудника: заполняем, только если их нет."""
+    email = _text(row, "email")
+    if not user.email and "@" in email:
+        user.email = email[:254]
+        user.save(update_fields=["email"])
+    employee = Employee.objects.filter(user=user).first()
+    phone = _doctor_phone(row)
+    if employee is not None and not employee.phone and phone:
+        employee.phone = phone[:30]
+        employee.save(update_fields=["phone"])
+
+
 @transaction.atomic
 def import_doctors(
     rows: list[dict[str, Any]] | None = None, only_with_visits: bool = True
@@ -925,20 +947,24 @@ def import_doctors(
         if entry["action"] == "link":
             found = _match_employee(row, list(User.objects.all()))
             if found is not None:
+                _fill_contacts(found, row)  # заполняем пустое, своё не затираем
                 _remember("doctor", entry["external_id"], found.pk)
                 result.updated += 1
                 continue
+        email = _text(row, "email")
         user = User.objects.create(
             username=entry["login"],
             last_name=_text(row, "last_name")[:150],
             first_name=_text(row, "first_name")[:150],
             middle_name=_text(row, "middle_name")[:150],
+            email=email[:254] if "@" in email else "",
             is_active=entry["active"],
         )
         user.set_unusable_password()  # вход закрыт, пока администратор не задаст пароль
         user.save(update_fields=["password"])
         employee = Employee.objects.filter(user=user).first() or Employee(user=user)
         employee.position = _position_for(row)
+        employee.phone = _doctor_phone(row)[:30]
         employee.in_schedule = entry["active"]
         employee.save()
         _remember("doctor", entry["external_id"], user.pk)

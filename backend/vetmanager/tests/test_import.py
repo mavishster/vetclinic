@@ -549,13 +549,23 @@ def test_status_counts_species_and_breeds_apart(db) -> None:
 # --- Врачи и медкарты -----------------------------------------------------------------
 
 VM_USERS = [
-    {"id": 3, "last_name": "Петрова", "first_name": "Анна", "middle_name": "", "is_active": 1},
+    {
+        "id": 3,
+        "last_name": "Петрова",
+        "first_name": "Анна",
+        "middle_name": "",
+        "is_active": 1,
+        "phone": "555112233",
+        "email": "petrova@clinic.kg",
+    },
     {
         "id": 4,
         "last_name": "Сидоров",
         "first_name": "Пётр",
         "is_active": 0,
         "position": {"id": 2, "title": "Ассистент"},
+        "cell_phone": "0700445566",
+        "email": "не почта",
     },
     {"id": 5, "last_name": "Кассирова", "first_name": "Ольга", "is_active": 1},  # приёмов нет
 ]
@@ -889,3 +899,34 @@ def test_client_contract_mark_and_default_type(db, monkeypatch) -> None:
     ]
     assert not Client.objects.get(last_name="Без договора").contracts.exists()
     assert with_contract.client_type.name == "Обычный"
+
+
+def test_doctor_contacts_are_imported(db) -> None:
+    """Телефон и почта врача переносятся; телефон — с кодом страны."""
+    from staff.models import Employee
+
+    services.import_doctors(VM_USERS, only_with_visits=False)
+
+    petrova = get_user_model().objects.get(last_name="Петрова")
+    sidorov = get_user_model().objects.get(last_name="Сидоров")
+    assert petrova.email == "petrova@clinic.kg"
+    assert Employee.objects.get(user=petrova).phone == "+996555112233"
+    assert Employee.objects.get(user=sidorov).phone == "+996700445566"
+    assert sidorov.email == ""  # «не почта» — не адрес, не переносим
+
+
+def test_existing_employee_contacts_are_not_overwritten(db, django_user_model) -> None:
+    """У заведённого сотрудника свои контакты не затираются, пустые — заполняются."""
+    from staff.models import Employee, Position
+
+    user = django_user_model.objects.create_user(
+        username="petrova", last_name="Петрова", first_name="Анна", email="my@clinic.kg"
+    )
+    position = Position.objects.first() or Position.objects.create(name="Врач")
+    Employee.objects.update_or_create(user=user, defaults={"position": position})
+
+    services.import_doctors(VM_USERS, only_with_visits=False)
+
+    user.refresh_from_db()
+    assert user.email == "my@clinic.kg"  # своё не трогаем
+    assert Employee.objects.get(user=user).phone == "+996555112233"  # пустое заполнили
