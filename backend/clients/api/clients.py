@@ -30,6 +30,8 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     source_name = serializers.CharField(source="source.name", read_only=True, default="")
     pet_names = serializers.SerializerMethodField()
     has_contract = serializers.SerializerMethodField()
+    contract_number = serializers.SerializerMethodField()
+    contract_expired = serializers.SerializerMethodField()
     photo = serializers.SerializerMethodField()
 
     class Meta:
@@ -40,7 +42,7 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "discount_percent", "journal_number", "discount_card",
             "client_type", "client_type_name", "source", "source_name",
             "no_mailing", "in_blacklist", "description", "status", "phones", "pet_names",
-            "has_contract", "photo", "photo_consent_at",
+            "has_contract", "contract_number", "contract_expired", "photo", "photo_consent_at",
             "created_at", "updated_at",
         ]  # fmt: skip
         read_only_fields = ["photo", "photo_consent_at"]
@@ -53,6 +55,12 @@ class ClientSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     def get_has_contract(self, client: Client) -> bool:
         flag = getattr(client, "has_contract", None)  # в списке — посчитан одним запросом
         return services.has_active_contract(client) if flag is None else bool(flag)
+
+    def get_contract_number(self, client: Client) -> str:
+        return services.contract_summary(client)[0]
+
+    def get_contract_expired(self, client: Client) -> bool:
+        return services.contract_summary(client)[1]
 
     def get_pet_names(self, client: Client) -> list[str]:
         return [pet.name for pet in client.pets.all() if pet.status == Pet.Status.ACTIVE]

@@ -13,7 +13,7 @@ from typing import Any, TypedDict
 
 from django.contrib.postgres.search import TrigramSimilarity
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Q, QuerySet, Value
+from django.db.models import Exists, OuterRef, Q, QuerySet, Subquery, Value
 from django.db.models.functions import Concat
 from django.utils import timezone
 
@@ -21,6 +21,7 @@ from clients.models import (
     Client,
     ClientContract,
     ClientPhone,
+    ClientType,
     Pet,
     PetOwnership,
     PetWeight,
@@ -76,9 +77,22 @@ def _replace_phones(client: Client, phones: list[PhoneData]) -> None:
 # --- Карточка клиента --------------------------------------------------------------
 
 
+DEFAULT_CLIENT_TYPE = "Обычный"
+
+
+def default_client_type() -> ClientType | None:
+    """Тип «Обычный» — его получают клиенты, у которых тип не указан."""
+    return ClientType.objects.filter(name__iexact=DEFAULT_CLIENT_TYPE).first()
+
+
 @transaction.atomic
 def save_client(client: Client, phones: list[PhoneData] | None = None) -> Client:
-    """Сохранить карточку клиента вместе с телефонами (если переданы)."""
+    """Сохранить карточку клиента вместе с телефонами (если переданы).
+
+    У нового клиента без типа ставится «Обычный».
+    """
+    if client._state.adding and client.client_type_id is None and not client.is_guest:
+        client.client_type = default_client_type()
     client.last_name = client.last_name.strip()
     if not client.last_name:
         raise ClientError("Укажите фамилию.")
@@ -306,8 +320,40 @@ def has_active_contract(client: Client) -> bool:
 
 
 def with_contract_flag(queryset: QuerySet[Client]) -> QuerySet[Client]:
-    """Добавить к клиентам признак has_contract — есть действующий договор."""
-    return queryset.annotate(has_contract=Exists(active_contracts().filter(client=OuterRef("pk"))))
+    """Добавить к клиентам признак has_contract (есть действующий договор) и номера договоров:
+    действующего и последнего — чтобы в списке показать номер и «истёк» без лишних запросов."""
+    newest = "-date", "-created_at"
+    return queryset.annotate(
+        has_contract=Exists(active_contracts().filter(client=OuterRef("pk"))),
+        active_contract_number=Subquery(
+            active_contracts().filter(client=OuterRef("pk")).order_by(*newest).values("number")[:1]
+        ),
+        last_contract_number=Subquery(
+            ClientContract.objects.filter(client=OuterRef("pk"))
+            .order_by(*newest)
+            .values("number")[:1]
+        ),
+    )
+
+
+def contract_summary(client: Client) -> tuple[str, bool]:
+    """Номер договора для списка и признак «истёк»: показывается действующий договор,
+    а если его нет — последний (с отметкой, что срок вышел)."""
+    active = getattr(client, "active_contract_number", None)
+    last = getattr(client, "last_contract_number", None)
+    if not hasattr(client, "active_contract_number"):
+        newest = client.contracts.order_by("-date", "-created_at")
+        active_row = (
+            active_contracts().filter(client=client).order_by("-date", "-created_at").first()
+        )
+        last_row = newest.first()
+        active, last = (
+            (active_row.number if active_row else None),
+            (last_row.number if last_row else None),
+        )
+    if active:
+        return active, False
+    return (last or ""), bool(last)
 
 
 def set_weight_on(pet: Pet, on: date, weight: Decimal) -> PetWeight:

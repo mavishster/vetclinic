@@ -33,6 +33,15 @@
             :label="badge.label" class="q-ml-sm" />
         </q-td>
       </template>
+      <template #body-cell-contract="props">
+        <q-td :props="props">
+          <template v-if="props.row.contract_number">
+            № {{ props.row.contract_number }}
+            <q-badge v-if="props.row.contract_expired" color="grey-6" label="истёк" class="q-ml-xs" />
+            <q-badge v-else color="positive" label="действует" class="q-ml-xs" />
+          </template>
+        </q-td>
+      </template>
     </q-table>
 
     <ClientEditDialog v-model="editorOpen" @saved="open" />
@@ -78,7 +87,7 @@ const columns = [
   { name: 'city', label: 'Город', field: 'city_name', align: 'left' },
   { name: 'type', label: 'Тип', field: 'client_type_name', align: 'left' },
   { name: 'journal', label: '№ по журналу', field: 'journal_number', align: 'left' },
-  { name: 'contract', label: 'Договор', field: (row) => (row.has_contract ? '✓' : ''), align: 'center' },
+  { name: 'contract', label: 'Договор', field: 'contract_number', align: 'left' },
 ]
 
 async function onRequest({ pagination: next }) {

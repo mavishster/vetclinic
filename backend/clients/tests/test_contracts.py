@@ -117,3 +117,36 @@ def test_client_files_api(api, client_) -> None:
     assert response.status_code == 201
     listed = api.get(f"/api/core/attachments/?owner_type=clients.client&owner_id={client_.pk}")
     assert [f["name"] for f in listed.json()] == ["паспорт.jpg"]
+
+
+def test_list_shows_contract_number_and_expired(api, client_) -> None:
+    """В списке клиентов — номер действующего договора; если действующего нет — последний «истёк»."""
+    other = services.save_client(Client(last_name="Петрова"))
+    none = services.save_client(Client(last_name="Сидорова"))
+    services.save_contract(ClientContract(client=client_, number="К-1", date=date(2026, 1, 5)))
+    services.save_contract(
+        ClientContract(
+            client=other, number="К-2", date=date(2020, 1, 5), valid_until=date(2020, 12, 31)
+        )
+    )
+
+    rows = {r["last_name"]: r for r in api.get("/api/clients/clients/").json()["results"]}
+
+    assert rows["Иванова"]["contract_number"] == "К-1" and not rows["Иванова"]["contract_expired"]
+    assert rows["Петрова"]["contract_number"] == "К-2" and rows["Петрова"]["contract_expired"]
+    assert rows["Петрова"]["has_contract"] is False
+    assert rows[none.last_name]["contract_number"] == ""
+
+
+def test_new_client_gets_usual_type_by_default(db) -> None:
+    from clients.models import ClientType
+
+    usual = ClientType.objects.get(name="Обычный")
+    breeder = ClientType.objects.get(name="Заводчик")
+
+    assert services.save_client(Client(last_name="Новый")).client_type == usual
+    # Явно выбранный тип не меняется.
+    assert (
+        services.save_client(Client(last_name="Заводчик", client_type=breeder)).client_type
+        == breeder
+    )

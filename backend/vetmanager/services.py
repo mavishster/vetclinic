@@ -18,7 +18,7 @@ from django.utils import timezone
 from catalog import services as catalog
 from catalog.models import Item, ItemGroup, ItemUnit, Kind, Unit
 from clients import services as clients_services
-from clients.models import Breed, City, Client, Pet, Species, Street
+from clients.models import Breed, City, Client, ClientContract, Pet, Species, Street
 from core.html import clean
 from core.models import User
 from medical.models import Visit
@@ -582,11 +582,26 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
             result.errors.append(f"«{last_name}»: {error}")
             continue
         _remember("client", external_id, saved.pk)
+        _contract_mark(saved, row)
         if existing is None:
             result.created += 1
         else:
             result.updated += 1  # повторный перенос: подтянули изменения из VetManager
     return result
+
+
+def _contract_mark(saved: Client, row: dict[str, Any]) -> None:
+    """В карточке клиента VetManager есть только отметка «договор есть», без номера.
+    Заводим договор «б/н» от даты регистрации, чтобы отметка не потерялась; повторный
+    перенос и договоры, уже заведённые у нас, его не задваивают."""
+    if not _flag(row, "has_contract") or saved.contracts.exists():
+        return
+    ClientContract.objects.create(
+        client=saved,
+        number="б/н",
+        date=_date(row.get("date_register")) or timezone.localdate(),
+        comment="Перенесено из VetManager: отметка «договор есть», номер там не хранится",
+    )
 
 
 def _vetmanager_streets() -> dict[str, dict[str, Any]]:

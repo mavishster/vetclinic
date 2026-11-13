@@ -863,3 +863,29 @@ def test_city_is_taken_from_street_directory(db, monkeypatch) -> None:
 
     found = Client.objects.get(last_name="Иванов")
     assert found.city.name == "Бишкек" and found.street.name == "микрорайон Джал"
+
+
+def test_client_contract_mark_and_default_type(db, monkeypatch) -> None:
+    """has_contract=1 → договор «б/н» (один, даже при повторном переносе); тип — «Обычный»."""
+    from clients.models import Client
+
+    monkeypatch.setattr(services, "_vetmanager_streets", lambda: {})
+    rows = [
+        {
+            "id": 1,
+            "last_name": "С договором",
+            "has_contract": 1,
+            "date_register": "2026-08-16 09:37:39",
+        },
+        {"id": 2, "last_name": "Без договора", "has_contract": 0},
+    ]
+
+    services.import_clients(rows)
+    services.import_clients(rows)
+
+    with_contract = Client.objects.get(last_name="С договором")
+    assert [(c.number, str(c.date)) for c in with_contract.contracts.all()] == [
+        ("б/н", "2026-08-16")
+    ]
+    assert not Client.objects.get(last_name="Без договора").contracts.exists()
+    assert with_contract.client_type.name == "Обычный"
