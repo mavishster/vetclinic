@@ -315,11 +315,12 @@ CLIENTS = [
         "cell_phone": "555098765",
         "home_phone": "",
         "work_phone": "312900900",
-        "phone_prefix": "+996",
+        "phone_prefix": "",  # код страны в выгрузке часто пуст
         "email": "pushkin@example.com",
-        "address": "Жантошева 70",
-        "apartment": "12",
+        "address": "70",
+        "apartment": "кв. 12",
         "city": "Бишкек",
+        "street_id": 55,
         "zip": "720005",
         "discount": "5.0000000000",
         "note": "постоянный клиент",
@@ -402,7 +403,7 @@ def test_clients_with_phones_and_fields(db) -> None:
         ("+996312900900", "work", False),
     ]
     assert pushkin.discount_percent == D("5.00") and pushkin.city.name == "Бишкек"
-    assert pushkin.house == "Жантошева 70 12" and pushkin.description == "постоянный клиент"
+    assert pushkin.house == "70 кв. 12" and pushkin.description == "постоянный клиент"
     assert pushkin.journal_number == "А-12" and pushkin.passport == "AN1234567"
     # Клиент без ФИО: фамилией становится телефон — карточку видно и можно поправить.
     nameless = Client.objects.exclude(pk=pushkin.pk).get()
@@ -788,3 +789,30 @@ def test_visits_are_imported_in_batches(visits, monkeypatch) -> None:
     services.import_visits(broken)
 
     assert Visit.objects.count() == 2
+
+
+VM_STREETS = [{"id": 55, "title": "Жантошева", "type_title": "улица"}]
+
+
+def test_address_and_phone_are_complete(db, monkeypatch) -> None:
+    """Улица лежит отдельным справочником VetManager, код страны — отдельным полем."""
+    from clients.models import Client
+
+    monkeypatch.setattr(services, "_vetmanager_streets", lambda: {"55": VM_STREETS[0]})
+
+    services.import_clients(CLIENTS)
+
+    pushkin = Client.objects.get(journal_number="А-12")
+    assert pushkin.city.name == "Бишкек" and pushkin.street.name == "улица Жантошева"
+    assert pushkin.house == "70 кв. 12"
+    # Код страны в выгрузке пуст — подставляем код клиники, а не оставляем «555098765».
+    assert [p.number for p in pushkin.phones.all()] == ["+996555098765", "+996312900900"]
+
+
+def test_phone_formats(db) -> None:
+    assert services._phone_number("555287246", "") == "+996555287246"
+    assert services._phone_number("0555287246", "") == "+996555287246"
+    assert services._phone_number("+996555287246", "") == "+996555287246"
+    assert services._phone_number("555287246", "996") == "+996555287246"
+    assert services._phone_number("(703) 840-008", "") == "+996703840008"
+    assert services._phone_number("", "") == ""

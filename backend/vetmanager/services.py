@@ -18,7 +18,7 @@ from django.utils import timezone
 from catalog import services as catalog
 from catalog.models import Item, ItemGroup, ItemUnit, Kind, Unit
 from clients import services as clients_services
-from clients.models import Breed, City, Client, Pet, Species
+from clients.models import Breed, City, Client, Pet, Species, Street
 from core.html import clean
 from core.models import User
 from medical.models import Visit
@@ -30,6 +30,9 @@ from vetmanager.models import Imported
 VetManagerError = client.VetManagerError
 
 # Шаги переноса — по порядку: каждый следующий опирается на предыдущие.
+# Код страны для телефонов без него (в VetManager он хранится отдельно и часто пуст).
+COUNTRY_CODE = "+996"
+
 STEPS = [
     ("units", "Единицы измерения"),
     ("item_groups", "Группы прайса"),
@@ -493,16 +496,35 @@ def import_species(
     return result
 
 
+def _phone_number(number: str, prefix: str) -> str:
+    """Телефон в международном виде: 555287246 → +996555287246.
+
+    В VetManager код страны хранится отдельно и часто пуст, поэтому к местным
+    девятизначным номерам подставляем код страны клиники.
+    """
+    digits = "".join(sign for sign in number if sign.isdigit() or sign == "+")
+    if digits.startswith("+"):
+        return digits
+    if digits.startswith("00"):
+        return f"+{digits[2:]}"
+    if prefix:
+        prefix = prefix if prefix.startswith("+") else f"+{prefix.lstrip('0')}"
+        return f"{prefix}{digits.lstrip('0')}"
+    if len(digits) == 9:  # местный номер без кода страны
+        return f"{COUNTRY_CODE}{digits}"
+    if len(digits) in (10, 11) and digits.startswith("0"):  # 0555287246
+        return f"{COUNTRY_CODE}{digits.lstrip('0')}"
+    return digits
+
+
 def _phones(row: dict[str, Any]) -> list[clients_services.PhoneData]:
     """Телефоны клиента: мобильный — основной, домашний и рабочий — следом."""
     prefix = _text(row, "phone_prefix")
     found: list[clients_services.PhoneData] = []
     for source, kind in (("cell_phone", "mobile"), ("home_phone", "home"), ("work_phone", "work")):
-        number = _text(row, source)
-        if not number:
+        number = _phone_number(_text(row, source), prefix)
+        if not number or len(number) < 7:
             continue
-        if prefix and not number.startswith(("+", prefix)):
-            number = f"{prefix}{number}"
         found.append({"number": number[:30], "kind": kind, "is_primary": not found})
     return found
 
@@ -516,6 +538,7 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
     """
     rows = client.fetch("Client") if rows is None else rows
     result = StepResult("clients", "Клиенты", total=len(rows))
+    streets = _vetmanager_streets()
     for row in rows:
         external_id = str(row.get("id") or "")
         last_name = _text(row, "last_name")
@@ -528,12 +551,8 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
         if link is not None and existing is None:
             result.skipped += 1  # карточку удалили у нас — заново не заводим
             continue
-        city_name = _text(row, "city")
-        city = None
-        if city_name:
-            city = _same_name(City.objects.all(), city_name) or City.objects.create(
-                name=city_name[:100]
-            )
+        city = _city_for(row)
+        street = _street_for(row, city, streets)
         house = " ".join(part for part in (_text(row, "address"), _text(row, "apartment")) if part)
         status = Client.Status.ACTIVE
         if str(row.get("status", "")).upper() in ("DELETED", "INACTIVE", "ARCHIVE"):
@@ -546,6 +565,7 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
             middle_name=_text(row, "middle_name")[:100],
             passport=_text(row, "passport_series")[:50],
             city=city,
+            street=street,
             house=house[:100],
             zip_code=_text(row, "zip")[:10],
             email=_text(row, "email")[:254] if "@" in _text(row, "email") else "",
@@ -567,6 +587,38 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
         else:
             result.updated += 1  # повторный перенос: подтянули изменения из VetManager
     return result
+
+
+def _vetmanager_streets() -> dict[str, dict[str, Any]]:
+    """Улицы VetManager по их номеру: в карточке клиента хранится только номер улицы."""
+    try:
+        return {str(row.get("id")): row for row in client.fetch("Street")}
+    except VetManagerError:
+        return {}
+
+
+def _city_for(row: dict[str, Any]) -> Any:
+    name = _text(row, "city")
+    if not name:
+        return None
+    return _same_name(City.objects.all(), name) or City.objects.create(name=name[:100])
+
+
+def _street_for(row: dict[str, Any], city: Any, streets: dict[str, dict[str, Any]]) -> Any:
+    """Улица клиента: в VetManager она лежит отдельным справочником, в карточке — номер.
+
+    Тип улицы («улица», «микрорайон») сохраняем в названии, как в VetManager.
+    """
+    source = streets.get(str(row.get("street_id") or ""))
+    if source is None or city is None:
+        return None
+    name = _text(source, "title", "name")
+    if not name:
+        return None
+    kind = _text(source, "type_title", "street_type", "type")
+    full = f"{kind} {name}".strip() if kind and kind.lower() not in name.lower() else name
+    found = _same_name(Street.objects.filter(city=city), full)
+    return found or Street.objects.create(name=full[:100], city=city)
 
 
 def _fill(record: Any, **values: Any) -> Any:
