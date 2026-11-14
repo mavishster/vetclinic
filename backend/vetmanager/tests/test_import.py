@@ -1169,3 +1169,24 @@ def test_diagnoses_step_tidies_old_names(db) -> None:
     assert Diagnosis.objects.filter(name="Спленит").exists()
     assert not Diagnosis.objects.filter(name__startswith="<br/>").exists()
     assert Diagnosis.objects.filter(name__iexact="абсцесс").count() == 1
+
+
+def test_lab_code_keeps_vetmanager_number(visits) -> None:
+    """Номер медкарты остаётся прежним: его вводят в анализатор, и результат должен
+    попасть в ту же запись, что и раньше."""
+    from medical.models import Visit
+
+    assert Visit.objects.get(treatment_html__contains="Осмотр").lab_code == 700
+    assert Visit.objects.get(treatment_html__contains="Повторный").lab_code == 701
+
+
+def test_new_visits_do_not_take_imported_numbers(visits, django_user_model) -> None:
+    """Новые приёмы получают номера с 8000 и не наступают на перенесённые."""
+    from clients.models import Pet
+    from medical import services as medical
+
+    doctor = django_user_model.objects.create_user(username="doc2", password="x")
+
+    fresh = medical.start_visit(Pet.objects.get(name="Барсик"), doctor)
+
+    assert fresh.lab_code >= 8000

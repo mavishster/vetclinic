@@ -1220,6 +1220,21 @@ def import_visits(
     return result
 
 
+def _free_lab_code(external_id: str) -> int | None:
+    """Номер медкарты VetManager становится нашим номером для анализатора.
+
+    Его вводят в прибор, и результаты попадают в эту запись, поэтому у перенесённых
+    медкарт номер должен остаться прежним. Занятый номер не трогаем.
+    """
+    if not external_id.isdigit():
+        return None
+    number = int(external_id)
+    taken = getattr(Visit, "all_objects", Visit.objects)  # удалённые записи тоже держат номер
+    if taken.filter(lab_code=number).exists():
+        return None
+    return number
+
+
 def _import_visits_batch(
     rows: list[dict[str, Any]],
     result: StepResult,
@@ -1266,6 +1281,7 @@ def _import_visits_batch(
             fallback_doctor = fallback_doctor or _transfer_doctor()
             doctor = fallback_doctor
         visit = Visit.objects.create(
+            lab_code=_free_lab_code(external_id),
             pet=pet,
             client=pet.owner,
             doctor=doctor,
@@ -1358,6 +1374,10 @@ def reset_visits() -> int:
         if visit is not None:
             if core.usage_records(visit, skip=_part_of_visit):
                 continue  # на запись уже ссылаются (счёт, стационар) — оставляем как есть
+            # Освобождаем номер для анализатора: он понадобится этой же медкарте заново.
+            if visit.lab_code is not None:
+                visit.lab_code = None
+                visit.save(update_fields=["lab_code"])
             visit.delete()
         link.delete()
         removed += 1
