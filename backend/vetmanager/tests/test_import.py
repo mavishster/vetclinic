@@ -613,6 +613,7 @@ MEDICAL_CARDS = [
         "recomendation": "<p>Повторно через 10 дней</p>",
         "diagnos": "176,146",  # номера из справочника диагнозов
         "diagnos_text": "Абсцесс, Отит наружный",
+        "diagnos_type_text": "Окончательные",
         "weight": "4.2000000000",
         "temperature": "38.9000000000",
         "status": "active",
@@ -1093,3 +1094,12 @@ def test_replace_keeps_used_visits(visits) -> None:
     services.reset_visits()
 
     assert Visit.objects.filter(pk=card.pk).exists()
+
+
+def test_diagnosis_kind(visits) -> None:
+    """Вид диагноза («Окончательные») переносится — у нас это отдельное поле."""
+    from medical.models import Visit, VisitDiagnosis
+
+    card = Visit.objects.get(treatment_html__contains="Осмотр")
+
+    assert {d.kind for d in card.diagnoses.all()} == {VisitDiagnosis.Kind.FINAL}

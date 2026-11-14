@@ -1198,11 +1198,22 @@ def _import_visits_batch(
             treatment_html=clean(_text(row, "description")),
             recommendations_html=clean(_text(row, "recomendation", "recommendation")),
         )
+        kind = _diagnosis_kind(row)
         for diagnosis in _diagnoses_of(row):
-            VisitDiagnosis.objects.create(visit=visit, diagnosis=diagnosis)
+            VisitDiagnosis.objects.create(visit=visit, diagnosis=diagnosis, kind=kind)
         _remember("visit", external_id, visit.pk)
         result.created += 1
     return fallback_doctor
+
+
+def _diagnosis_kind(row: dict[str, Any]) -> str:
+    """Вид диагноза: в VetManager он подписан текстом — «(Окончательные)»."""
+    from medical.models import VisitDiagnosis
+
+    text = simplify(_text(row, "diagnos_type_text"))
+    if "окончат" in text:
+        return VisitDiagnosis.Kind.FINAL
+    return VisitDiagnosis.Kind.PRELIMINARY
 
 
 def _diagnoses_of(row: dict[str, Any]) -> list[Any]:
