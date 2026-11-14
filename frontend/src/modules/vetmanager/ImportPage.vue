@@ -46,7 +46,8 @@
     <q-expansion-item class="q-mt-lg" icon="search" label="Что отдаёт VetManager" caption="Проверить связь и поля — перед переносом">
       <div class="row q-col-gutter-sm q-pa-sm items-center">
         <q-select v-model="probeModel" :options="MODELS" outlined dense use-input new-value-mode="add-unique" class="col-6 col-md-3"
-          label="Раздел VetManager" @new-value="(v, done) => done(v)" />
+          label="Раздел VetManager" hint="Нет в списке — впишите название и нажмите Enter"
+          @new-value="(v, done) => done(v)" />
         <q-btn outline color="primary" label="Посмотреть" :loading="probing" :disable="!status?.configured" @click="probe" />
       </div>
       <div v-if="probeResult" class="q-pa-sm">
@@ -65,7 +66,13 @@ import { onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { apiGet, apiPost, fieldErrors } from '@/api'
 
-const MODELS = ['Unit', 'GoodGroup', 'Good', 'GoodSaleParam', 'Client', 'Pet', 'PetType', 'Breed', 'Admission', 'Invoice']
+// Разделы VetManager, которые чаще всего нужно сверить. Можно вписать и свой.
+const MODELS = [
+  'Unit', 'GoodGroup', 'Good', 'GoodSaleParam',
+  'Client', 'Street', 'Pet', 'PetType', 'Breed',
+  'User', 'Admission', 'AdmissionType', 'AdmissionDiagnosis', 'DiagnosisType',
+  'Invoice', 'InvoiceDocument', 'Payment',
+]
 const $q = useQuasar()
 const status = ref(null)
 const steps = ref([])
