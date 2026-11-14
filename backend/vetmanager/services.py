@@ -7,6 +7,8 @@
 """
 
 import contextlib
+import html
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -67,6 +69,13 @@ class StepResult:
         if self.errors:
             parts.append(f"с ошибками {len(self.errors)}")
         return ", ".join(parts)
+
+
+def _plain(value: str) -> str:
+    """Название из VetManager без разметки: в справочниках попадается «<br/>Спленит»."""
+    without_tags = re.sub(r"<[^>]*>", " ", value)
+    cleaned = " ".join(html.unescape(without_tags).split()).strip(" .,;-—")
+    return cleaned[:1].upper() + cleaned[1:] if cleaned else ""
 
 
 def _text(row: dict[str, Any], *names: str) -> str:
@@ -1082,7 +1091,7 @@ def import_diagnoses(rows: list[dict[str, Any]] | None = None) -> StepResult:
             rows = []
     result = StepResult("diagnoses", "Диагнозы", total=len(rows))
     for row in rows:
-        name = _text(row, "title", "name")[:150]
+        name = _plain(_text(row, "title", "name"))[:150]
         external_id = str(row.get("id") or "")
         if not name or _link("diagnosis", external_id):
             result.skipped += 1 if name else 0
@@ -1238,7 +1247,7 @@ def _diagnoses_of(row: dict[str, Any]) -> list[Any]:
     text = _text(row, "diagnos_text", "diagnos_type_text")
     if not text or text.strip() in ("0", "-"):
         return []
-    names = [part.strip()[:150] for part in text.replace(";", ",").split(",") if part.strip()]
+    names = [_plain(part)[:150] for part in text.replace(";", ",").split(",") if _plain(part)]
     return [_diagnosis_for(name) for name in names[:5]]
 
 
