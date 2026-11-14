@@ -1138,7 +1138,36 @@ def import_diagnoses(rows: list[dict[str, Any]] | None = None) -> StepResult:
         else:
             result.updated += 1
         _remember("diagnosis", external_id, found.pk)
+    result.updated += _tidy_diagnosis_names()
     return result
+
+
+def _tidy_diagnosis_names() -> int:
+    """Прибрать названия, заведённые ранее с разметкой («<br/>Спленит»).
+
+    Совпавшие после уборки сводятся в один диагноз, приёмы переносятся на оставшийся.
+    """
+    from medical.models import Diagnosis, VisitDiagnosis
+
+    known = {d.name.lower(): d for d in Diagnosis.objects.all()}
+    fixed = 0
+    for diagnosis in list(Diagnosis.objects.all()):
+        clean_name = _plain(diagnosis.name)[:150]
+        if not clean_name or clean_name == diagnosis.name:
+            continue
+        twin = known.get(clean_name.lower())
+        if twin is not None and twin.pk != diagnosis.pk:
+            VisitDiagnosis.objects.filter(diagnosis=diagnosis).update(diagnosis=twin)
+            Imported.objects.filter(kind="diagnosis", target_id=diagnosis.pk).update(
+                target_id=twin.pk
+            )
+            diagnosis.delete()
+        else:
+            diagnosis.name = clean_name
+            diagnosis.save(update_fields=["name"])
+            known[clean_name.lower()] = diagnosis
+        fixed += 1
+    return fixed
 
 
 def _result_for(row: dict[str, Any], titles: dict[str, str]) -> Any:

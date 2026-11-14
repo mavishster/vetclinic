@@ -1155,3 +1155,17 @@ def test_visit_time_is_the_edited_one(visits) -> None:
     card = Visit.objects.get(treatment_html__contains="Осмотр")
 
     assert str(tz.localtime(card.date))[:16] == "2026-03-14 10:30"
+
+
+def test_diagnoses_step_tidies_old_names(db) -> None:
+    """Шаг «Диагнозы» сам убирает разметку у заведённых раньше названий."""
+    from medical.models import Diagnosis
+
+    Diagnosis.objects.create(name="<br/>Спленит")
+    Diagnosis.objects.create(name="<br/>Абсцесс")  # совпадёт с «Абсцесс» из справочника
+
+    services.import_diagnoses(VM_DIAGNOSES)
+
+    assert Diagnosis.objects.filter(name="Спленит").exists()
+    assert not Diagnosis.objects.filter(name__startswith="<br/>").exists()
+    assert Diagnosis.objects.filter(name__iexact="абсцесс").count() == 1
