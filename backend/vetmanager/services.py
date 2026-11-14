@@ -41,6 +41,7 @@ STEPS = [
     ("clients", "Клиенты"),
     ("pets", "Питомцы"),
     ("doctors", "Врачи"),
+    ("diagnoses", "Диагнозы"),
     ("visits", "Медкарты"),
 ]
 
@@ -1064,6 +1065,40 @@ def _diagnosis_for(name: str) -> Any:
     return _same_name(Diagnosis.objects.all(), name) or Diagnosis.objects.create(name=name[:150])
 
 
+@transaction.atomic
+def import_diagnoses(rows: list[dict[str, Any]] | None = None) -> StepResult:
+    """Справочник диагнозов VetManager → наш справочник.
+
+    В медкарте диагноз хранится номером из этого справочника, поэтому переносим его
+    перед медкартами.
+    """
+    from medical.models import Diagnosis
+
+    if rows is None:
+        try:
+            rows = client.fetch("MedicalCards/AllDiagnoses")
+        except VetManagerError:
+            rows = []
+    result = StepResult("diagnoses", "Диагнозы", total=len(rows))
+    for row in rows:
+        name = _text(row, "title", "name")[:150]
+        external_id = str(row.get("id") or "")
+        if not name or _link("diagnosis", external_id):
+            result.skipped += 1 if name else 0
+            continue
+        found = _same_name(Diagnosis.objects.all(), name)
+        if found is None:
+            found = Diagnosis.objects.create(
+                name=name,
+                is_active=str(row.get("status", "ACTIVE")).upper() not in ("DELETED", "INACTIVE"),
+            )
+            result.created += 1
+        else:
+            result.updated += 1
+        _remember("diagnosis", external_id, found.pk)
+    return result
+
+
 def _result_for(row: dict[str, Any], titles: dict[str, str]) -> Any:
     """Результат посещения: «выздоровление», «улучшение» — тоже из справочника VetManager."""
     from medical.models import VisitResult
@@ -1089,6 +1124,7 @@ def import_visits(
     if rows is None:
         with contextlib.suppress(VetManagerError):
             import_visit_purposes(combo)
+            import_diagnoses()
         rows = _medical_rows()
     titles = {str(row.get("id")): _text(row, "title", "value", "name") for row in combo}
     result = StepResult("visits", "Медкарты", total=len(rows))
@@ -1161,19 +1197,37 @@ def _import_visits_batch(
             treatment_html=clean(_text(row, "description")),
             recommendations_html=clean(_text(row, "recomendation", "recommendation")),
         )
-        for name in _diagnosis_names(row):
-            VisitDiagnosis.objects.create(visit=visit, diagnosis=_diagnosis_for(name))
+        for diagnosis in _diagnoses_of(row):
+            VisitDiagnosis.objects.create(visit=visit, diagnosis=diagnosis)
         _remember("visit", external_id, visit.pk)
         result.created += 1
     return fallback_doctor
 
 
-def _diagnosis_names(row: dict[str, Any]) -> list[str]:
-    """Диагнозы медкарты: в VetManager это текст, иногда несколько через запятую."""
+def _diagnoses_of(row: dict[str, Any]) -> list[Any]:
+    """Диагнозы медкарты: номера из справочника VetManager, иначе — текст.
+
+    В поле diagnos лежат номера («176,146»); у старых записей бывает только текст.
+    """
+    from medical.models import Diagnosis
+
+    found = []
+    raw = _text(row, "diagnos")
+    for part in raw.replace(";", ",").split(","):
+        number = part.strip()
+        if not number.isdigit() or number == "0":
+            continue
+        link = _link("diagnosis", number)
+        diagnosis = Diagnosis.objects.filter(pk=link.target_id).first() if link else None
+        if diagnosis is not None:
+            found.append(diagnosis)
+    if found:
+        return found
     text = _text(row, "diagnos_text", "diagnos_type_text")
     if not text or text.strip() in ("0", "-"):
         return []
-    return [part.strip()[:150] for part in text.replace(";", ",").split(",") if part.strip()][:5]
+    names = [part.strip()[:150] for part in text.replace(";", ",").split(",") if part.strip()]
+    return [_diagnosis_for(name) for name in names[:5]]
 
 
 def run_step(step: str) -> StepResult:
@@ -1192,6 +1246,8 @@ def run_step(step: str) -> StepResult:
         return import_pets()
     if step == "doctors":
         return import_doctors()
+    if step == "diagnoses":
+        return import_diagnoses()
     if step == "visits":
         return import_visits()
     raise VetManagerError(f"Неизвестный шаг переноса: {step}.")
@@ -1211,6 +1267,7 @@ def status() -> list[dict[str, Any]]:
         "clients": [("client", "клиентов")],
         "pets": [("pet", "питомцев")],
         "doctors": [("doctor", "врачей")],
+        "diagnoses": [("diagnosis", "диагнозов")],
         "visits": [("visit", "приёмов")],
     }
     rows = []

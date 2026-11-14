@@ -233,6 +233,7 @@ def test_status_counts(imported) -> None:
         "clients": 0,
         "pets": 0,
         "doctors": 0,
+        "diagnoses": 0,
         "visits": 0,
     }
 
@@ -268,6 +269,7 @@ def test_api_needs_right_and_reports_settings(db, django_user_model, settings) -
         "clients",
         "pets",
         "doctors",
+        "diagnoses",
         "visits",
     ]
     assert refused.status_code == 403
@@ -588,6 +590,11 @@ VM_USERS = [
     {"id": 5, "last_name": "Кассирова", "first_name": "Ольга", "is_active": 1},  # приёмов нет
 ]
 # Типы приёмов и результаты лежат в общем справочнике ComboManualItem.
+VM_DIAGNOSES = [
+    {"id": 176, "title": "Абсцесс", "status": "ACTIVE"},
+    {"id": 146, "title": "Отит наружный", "status": "ACTIVE"},
+    {"id": 900, "title": "Старый диагноз", "status": "DELETED"},
+]
 COMBO_ITEMS = [
     {"id": 1, "title": "Первичный"},
     {"id": 2, "title": "Хирургия"},
@@ -604,7 +611,8 @@ MEDICAL_CARDS = [
         "date_create": "2026-03-14 10:30:00",
         "description": "<p>Осмотр, t 38,9</p><script>alert(1)</script>",
         "recomendation": "<p>Повторно через 10 дней</p>",
-        "diagnos_text": "Наружный отит, Отёк",
+        "diagnos": "176,146",  # номера из справочника диагнозов
+        "diagnos_text": "Абсцесс, Отит наружный",
         "weight": "4.2000000000",
         "temperature": "38.9000000000",
         "status": "active",
@@ -617,6 +625,7 @@ MEDICAL_CARDS = [
         "date_create": "2026-04-02 09:00:00",
         "description": "Повторный осмотр",
         "weight": "0.0000000000",
+        "diagnos": "0",
         "diagnos_text": "0",
     },
     {
@@ -651,6 +660,7 @@ def visits(people, django_user_model):
     )
     services.import_doctors(VM_USERS, only_with_visits=False)
     services.import_visit_purposes(COMBO_ITEMS)
+    services.import_diagnoses(VM_DIAGNOSES)
     return services.import_visits(MEDICAL_CARDS, COMBO_ITEMS)
 
 
@@ -1017,7 +1027,7 @@ def test_medical_card_fields(visits) -> None:
     assert card.purpose.name == "Хирургия" and card.result.name == "Выздоровление"
     assert card.weight == D("4.200") and card.temperature == D("38.9")
     assert "Повторно через 10 дней" in card.recommendations_html
-    assert sorted(d.diagnosis.name for d in card.diagnoses.all()) == ["Наружный отит", "Отёк"]
+    assert sorted(d.diagnosis.name for d in card.diagnoses.all()) == ["Абсцесс", "Отит наружный"]
     assert "<script>" not in card.treatment_html
 
 
@@ -1026,3 +1036,28 @@ def test_empty_diagnosis_is_not_created(visits) -> None:
     from medical.models import Visit
 
     assert Visit.objects.get(treatment_html__contains="Повторный").diagnoses.count() == 0
+
+
+def test_diagnoses_handbook(db) -> None:
+    """Справочник диагнозов VetManager переносится в наш, неактивные — неактивными."""
+    from medical.models import Diagnosis
+
+    result = services.import_diagnoses(VM_DIAGNOSES)
+
+    # «Абсцесс» уже есть в нашем справочнике — связали, не задвоили.
+    assert result.created + result.updated == 3
+    assert Diagnosis.objects.get(name="Отит наружный").is_active
+    assert not Diagnosis.objects.get(name="Старый диагноз").is_active  # неактивный в VetManager
+
+
+def test_diagnosis_by_number_not_by_text(visits) -> None:
+    """Диагноз берётся по номеру справочника: один и тот же диагноз не задваивается."""
+    from medical.models import Diagnosis, Visit
+
+    card = Visit.objects.get(treatment_html__contains="Осмотр")
+
+    assert [d.diagnosis.pk for d in card.diagnoses.all()] == [
+        Diagnosis.objects.get(name="Абсцесс").pk,
+        Diagnosis.objects.get(name="Отит наружный").pk,
+    ]
+    assert Diagnosis.objects.filter(name__icontains="отит").count() == 1

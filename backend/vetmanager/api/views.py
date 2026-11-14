@@ -1,5 +1,6 @@
 """Перенос из VetManager: проверка связи, что отдаёт API, запуск шагов."""
 
+import re
 from typing import Any
 
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -37,8 +38,11 @@ class ProbeView(_ImportView):
 
     def get(self, request: Request) -> Response:
         model = request.query_params.get("model", "Good")
-        if not model.isalnum():
-            raise ValidationError({"model": ["Название модели — латиницей, без пробелов."]})
+        # Бывают составные адреса: MedicalCards/AllDiagnoses.
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(/[A-Za-z][A-Za-z0-9]*)*", model):
+            raise ValidationError(
+                {"model": ["Название раздела — латиницей, без пробелов (можно через «/»)."]}
+            )
         try:
             return Response(client.sample(model, int(request.query_params.get("count", 2))))
         except client.VetManagerError as error:
