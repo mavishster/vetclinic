@@ -34,6 +34,8 @@
             :disable="!status?.configured || !!running" @click="showUnitPlan" />
           <q-btn v-if="step.step === 'doctors'" flat color="primary" label="Кого заведём" :loading="planning"
             :disable="!status?.configured || !!running" @click="showDoctorPlan" />
+          <q-btn v-if="step.step === 'visits' && step.imported" flat color="negative" label="Перенести заново"
+            :disable="!status?.configured || !!running" @click="replaceVisits" />
           <q-btn :color="step.imported ? 'grey-7' : 'primary'" :outline="!!step.imported" unelevated
             :label="step.imported ? 'Перенести ещё раз' : 'Перенести'" :loading="running === step.step"
             :disable="!status?.configured || !!running" @click="run(step)" />
@@ -91,10 +93,22 @@ async function load() {
   steps.value = data.steps
 }
 
-async function run(step) {
+// Перенос медкарт улучшили — уже перенесённые записи надо заменить, иначе их пропустят.
+function replaceVisits() {
+  $q.dialog({
+    title: 'Перенести медкарты заново',
+    message: 'Перенесённые ранее медкарты будут убраны и перенесены заново из VetManager. '
+      + 'Если врач что-то дописал в такой записи у нас, эти правки потеряются. '
+      + 'Записи, на которые уже ссылаются счета или стационар, останутся как есть.',
+    cancel: { label: 'Отмена', flat: true },
+    ok: { label: 'Перенести заново', color: 'negative', unelevated: true },
+  }).onOk(() => run({ step: 'visits', title: 'Медкарты' }, true))
+}
+
+async function run(step, replace = false) {
   error.value = ''
   running.value = step.step
-  const { ok, data } = await apiPost('vetmanager/run/', { step: step.step })
+  const { ok, data } = await apiPost('vetmanager/run/', { step: step.step, replace })
   running.value = ''
   if (!ok) return (error.value = Object.values(fieldErrors(data || {}))[0] || 'Не удалось перенести')
   results.value = { ...results.value, [step.step]: data }

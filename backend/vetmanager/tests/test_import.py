@@ -1061,3 +1061,35 @@ def test_diagnosis_by_number_not_by_text(visits) -> None:
         Diagnosis.objects.get(name="Отит наружный").pk,
     ]
     assert Diagnosis.objects.filter(name__icontains="отит").count() == 1
+
+
+def test_replace_reimports_visits(visits) -> None:
+    """«Перенести заново»: перенесённые медкарты заменяются свежими из VetManager."""
+    from medical.models import Visit
+
+    card = Visit.objects.get(treatment_html__contains="Осмотр")
+    card.treatment_html = "<p>Правка врача</p>"
+    card.save()
+
+    removed = services.reset_visits()
+    again = services.import_visits(MEDICAL_CARDS, COMBO_ITEMS)
+
+    assert removed == 2 and again.created == 2
+    assert Visit.objects.filter(treatment_html__contains="Правка врача").count() == 0
+    assert Visit.objects.filter(treatment_html__contains="Осмотр").count() == 1
+
+
+def test_replace_keeps_used_visits(visits) -> None:
+    """Медкарту, на которую ссылается счёт, не убираем — она остаётся как есть."""
+    from billing import services as billing
+    from billing.models import Invoice
+    from clients.models import Client
+    from medical.models import Visit
+
+    card = Visit.objects.get(treatment_html__contains="Осмотр")
+    owner = Client.objects.get(journal_number="А-12")
+    billing.save_invoice(Invoice(client=owner, pet=card.pet, visit=card), [])
+
+    services.reset_visits()
+
+    assert Visit.objects.filter(pk=card.pk).exists()

@@ -89,11 +89,17 @@ class TidyView(_ImportView):
 
 
 class RunStepView(_ImportView):
-    """POST {"step": "items"} — выполнить шаг переноса."""
+    """POST {"step": "items"} — выполнить шаг переноса.
+
+    {"replace": true} для медкарт — перенести заново: перенесённые записи убираются
+    и переносятся снова (нужно, когда перенос улучшили).
+    """
 
     def post(self, request: Request) -> Response:
         try:
-            result = services.run_step(str(request.data.get("step") or ""))
+            result = services.run_step(
+                str(request.data.get("step") or ""), bool(request.data.get("replace"))
+            )
         except services.VetManagerError as error:
             raise ValidationError({"non_field_errors": [str(error)]}) from error
         return Response(

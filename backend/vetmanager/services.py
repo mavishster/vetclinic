@@ -19,6 +19,7 @@ from catalog import services as catalog
 from catalog.models import Item, ItemGroup, ItemUnit, Kind, Unit
 from clients import services as clients_services
 from clients.models import Breed, City, Client, ClientContract, Pet, Species, Street
+from core import services as core
 from core.html import clean
 from core.models import User
 from medical.models import Visit
@@ -1230,7 +1231,34 @@ def _diagnoses_of(row: dict[str, Any]) -> list[Any]:
     return [_diagnosis_for(name) for name in names[:5]]
 
 
-def run_step(step: str) -> StepResult:
+def _part_of_visit(model: Any, field_name: str) -> bool:
+    """Части самой медкарты (диагнозы, назначения, профилактика) использованием не считаются:
+    они удаляются вместе с ней."""
+    return field_name == "visit" and model._meta.app_label == "medical"
+
+
+@transaction.atomic
+def reset_visits() -> int:
+    """Убрать перенесённые медкарты, чтобы перенести их заново.
+
+    Нужно, когда перенос улучшили: иначе уже перенесённые записи пропускаются и правки
+    до них не доходят. Трогаем только перенесённые (по таблице соответствий) и только
+    те, по которым ничего не завели у нас — счёт, стационар и прочее держат запись.
+    """
+    links = list(Imported.objects.filter(kind="visit"))
+    removed = 0
+    for link in links:
+        visit = Visit.objects.filter(pk=link.target_id).first()
+        if visit is not None:
+            if core.usage_records(visit, skip=_part_of_visit):
+                continue  # на запись уже ссылаются (счёт, стационар) — оставляем как есть
+            visit.delete()
+        link.delete()
+        removed += 1
+    return removed
+
+
+def run_step(step: str, replace: bool = False) -> StepResult:
     """Выполнить шаг переноса: данные берутся из VetManager по его API."""
     if step == "units":
         return import_units()
@@ -1249,6 +1277,8 @@ def run_step(step: str) -> StepResult:
     if step == "diagnoses":
         return import_diagnoses()
     if step == "visits":
+        if replace:
+            reset_visits()
         return import_visits()
     raise VetManagerError(f"Неизвестный шаг переноса: {step}.")
 
