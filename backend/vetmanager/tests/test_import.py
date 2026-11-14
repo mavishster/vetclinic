@@ -595,10 +595,46 @@ VM_DIAGNOSES = [
     {"id": 146, "title": "Отит наружный", "status": "ACTIVE"},
     {"id": 900, "title": "Старый диагноз", "status": "DELETED"},
 ]
+# Справочники VetManager: в медкарте хранится «значение» элемента внутри раздела,
+# а не его номер — разделы разные, номера пересекаются.
+TYPE_MANUAL = {"id": 1, "title": "Тип приема", "name": "admission_type"}
+RESULT_MANUAL = {"id": 4, "title": "Результат посещения", "name": "meet_result"}
 COMBO_ITEMS = [
-    {"id": 1, "title": "Первичный"},
-    {"id": 2, "title": "Хирургия"},
-    {"id": 9, "title": "Выздоровление"},
+    {
+        "id": 1,
+        "combo_manual_id": 1,
+        "value": "1",
+        "title": "Вакцинация",
+        "comboManualName": TYPE_MANUAL,
+    },
+    {
+        "id": 2,
+        "combo_manual_id": 1,
+        "value": "2",
+        "title": "Хирургия",
+        "comboManualName": TYPE_MANUAL,
+    },
+    {
+        "id": 185,
+        "combo_manual_id": 1,
+        "value": "12",
+        "title": "Взятие анализа",
+        "comboManualName": TYPE_MANUAL,
+    },
+    {
+        "id": 12,
+        "combo_manual_id": 4,
+        "value": "3",
+        "title": "Полное выздоровление",
+        "comboManualName": RESULT_MANUAL,
+    },
+    {
+        "id": 3,
+        "combo_manual_id": 4,
+        "value": "9",
+        "title": "Выздоровление",
+        "comboManualName": RESULT_MANUAL,
+    },
 ]
 # Медкарты боевого аккаунта: описание, рекомендации, диагноз, вес и температура.
 MEDICAL_CARDS = [
@@ -606,14 +642,15 @@ MEDICAL_CARDS = [
         "id": 700,
         "patient_id": 200,
         "doctor_id": 3,
-        "admission_type": 2,
+        "admission_type": 12,  # «значение», а не номер элемента
         "meet_result_id": 9,
-        "date_create": "2026-03-14 10:30:00",
+        "date_create": "2026-03-14 09:00:00",  # когда завели запись
+        "date_edit": "2026-03-14 10:30:00",  # дата приёма, её правит врач
         "description": "<p>Осмотр, t 38,9</p><script>alert(1)</script>",
         "recomendation": "<p>Повторно через 10 дней</p>",
-        "diagnos": "176,146",  # номера из справочника диагнозов
+        "diagnos": '[{"id": 176, "type": 1}, {"id": 146, "type": 2}]',
         "diagnos_text": "Абсцесс, Отит наружный",
-        "diagnos_type_text": "Окончательные",
+        "diagnos_type_text": "Абсцесс (Окончательные), Отит наружный (Предварительные)",
         "weight": "4.2000000000",
         "temperature": "38.9000000000",
         "status": "active",
@@ -710,7 +747,7 @@ def test_visits_imported_with_doctor_purpose_and_text(visits) -> None:
 
     assert visits.created == 2 and len(visits.errors) == 2  # нет питомца, нет даты
     assert visits.skipped == 1  # удалённую медкарту не переносим
-    assert first.doctor.last_name == "Петрова" and first.purpose.name == "Хирургия"
+    assert first.doctor.last_name == "Петрова" and first.purpose.name == "Взятие анализа"
     assert first.pet.name == "Барсик" and first.client.last_name == "Пушкин"
     assert str(timezone.localtime(first.date))[:16] == "2026-03-14 10:30"
     assert "<script>" not in first.treatment_html  # текст очищается
@@ -1025,7 +1062,7 @@ def test_medical_card_fields(visits) -> None:
 
     card = Visit.objects.get(treatment_html__contains="Осмотр")
 
-    assert card.purpose.name == "Хирургия" and card.result.name == "Выздоровление"
+    assert card.purpose.name == "Взятие анализа" and card.result.name == "Выздоровление"
     assert card.weight == D("4.200") and card.temperature == D("38.9")
     assert "Повторно через 10 дней" in card.recommendations_html
     assert sorted(d.diagnosis.name for d in card.diagnoses.all()) == ["Абсцесс", "Отит наружный"]
@@ -1097,9 +1134,24 @@ def test_replace_keeps_used_visits(visits) -> None:
 
 
 def test_diagnosis_kind(visits) -> None:
-    """Вид диагноза («Окончательные») переносится — у нас это отдельное поле."""
+    """Вид каждого диагноза берётся из подписи: «Абсцесс (Окончательные)»."""
     from medical.models import Visit, VisitDiagnosis
 
     card = Visit.objects.get(treatment_html__contains="Осмотр")
 
-    assert {d.kind for d in card.diagnoses.all()} == {VisitDiagnosis.Kind.FINAL}
+    kinds = {d.diagnosis.name: d.kind for d in card.diagnoses.all()}
+    assert kinds == {
+        "Абсцесс": VisitDiagnosis.Kind.FINAL,
+        "Отит наружный": VisitDiagnosis.Kind.PRELIMINARY,
+    }
+
+
+def test_visit_time_is_the_edited_one(visits) -> None:
+    """Дата приёма — та, что видит врач (date_edit), а не когда завели запись."""
+    from django.utils import timezone as tz
+
+    from medical.models import Visit
+
+    card = Visit.objects.get(treatment_html__contains="Осмотр")
+
+    assert str(tz.localtime(card.date))[:16] == "2026-03-14 10:30"

@@ -8,6 +8,7 @@
 
 import contextlib
 import html
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -1024,10 +1025,15 @@ def _transfer_doctor() -> User:
     return user
 
 
-def _purpose_for(row: dict[str, Any], default: VisitPurpose) -> VisitPurpose:
-    link = _link("visit_purpose", str(row.get("admission_type") or row.get("type_id") or ""))
-    found = VisitPurpose.objects.filter(pk=link.target_id).first() if link else None
-    return found or default
+def _purpose_for(
+    row: dict[str, Any], titles: dict[str, str], default: VisitPurpose
+) -> VisitPurpose:
+    """Цель обращения: по значению admission_type в разделе «Тип приёма»."""
+    name = titles.get(str(row.get("admission_type") or row.get("type_id") or ""), "")
+    if not name:
+        return default
+    found = _same_name(VisitPurpose.objects.all(), name)
+    return found or VisitPurpose.objects.create(name=name[:100])
 
 
 @transaction.atomic
@@ -1037,9 +1043,10 @@ def import_visit_purposes(rows: list[dict[str, Any]] | None = None) -> StepResul
     Они лежат в общем справочнике ComboManualItem (раздел «Тип приёма»).
     """
     rows = _combo_items() if rows is None else rows
+    rows = [row for row in rows if _manual_name(row) in PURPOSE_MANUAL or not _manual_name(row)]
     result = StepResult("visit_purposes", "Цели обращения", total=len(rows))
     for row in rows:
-        name = _text(row, "title", "value", "name")[:100]
+        name = _plain(_text(row, "title"))[:100]
         if not name or _link("visit_purpose", str(row.get("id") or "")):
             continue
         purpose = _same_name(VisitPurpose.objects.all(), name)
@@ -1050,6 +1057,31 @@ def import_visit_purposes(rows: list[dict[str, Any]] | None = None) -> StepResul
             result.updated += 1
         _remember("visit_purpose", row["id"], purpose.pk)
     return result
+
+
+# Разделы общего справочника VetManager: в медкарте хранится не номер элемента,
+# а его «значение» (value) внутри своего раздела.
+PURPOSE_MANUAL = ("admission_type",)
+RESULT_MANUAL = ("meet_result", "admission_result", "visit_result")
+
+
+def _manual_name(row: dict[str, Any]) -> str:
+    """Имя раздела справочника, которому принадлежит элемент."""
+    nested = row.get("comboManualName")
+    return _text(nested, "name") if isinstance(nested, dict) else ""
+
+
+def _combo_titles(items: list[dict[str, Any]], manuals: tuple[str, ...]) -> dict[str, str]:
+    """«Значение элемента → название» внутри нужного раздела справочника.
+
+    В медкарте admission_type: 3 — это value, а не номер элемента: по номеру
+    подставлялось название из чужого раздела.
+    """
+    return {
+        str(row.get("value")): _plain(_text(row, "title"))
+        for row in items
+        if _manual_name(row) in manuals and row.get("value") not in (None, "")
+    }
 
 
 def _combo_items() -> list[dict[str, Any]]:
@@ -1136,7 +1168,8 @@ def import_visits(
             import_visit_purposes(combo)
             import_diagnoses()
         rows = _medical_rows()
-    titles = {str(row.get("id")): _text(row, "title", "value", "name") for row in combo}
+    purposes = _combo_titles(combo, PURPOSE_MANUAL)
+    results = _combo_titles(combo, RESULT_MANUAL)
     result = StepResult("visits", "Медкарты", total=len(rows))
     default_purpose = (
         _same_name(VisitPurpose.objects.all(), DEFAULT_PURPOSE) or VisitPurpose.objects.first()
@@ -1152,7 +1185,8 @@ def import_visits(
                 result,
                 default_purpose,
                 fallback_doctor,
-                titles,
+                purposes,
+                results,
             )
     return result
 
@@ -1162,7 +1196,8 @@ def _import_visits_batch(
     result: StepResult,
     default_purpose: VisitPurpose,
     fallback_doctor: User | None,
-    titles: dict[str, str],
+    purposes: dict[str, str],
+    results: dict[str, str],
 ) -> User | None:
     """Одна порция медкарт — отдельной транзакцией (см. import_visits)."""
     from medical.models import VisitDiagnosis
@@ -1186,7 +1221,13 @@ def _import_visits_batch(
                 f"Медкарта {external_id}: питомец не перенесён — сначала перенесите питомцев."
             )
             continue
-        when = _moment(row.get("date_create")) or _moment(row.get("admission_date"))
+        # Дата и время приёма в VetManager — это date_edit (её правит врач),
+        # date_create — когда запись завели.
+        when = (
+            _moment(row.get("date_edit"))
+            or _moment(row.get("date_create"))
+            or _moment(row.get("admission_date"))
+        )
         if when is None:
             result.errors.append(f"Медкарта {external_id}: не разобрали дату.")
             continue
@@ -1200,55 +1241,71 @@ def _import_visits_batch(
             client=pet.owner,
             doctor=doctor,
             date=when,
-            purpose=_purpose_for(row, default_purpose),
-            result=_result_for(row, titles),
+            purpose=_purpose_for(row, purposes, default_purpose),
+            result=_result_for(row, results),
             weight=_positive(row.get("weight")),
             temperature=_positive(row.get("temperature")),
             treatment_html=clean(_text(row, "description")),
             recommendations_html=clean(_text(row, "recomendation", "recommendation")),
         )
-        kind = _diagnosis_kind(row)
-        for diagnosis in _diagnoses_of(row):
+        for diagnosis, kind in _diagnoses_of(row):
             VisitDiagnosis.objects.create(visit=visit, diagnosis=diagnosis, kind=kind)
         _remember("visit", external_id, visit.pk)
         result.created += 1
     return fallback_doctor
 
 
-def _diagnosis_kind(row: dict[str, Any]) -> str:
-    """Вид диагноза: в VetManager он подписан текстом — «(Окончательные)»."""
+def _diagnosis_kinds_by_name(row: dict[str, Any]) -> dict[str, str]:
+    """Вид каждого диагноза из подписи VetManager: «Пневмония (Предварительные)»."""
     from medical.models import VisitDiagnosis
 
-    text = simplify(_text(row, "diagnos_type_text"))
-    if "окончат" in text:
-        return VisitDiagnosis.Kind.FINAL
-    return VisitDiagnosis.Kind.PRELIMINARY
+    kinds: dict[str, str] = {}
+    for part in re.findall(r"([^,;(]+)\(([^)]*)\)", _text(row, "diagnos_type_text")):
+        name, kind_text = _plain(part[0]), simplify(part[1])
+        if not name:
+            continue
+        kinds[name.lower()] = (
+            VisitDiagnosis.Kind.FINAL if "окончат" in kind_text else VisitDiagnosis.Kind.PRELIMINARY
+        )
+    return kinds
 
 
-def _diagnoses_of(row: dict[str, Any]) -> list[Any]:
-    """Диагнозы медкарты: номера из справочника VetManager, иначе — текст.
+def _diagnoses_of(row: dict[str, Any]) -> list[tuple[Any, str]]:
+    """Диагнозы медкарты с их видом.
 
-    В поле diagnos лежат номера («176,146»); у старых записей бывает только текст.
+    В VetManager они приходят списком вида [{"id": 134, "type": 2}]: id — номер
+    из справочника диагнозов. У старых записей бывает только текст.
     """
-    from medical.models import Diagnosis
+    from medical.models import Diagnosis, VisitDiagnosis
 
-    found = []
+    kinds = _diagnosis_kinds_by_name(row)
+    default_kind = VisitDiagnosis.Kind.PRELIMINARY
+    found: list[tuple[Any, str]] = []
     raw = _text(row, "diagnos")
-    for part in raw.replace(";", ",").split(","):
-        number = part.strip()
-        if not number.isdigit() or number == "0":
+    numbers: list[str] = []
+    if raw.startswith("["):
+        with contextlib.suppress(ValueError):
+            numbers = [
+                str(item.get("id"))
+                for item in json.loads(raw)
+                if isinstance(item, dict) and item.get("id")
+            ]
+    elif raw.replace(",", "").replace(";", "").strip().isdigit():
+        numbers = [part.strip() for part in raw.replace(";", ",").split(",") if part.strip()]
+    for number in numbers:
+        if number == "0":
             continue
         link = _link("diagnosis", number)
         diagnosis = Diagnosis.objects.filter(pk=link.target_id).first() if link else None
         if diagnosis is not None:
-            found.append(diagnosis)
+            found.append((diagnosis, kinds.get(diagnosis.name.lower(), default_kind)))
     if found:
         return found
-    text = _text(row, "diagnos_text", "diagnos_type_text")
+    text = _text(row, "diagnos_text")
     if not text or text.strip() in ("0", "-"):
         return []
     names = [_plain(part)[:150] for part in text.replace(";", ",").split(",") if _plain(part)]
-    return [_diagnosis_for(name) for name in names[:5]]
+    return [(_diagnosis_for(name), kinds.get(name.lower(), default_kind)) for name in names[:5]]
 
 
 def _part_of_visit(model: Any, field_name: str) -> bool:
