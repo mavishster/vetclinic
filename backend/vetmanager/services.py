@@ -1014,18 +1014,21 @@ def _transfer_doctor() -> User:
 
 
 def _purpose_for(row: dict[str, Any], default: VisitPurpose) -> VisitPurpose:
-    link = _link("visit_purpose", str(row.get("type_id") or ""))
+    link = _link("visit_purpose", str(row.get("admission_type") or row.get("type_id") or ""))
     found = VisitPurpose.objects.filter(pk=link.target_id).first() if link else None
     return found or default
 
 
 @transaction.atomic
 def import_visit_purposes(rows: list[dict[str, Any]] | None = None) -> StepResult:
-    """Типы приёмов VetManager → цели обращения (для медкарт)."""
-    rows = client.fetch("AdmissionType") if rows is None else rows
+    """Типы приёмов VetManager → цели обращения.
+
+    Они лежат в общем справочнике ComboManualItem (раздел «Тип приёма»).
+    """
+    rows = _combo_items() if rows is None else rows
     result = StepResult("visit_purposes", "Цели обращения", total=len(rows))
     for row in rows:
-        name = _text(row, "title", "name")[:100]
+        name = _text(row, "title", "value", "name")[:100]
         if not name or _link("visit_purpose", str(row.get("id") or "")):
             continue
         purpose = _same_name(VisitPurpose.objects.all(), name)
@@ -1038,16 +1041,56 @@ def import_visit_purposes(rows: list[dict[str, Any]] | None = None) -> StepResul
     return result
 
 
-def import_visits(rows: list[dict[str, Any]] | None = None) -> StepResult:
-    """Приёмы VetManager → записи медкарты.
+def _combo_items() -> list[dict[str, Any]]:
+    """Элементы справочников VetManager (типы приёмов, результаты): один общий список."""
+    try:
+        return client.fetch("ComboManualItem")
+    except VetManagerError:
+        return []
 
-    Переносятся дата, питомец и владелец, врач, цель обращения и описание приёма.
+
+def _medical_rows() -> list[dict[str, Any]]:
+    """Медкарты VetManager. Если раздела нет (старая версия) — приёмы."""
+    try:
+        return client.fetch("MedicalCards")
+    except VetManagerError:
+        return client.fetch("Admission")
+
+
+def _diagnosis_for(name: str) -> Any:
+    """Диагноз из справочника: чего нет — заводим."""
+    from medical.models import Diagnosis
+
+    return _same_name(Diagnosis.objects.all(), name) or Diagnosis.objects.create(name=name[:150])
+
+
+def _result_for(row: dict[str, Any], titles: dict[str, str]) -> Any:
+    """Результат посещения: «выздоровление», «улучшение» — тоже из справочника VetManager."""
+    from medical.models import VisitResult
+
+    name = titles.get(str(row.get("meet_result_id") or ""), "")
+    if not name:
+        return None
+    return _same_name(VisitResult.objects.all(), name) or VisitResult.objects.create(
+        name=name[:100]
+    )
+
+
+def import_visits(
+    rows: list[dict[str, Any]] | None = None, combo: list[dict[str, Any]] | None = None
+) -> StepResult:
+    """Медкарты VetManager → записи медкарты.
+
+    Переносятся дата, питомец и владелец, врач, цель обращения, описание приёма,
+    рекомендации, вес, температура, результат посещения и диагноз.
     Питомец должен быть перенесён заранее — без него запись не к кому привязать.
     """
+    combo = _combo_items() if combo is None else combo
     if rows is None:
         with contextlib.suppress(VetManagerError):
-            import_visit_purposes()
-        rows = client.fetch("Admission")
+            import_visit_purposes(combo)
+        rows = _medical_rows()
+    titles = {str(row.get("id")): _text(row, "title", "value", "name") for row in combo}
     result = StepResult("visits", "Медкарты", total=len(rows))
     default_purpose = (
         _same_name(VisitPurpose.objects.all(), DEFAULT_PURPOSE) or VisitPurpose.objects.first()
@@ -1055,7 +1098,7 @@ def import_visits(rows: list[dict[str, Any]] | None = None) -> StepResult:
     if default_purpose is None:
         raise VetManagerError("Нет ни одной цели обращения — заполните справочник.")
     fallback_doctor: User | None = None
-    # Порциями: приёмов тысячи, и обрыв посреди переноса не должен отменять уже сделанное.
+    # Порциями: медкарт тысячи, и обрыв посреди переноса не должен отменять уже сделанное.
     for batch_start in range(0, len(rows), VISITS_BATCH):
         with transaction.atomic():
             fallback_doctor = _import_visits_batch(
@@ -1063,6 +1106,7 @@ def import_visits(rows: list[dict[str, Any]] | None = None) -> StepResult:
                 result,
                 default_purpose,
                 fallback_doctor,
+                titles,
             )
     return result
 
@@ -1072,12 +1116,18 @@ def _import_visits_batch(
     result: StepResult,
     default_purpose: VisitPurpose,
     fallback_doctor: User | None,
+    titles: dict[str, str],
 ) -> User | None:
-    """Одна порция приёмов — отдельной транзакцией (см. import_visits)."""
+    """Одна порция медкарт — отдельной транзакцией (см. import_visits)."""
+    from medical.models import VisitDiagnosis
+
     for row in rows:
         external_id = str(row.get("id") or "")
         if _link("visit", external_id):
             result.skipped += 1
+            continue
+        if str(row.get("status", "active")).lower() in ("deleted", "delete"):
+            result.skipped += 1  # медкарту удалили в VetManager
             continue
         pet_link = _link("pet", str(row.get("patient_id") or ""))
         pet = (
@@ -1087,16 +1137,14 @@ def _import_visits_batch(
         )
         if pet is None:
             result.errors.append(
-                f"Приём {external_id}: питомец не перенесён — сначала перенесите питомцев."
+                f"Медкарта {external_id}: питомец не перенесён — сначала перенесите питомцев."
             )
             continue
-        when = _moment(row.get("admission_date")) or _moment(row.get("create_date"))
+        when = _moment(row.get("date_create")) or _moment(row.get("admission_date"))
         if when is None:
-            result.errors.append(
-                f"Приём {external_id}: не разобрали дату «{row.get('admission_date')}»."
-            )
+            result.errors.append(f"Медкарта {external_id}: не разобрали дату.")
             continue
-        doctor_link = _link("doctor", str(row.get("user_id") or ""))
+        doctor_link = _link("doctor", str(row.get("doctor_id") or row.get("user_id") or ""))
         doctor = User.objects.filter(pk=doctor_link.target_id).first() if doctor_link else None
         if doctor is None:
             fallback_doctor = fallback_doctor or _transfer_doctor()
@@ -1107,11 +1155,25 @@ def _import_visits_batch(
             doctor=doctor,
             date=when,
             purpose=_purpose_for(row, default_purpose),
+            result=_result_for(row, titles),
+            weight=_positive(row.get("weight")),
+            temperature=_positive(row.get("temperature")),
             treatment_html=clean(_text(row, "description")),
+            recommendations_html=clean(_text(row, "recomendation", "recommendation")),
         )
+        for name in _diagnosis_names(row):
+            VisitDiagnosis.objects.create(visit=visit, diagnosis=_diagnosis_for(name))
         _remember("visit", external_id, visit.pk)
         result.created += 1
     return fallback_doctor
+
+
+def _diagnosis_names(row: dict[str, Any]) -> list[str]:
+    """Диагнозы медкарты: в VetManager это текст, иногда несколько через запятую."""
+    text = _text(row, "diagnos_text", "diagnos_type_text")
+    if not text or text.strip() in ("0", "-"):
+        return []
+    return [part.strip()[:150] for part in text.replace(";", ",").split(",") if part.strip()][:5]
 
 
 def run_step(step: str) -> StepResult:

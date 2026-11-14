@@ -587,41 +587,59 @@ VM_USERS = [
     },
     {"id": 5, "last_name": "Кассирова", "first_name": "Ольга", "is_active": 1},  # приёмов нет
 ]
-ADMISSION_TYPES = [{"id": 1, "title": "Первичный"}, {"id": 2, "title": "Хирургия"}]
-ADMISSIONS = [
+# Типы приёмов и результаты лежат в общем справочнике ComboManualItem.
+COMBO_ITEMS = [
+    {"id": 1, "title": "Первичный"},
+    {"id": 2, "title": "Хирургия"},
+    {"id": 9, "title": "Выздоровление"},
+]
+# Медкарты боевого аккаунта: описание, рекомендации, диагноз, вес и температура.
+MEDICAL_CARDS = [
     {
         "id": 700,
         "patient_id": 200,
-        "client_id": 100,
-        "user_id": 3,
-        "type_id": 2,
-        "admission_date": "2026-03-14 10:30:00",
+        "doctor_id": 3,
+        "admission_type": 2,
+        "meet_result_id": 9,
+        "date_create": "2026-03-14 10:30:00",
         "description": "<p>Осмотр, t 38,9</p><script>alert(1)</script>",
+        "recomendation": "<p>Повторно через 10 дней</p>",
+        "diagnos_text": "Наружный отит, Отёк",
+        "weight": "4.2000000000",
+        "temperature": "38.9000000000",
+        "status": "active",
     },
     {
         "id": 701,
         "patient_id": 200,
-        "client_id": 100,
-        "user_id": 99,  # такого врача нет даже в выгрузке VetManager
-        "type_id": 1,
-        "admission_date": "2026-04-02 09:00:00",
+        "doctor_id": 99,  # такого врача нет даже в выгрузке
+        "admission_type": 1,
+        "date_create": "2026-04-02 09:00:00",
         "description": "Повторный осмотр",
+        "weight": "0.0000000000",
+        "diagnos_text": "0",
     },
     {
         "id": 702,
         "patient_id": 999,
-        "client_id": 100,
-        "user_id": 3,
-        "admission_date": "2026-04-03 09:00:00",
+        "doctor_id": 3,
+        "date_create": "2026-04-03 09:00:00",
         "description": "Питомца не переносили",
     },
     {
         "id": 703,
         "patient_id": 200,
-        "client_id": 100,
-        "user_id": 3,
-        "admission_date": "0000-00-00 00:00:00",
+        "doctor_id": 3,
+        "date_create": "0000-00-00 00:00:00",
         "description": "Без даты",
+    },
+    {
+        "id": 704,
+        "patient_id": 200,
+        "doctor_id": 3,
+        "date_create": "2026-05-01 10:00:00",
+        "description": "Удалённая медкарта",
+        "status": "deleted",
     },
 ]
 
@@ -632,8 +650,8 @@ def visits(people, django_user_model):
         username="petrova", last_name="Петрова", first_name="Анна"
     )
     services.import_doctors(VM_USERS, only_with_visits=False)
-    services.import_visit_purposes(ADMISSION_TYPES)
-    return services.import_visits(ADMISSIONS)
+    services.import_visit_purposes(COMBO_ITEMS)
+    return services.import_visits(MEDICAL_CARDS, COMBO_ITEMS)
 
 
 def test_doctors_link_known_and_create_missing(db, django_user_model) -> None:
@@ -680,6 +698,7 @@ def test_visits_imported_with_doctor_purpose_and_text(visits) -> None:
     first = Visit.objects.get(treatment_html__contains="Осмотр")
 
     assert visits.created == 2 and len(visits.errors) == 2  # нет питомца, нет даты
+    assert visits.skipped == 1  # удалённую медкарту не переносим
     assert first.doctor.last_name == "Петрова" and first.purpose.name == "Хирургия"
     assert first.pet.name == "Барсик" and first.client.last_name == "Пушкин"
     assert str(timezone.localtime(first.date))[:16] == "2026-03-14 10:30"
@@ -698,9 +717,9 @@ def test_unknown_doctor_goes_to_transfer_account(visits) -> None:
 def test_visits_second_run_changes_nothing(visits) -> None:
     from medical.models import Visit
 
-    again = services.import_visits(ADMISSIONS)
+    again = services.import_visits(MEDICAL_CARDS, COMBO_ITEMS)
 
-    assert again.created == 0 and again.skipped == 2 and Visit.objects.count() == 2
+    assert again.created == 0 and again.skipped == 3 and Visit.objects.count() == 2
 
 
 # --- Повторный перенос и устойчивость к обрывам ---------------------------------------
@@ -804,7 +823,7 @@ def test_visits_are_imported_in_batches(visits, monkeypatch) -> None:
     Visit.objects.all().delete()
     services.Imported.objects.filter(kind="visit").delete()
     broken = [
-        *ADMISSIONS[:1],
+        *MEDICAL_CARDS[:1],
         {
             "id": 704,
             "patient_id": 200,
@@ -814,7 +833,7 @@ def test_visits_are_imported_in_batches(visits, monkeypatch) -> None:
         },
     ]
 
-    services.import_visits(broken)
+    services.import_visits(broken, COMBO_ITEMS)
 
     assert Visit.objects.count() == 2
 
@@ -987,3 +1006,23 @@ def test_inactive_pet_keeps_status(people) -> None:
     assert Pet.objects.get(name="Чомар").status == Pet.Status.INACTIVE
     assert Pet.objects.get(name="Барсик").status == Pet.Status.ACTIVE
     assert Pet.objects.get(name="Рекс").status == Pet.Status.DEAD
+
+
+def test_medical_card_fields(visits) -> None:
+    """Медкарта в VetManager — это MedicalCards: описание, рекомендации, диагноз, вес."""
+    from medical.models import Visit
+
+    card = Visit.objects.get(treatment_html__contains="Осмотр")
+
+    assert card.purpose.name == "Хирургия" and card.result.name == "Выздоровление"
+    assert card.weight == D("4.200") and card.temperature == D("38.9")
+    assert "Повторно через 10 дней" in card.recommendations_html
+    assert sorted(d.diagnosis.name for d in card.diagnoses.all()) == ["Наружный отит", "Отёк"]
+    assert "<script>" not in card.treatment_html
+
+
+def test_empty_diagnosis_is_not_created(visits) -> None:
+    """«0» в поле диагноза — это пусто, а не диагноз с таким названием."""
+    from medical.models import Visit
+
+    assert Visit.objects.get(treatment_html__contains="Повторный").diagnoses.count() == 0
