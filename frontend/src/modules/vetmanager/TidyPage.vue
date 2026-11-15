@@ -19,6 +19,9 @@
       <q-card-section class="row items-center q-py-sm q-gutter-sm">
         <q-badge :color="row.kind === 'duplicates' ? 'orange' : 'primary'" outline
           :label="row.kind === 'duplicates' ? 'дубли' : 'фасовки'" />
+        <q-badge v-if="row.documents" color="grey-7" outline :label="`в счетах: ${row.documents}`">
+          <q-tooltip>Сколько раз позиции встречаются в счетах VetManager</q-tooltip>
+        </q-badge>
         <q-input v-model="row.name" dense outlined class="col" label="Название после объединения" />
         <q-btn color="primary" unelevated icon="merge" label="Объединить" :loading="merging === row.base_name"
           :disable="!ready(row)" @click="merge(row)" />
@@ -26,7 +29,7 @@
       <q-separator />
       <q-markup-table flat dense>
         <thead>
-          <tr><th class="text-left">Позиция в прайсе</th><th class="text-left">Единица</th><th>Сколько в ней</th><th class="text-right">Цена</th><th /></tr>
+          <tr><th class="text-left">Позиция в прайсе</th><th class="text-left">Единица</th><th>Сколько в ней</th><th class="text-right">Цена</th><th class="text-right">В счетах</th><th /></tr>
         </thead>
         <tbody>
           <tr v-for="part in row.items" :key="part.id" :class="part.used ? 'text-grey-6' : ''">
@@ -40,6 +43,7 @@
                 :suffix="row.items[0]?.unit" :placeholder="part.quantity === null ? 'укажите' : ''" />
             </td>
             <td class="text-right">{{ part.price ? money(part.price) : '' }}</td>
+            <td class="text-right text-grey-7">{{ part.documents || '' }}</td>
             <td class="text-right" style="width: 170px">
               <span v-if="part.used" class="text-caption text-negative">уже используется</span>
             </td>

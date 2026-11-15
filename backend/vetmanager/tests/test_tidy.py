@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from catalog import services as catalog
 from catalog.models import Item, ItemGroup, Kind, Unit
 from vetmanager import tidy
+from vetmanager.models import Imported
 
 D = Decimal
 
@@ -135,3 +136,39 @@ def test_weight_in_name_is_not_a_pack(db) -> None:
 
     assert found["name"] == "Корм Hills 2 кг" and found["kind"] == "duplicates"
     assert [row["quantity"] for row in found["items"]] == [None, None]
+
+
+def test_documents_count_is_shown_and_sorts(db, monkeypatch) -> None:
+    """Сверху — то, что чаще встречается в счетах: с этого и начинают разбор."""
+    rare = goods("Редкий корм (1 саше)", "саше", "60")
+    rare_pack = goods("Редкий корм (уп 30 саше)", "упак.", "1500")
+    often = goods("Ходовой корм (1 саше)", "саше", "70")
+    often_pack = goods("Ходовой корм (уп 30 саше)", "упак.", "1800")
+    for item, external_id in ((rare, "1"), (rare_pack, "2"), (often, "3"), (often_pack, "4")):
+        Imported.objects.create(kind="item", external_id=external_id, target_id=item.pk)
+    monkeypatch.setattr(
+        tidy.client,
+        "fetch",
+        lambda model, *a, **kw: (
+            [{"good_id": 3}] * 40 + [{"good_id": 4}] * 10 + [{"good_id": 1}] * 2
+        ),
+    )
+
+    found = tidy.suggestions()
+
+    assert [row["name"] for row in found[:2]] == ["Ходовой корм", "Редкий корм"]
+    assert found[0]["documents"] == 50 and found[1]["documents"] == 2
+    assert [part["documents"] for part in found[0]["items"]] == [40, 10]
+
+
+def test_documents_are_optional(aktiflora, monkeypatch) -> None:
+    """Связи с VetManager нет — экран всё равно работает, просто без чисел."""
+    monkeypatch.setattr(
+        tidy.client,
+        "fetch",
+        lambda *a, **kw: (_ for _ in ()).throw(tidy.client.VetManagerError("нет связи")),
+    )
+
+    found = tidy.suggestions()
+
+    assert found and found[0]["documents"] == 0

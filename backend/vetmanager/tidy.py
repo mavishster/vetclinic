@@ -8,6 +8,7 @@
 """
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -16,6 +17,7 @@ from django.db import transaction
 
 from catalog import services as catalog
 from catalog.models import Item, ItemUnit, Kind, Unit
+from vetmanager import client
 
 # Хвост названия с фасовкой: «(уп 30 саше)», «уп. 8 табл.», «№30», «x10», «10 табл.»
 _PACK_WORDS = r"(?:уп|упак|упаковка|пач|пачка|блистер|бл|короб|кор|набор|№|n|x|х)"
@@ -115,11 +117,34 @@ def _dose(name: str) -> str:
     return " ".join(part.lower().replace(" ", "") for part in found)
 
 
-def suggestions() -> list[dict[str, Any]]:
+def documents_by_item() -> dict[str, int]:
+    """Сколько раз каждая наша позиция встречается в счетах VetManager.
+
+    Нужно, чтобы разбирать прайс прицельно: сначала то, что реально продают.
+    Связь нет — не беда, просто не покажем число.
+    """
+    from vetmanager.models import Imported
+
+    try:
+        rows = client.fetch("invoiceDocument")
+    except client.VetManagerError:
+        return {}
+    counts: Counter[str] = Counter(str(row.get("good_id") or "") for row in rows)
+    ours = {link.external_id: str(link.target_id) for link in Imported.objects.filter(kind="item")}
+    found: dict[str, int] = {}
+    for external_id, count in counts.items():
+        item_id = ours.get(external_id)
+        if item_id:
+            found[item_id] = found.get(item_id, 0) + count
+    return found
+
+
+def suggestions(with_documents: bool = True) -> list[dict[str, Any]]:
     """Что можно привести в порядок: дубли и фасовки одной позиции.
 
     Возвращает предложения — применять их или нет, решает пользователь.
     """
+    documents = documents_by_item() if with_documents else {}
     items = list(
         Item.objects.filter(kind=Kind.GOODS, is_active=True)
         .select_related("base_unit", "group")
@@ -157,12 +182,16 @@ def suggestions() -> list[dict[str, Any]]:
                         "inner_unit": part.unit_name,
                         "price": str(part.price) if part.price is not None else None,
                         "used": bool(catalog.item_usage(part.item)),
+                        "documents": documents.get(str(part.item.pk)),
                     }
                     for part in parts
                 ],
             }
         )
-    result.sort(key=lambda row: row["name"])
+    # Сначала то, что чаще встречается в счетах: с этого и стоит начинать разбор.
+    for row in result:
+        row["documents"] = sum(part["documents"] or 0 for part in row["items"])
+    result.sort(key=lambda row: (-row["documents"], row["name"]))
     return result
 
 
