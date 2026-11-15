@@ -251,3 +251,127 @@ def merge(name: str, parts: list[dict[str, Any]]) -> Item:
     for item, _, _ in chosen[1:]:
         catalog.delete_item(item)  # не использованы — проверено выше
     return saved
+
+
+# --- Фасовки препаратов ----------------------------------------------------------------
+
+# Единицы, в которых товар обычно приходит на склад, но не продаётся поштучно.
+PACK_UNITS = {"упак.", "уп.", "коробка", "набор", "блистер", "фл.", "флакон", "туба", "саше"}
+# Самое мелкое, чем отпускают: в этом и стоит вести остаток.
+PIECE_UNITS = {"таб.", "капс.", "мл", "г", "мг", "доза", "амп.", "шт.", "саше"}
+# Сколько мелких единиц в упаковке — из названия: «уп. 8 табл.», «фл 10мл», «100 мл».
+_INSIDE = re.compile(
+    r"(\d+[.,]?\d*)\s*(таб\w*|табл\w*|капс\w*|амп\w*|саше|доз\w*|мл|мг|г|шт)\.?\b", re.IGNORECASE
+)
+_INSIDE_UNIT = {
+    "таб": "таб.",
+    "табл": "таб.",
+    "таблет": "таб.",
+    "капс": "капс.",
+    "амп": "амп.",
+    "саше": "саше",
+    "доз": "доза",
+    "мл": "мл",
+    "мг": "мг",
+    "г": "г",
+    "шт": "шт.",
+}
+
+
+def _inside_pack(name: str) -> tuple[Decimal | None, str]:
+    """Что и сколько внутри упаковки по названию: «Ношпа уп. 8 табл.» → 8, «таб.»."""
+    best: tuple[Decimal | None, str] = (None, "")
+    for amount, word in _INSIDE.findall(name):
+        key = word.lower().rstrip(".")
+        unit = _INSIDE_UNIT.get(key[:5]) or _INSIDE_UNIT.get(key[:3]) or _INSIDE_UNIT.get(key)
+        if unit:
+            best = (Decimal(amount.replace(",", ".")), unit)
+    return best
+
+
+def packaging_rows(with_documents: bool = True) -> list[dict[str, Any]]:
+    """Препараты, у которых остаток ведётся упаковками, а отпускают поштучно.
+
+    Такие позиции нужно поправить до переноса счетов: иначе продажа 2 мл спишет
+    целый флакон. Для каждой подсказываем, сколько мелких единиц внутри.
+    """
+    documents = documents_by_item() if with_documents else {}
+    rows = []
+    for item in (
+        # Складской учёт не проверяем: при переносе отметка ставится по карточке
+        # VetManager и у части препаратов не стоит, хотя остаток по ним ведут.
+        Item.objects.filter(kind=Kind.GOODS, is_active=True)
+        .select_related("base_unit")
+        .prefetch_related("units__unit")
+    ):
+        base = item.base_unit.name
+        if base not in PACK_UNITS:
+            continue  # остаток уже ведётся в мелкой единице
+        units = {unit.unit.name for unit in item.units.all()}
+        if units & (PIECE_UNITS - {base}):
+            continue  # поштучная единица уже заведена внутри позиции
+        quantity, inside = _inside_pack(item.name)
+        if inside == base:
+            quantity, inside = None, ""
+        rows.append(
+            {
+                "id": str(item.pk),
+                "name": item.name,
+                "base_unit": base,
+                "quantity": str(quantity) if quantity is not None else None,
+                "inside": inside,
+                "price": str(_price(item) or ""),
+                "documents": documents.get(str(item.pk), 0),
+                "used": bool(catalog.item_usage(item)),
+            }
+        )
+    rows.sort(key=lambda row: (-row["documents"], row["name"]))
+    return rows
+
+
+@transaction.atomic
+def set_packaging(item_id: str, quantity: Decimal, inside: str, price: Decimal | None) -> Item:
+    """Перевести позицию на поштучный учёт: остаток в мелкой единице, упаковка — закупка.
+
+    Было: учёт в «упак.», продажа упаковкой. Стало: учёт в «таб.», упаковка = N таб.
+    и помечена как единица закупки — приход по-прежнему оформляют упаковками.
+    """
+    item = Item.objects.filter(pk=item_id).select_related("base_unit").first()
+    if item is None:
+        raise catalog.CatalogError("Позиция не найдена — обновите страницу.")
+    if quantity <= 1:
+        raise catalog.CatalogError(
+            f"«{item.name}»: укажите, сколько {inside or 'единиц'} в упаковке."
+        )
+    piece = _find_unit(inside)
+    if piece is None:
+        raise catalog.CatalogError(f"Нет единицы «{inside}» — заведите её в справочнике единиц.")
+    if catalog.item_usage(item):
+        raise catalog.CatalogError(
+            f"«{item.name}» уже используется: единицу учёта можно менять, пока по позиции "
+            "не было приходов и продаж."
+        )
+    pack = item.base_unit
+    source = item.units.filter(unit=pack).first() or item.units.first()
+    units: list[catalog.UnitData] = [
+        {
+            "unit": piece.pk,
+            "ratio": Decimal("1"),
+            "pricing": ItemUnit.Pricing.FIXED,
+            "price": price,
+            "for_sale": True,
+            "for_purchase": False,
+        },
+        {
+            "unit": pack.pk,
+            "ratio": quantity,
+            "pricing": source.pricing if source else ItemUnit.Pricing.FIXED,
+            "price": source.price if source else None,
+            "markup_percent": source.markup_percent if source else None,
+            "barcode": source.barcode if source else "",
+            "for_sale": True,
+            "for_purchase": True,  # приход оформляют упаковками
+        },
+    ]
+    item.base_unit = piece
+    return catalog.save_item(item, units)

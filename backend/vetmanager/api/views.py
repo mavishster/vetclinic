@@ -1,6 +1,7 @@
 """Перенос из VetManager: проверка связи, что отдаёт API, запуск шагов."""
 
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -86,6 +87,33 @@ class TidyView(_ImportView):
         except tidy.catalog.CatalogError as error:
             raise ValidationError({"non_field_errors": [str(error)]}) from error
         return Response({"id": str(item.pk), "name": item.name})
+
+
+class PackagingView(_ImportView):
+    """Фасовки препаратов: остаток упаковками, а отпускают поштучно.
+
+    GET — что нужно поправить до переноса счетов.
+    POST {"item", "quantity", "inside", "price"} — перевести позицию на поштучный учёт.
+    """
+
+    def get(self, request: Request) -> Response:
+        return Response(tidy.packaging_rows())
+
+    def post(self, request: Request) -> Response:
+        data = request.data
+        try:
+            price = data.get("price")
+            item = tidy.set_packaging(
+                str(data.get("item") or ""),
+                Decimal(str(data.get("quantity") or "0")),
+                str(data.get("inside") or ""),
+                Decimal(str(price)) if price not in (None, "") else None,
+            )
+        except (InvalidOperation, ValueError) as error:
+            raise ValidationError({"quantity": ["Укажите количество числом."]}) from error
+        except tidy.catalog.CatalogError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+        return Response({"id": str(item.pk), "name": item.name, "base_unit": item.base_unit.name})
 
 
 class RunStepView(_ImportView):

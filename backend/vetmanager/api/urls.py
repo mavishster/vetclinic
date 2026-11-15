@@ -8,5 +8,6 @@ urlpatterns = [
     path("unit-plan/", views.UnitPlanView.as_view(), name="vetmanager-unit-plan"),
     path("doctor-plan/", views.DoctorPlanView.as_view(), name="vetmanager-doctor-plan"),
     path("tidy/", views.TidyView.as_view(), name="vetmanager-tidy"),
+    path("packaging/", views.PackagingView.as_view(), name="vetmanager-packaging"),
     path("run/", views.RunStepView.as_view(), name="vetmanager-run"),
 ]

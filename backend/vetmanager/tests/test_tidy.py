@@ -172,3 +172,81 @@ def test_documents_are_optional(aktiflora, monkeypatch) -> None:
     found = tidy.suggestions()
 
     assert found and found[0]["documents"] == 0
+
+
+# --- Фасовки препаратов: приход упаковками, отпуск поштучно ----------------------------
+
+
+def test_packaging_finds_pack_only_drugs(db) -> None:
+    """Остаток в упаковках, а отпускают поштучно — такую позицию надо поправить."""
+    goods("Ношпа уп. 8 табл.", "упак.", "160")
+    goods("Цефтриаксон фл. 1 г", "фл.", "120")
+    goods("Корм Hills 2 кг", "шт.", "3000")  # учёт в штуках — всё в порядке
+
+    rows = {row["name"]: row for row in tidy.packaging_rows(with_documents=False)}
+
+    assert set(rows) == {"Ношпа уп. 8 табл.", "Цефтриаксон фл. 1 г"}
+    assert (rows["Ношпа уп. 8 табл."]["quantity"], rows["Ношпа уп. 8 табл."]["inside"]) == (
+        "8",
+        "таб.",
+    )
+
+
+def test_packaging_switches_to_pieces(db) -> None:
+    """После правки остаток ведётся в таблетках, упаковка — единица закупки."""
+    item = goods("Ношпа уп. 8 табл.", "упак.", "160")
+
+    tidy.set_packaging(str(item.pk), D("8"), "таб.", D("25"))
+
+    item.refresh_from_db()
+    units = {u.unit.name: (u.ratio, u.price, u.for_purchase) for u in item.units.all()}
+    assert item.base_unit.name == "таб."
+    assert units["таб."] == (D("1.000000"), D("25.00"), False)
+    assert units["упак."] == (D("8.000000"), D("160.00"), True)  # приход упаковками
+
+
+def test_packaging_skips_items_with_piece_unit(db) -> None:
+    """Если поштучная единица уже заведена внутри позиции, трогать нечего."""
+    unit = Unit.objects.get(name="мл")
+    pack = Unit.objects.get(name="фл.")
+    catalog.save_item(
+        Item(
+            kind=Kind.GOODS,
+            name="Веткокцин фл. 100 мл",
+            group=ItemGroup.objects.filter(kind=Kind.GOODS).first(),
+            base_unit=unit,
+        ),
+        [
+            {
+                "unit": unit.pk,
+                "ratio": D("1"),
+                "pricing": "fixed",
+                "price": D("100"),
+                "for_sale": True,
+            },
+            {
+                "unit": pack.pk,
+                "ratio": D("100"),
+                "pricing": "fixed",
+                "price": D("1500"),
+                "for_sale": True,
+            },
+        ],
+    )
+
+    assert tidy.packaging_rows(with_documents=False) == []
+
+
+def test_packaging_refuses_used_item(db) -> None:
+    """Позицию с приходами и продажами не трогаем — единицу учёта менять поздно."""
+    from billing import services as billing
+    from billing.models import Invoice
+    from clients import services as clients
+    from clients.models import Client
+
+    item = goods("Ношпа уп. 8 табл.", "упак.", "160")
+    owner = clients.save_client(Client(last_name="Петров"))
+    billing.save_invoice(Invoice(client=owner), [{"item_unit": item.units.get()}])
+
+    with pytest.raises(catalog.CatalogError, match="уже используется"):
+        tidy.set_packaging(str(item.pk), D("8"), "таб.", D("25"))
