@@ -19,7 +19,7 @@ from billing.models import Invoice, InvoiceLine
 from clients import services as clients
 from core import services as core
 from core.api import reports
-from core.api.permissions import can_view_cost, require_special
+from core.api.permissions import ModelPermissions, can_view_cost, require_special, requires
 from core.excel import xlsx_response
 from core.models import DocumentError, PrintTemplate
 from staff import services as staff
@@ -344,7 +344,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
 class PerformersReport(APIView):
     """Выручка по исполнителям: ?from=&to= (по умолчанию — текущий месяц)."""
 
-    queryset = Invoice.objects.none()  # права — как на счета
+    queryset = Invoice.objects.none()
+    # Право раздела «Выручка» — вместо просмотра счетов: руководитель может открыть
+    # выручку тому, кому счета не нужны, и наоборот.
+    permission_classes = [requires("core.view_revenueaccess")]
 
     def get_queryset(self) -> QuerySet[Invoice]:
         return Invoice.objects.none()
@@ -372,7 +375,8 @@ class PerformersReport(APIView):
 
 
 class _InvoiceReport(APIView):
-    queryset = Invoice.objects.none()  # права — как на просмотр счетов
+    queryset = Invoice.objects.none()  # права — просмотр счетов и раздел «Отчёты»
+    permission_classes = [ModelPermissions, requires("core.view_reportsaccess")]
 
     def get_queryset(self) -> QuerySet[Invoice]:
         return Invoice.objects.none()

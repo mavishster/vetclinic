@@ -630,3 +630,47 @@ class Counterparty(Directory):
         errors = counterparty_errors(self)
         if errors:
             raise ValidationError(errors)
+
+
+# --- Разделы доступа без собственных данных ---------------------------------------
+# Это не таблицы: «managed = False». Модель нужна только для того, чтобы в «Ролях и правах»
+# появилась строка раздела с одной галочкой «Просмотр» (Django создаёт для неё право view_*).
+
+
+class ReportsAccess(models.Model):
+    """Раздел «Отчёты»: страница отчётов (продажи, деньги, должники, товар, склады)."""
+
+    class Meta:
+        managed = False
+        verbose_name = "отчёты"
+        verbose_name_plural = "Отчёты"
+        default_permissions = ("view",)
+
+    def __str__(self) -> str:
+        return str(self._meta.verbose_name_plural)
+
+
+class RevenueAccess(models.Model):
+    """Раздел «Выручка»: выручка по исполнителям (врачам и другим сотрудникам)."""
+
+    class Meta:
+        managed = False
+        verbose_name = "выручка по исполнителям"
+        verbose_name_plural = "Выручка по исполнителям"
+        default_permissions = ("view",)
+
+    def __str__(self) -> str:
+        return str(self._meta.verbose_name_plural)
+
+
+class PreventionReportAccess(models.Model):
+    """Раздел «Профилактика»: отчёт по вакцинациям и обработкам (кому пора повторить)."""
+
+    class Meta:
+        managed = False
+        verbose_name = "отчёт по профилактике"
+        verbose_name_plural = "Профилактика (отчёт)"
+        default_permissions = ("view",)
+
+    def __str__(self) -> str:
+        return str(self._meta.verbose_name_plural)

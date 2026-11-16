@@ -131,6 +131,7 @@ def test_report_api_excel_and_cost_hidden(data) -> None:
     admin.force_authenticate(get_user_model().objects.create_superuser(username="a", password="x"))
     role = Group.objects.create(name="Регистратор")
     core.set_entity_permissions(role, "billing.invoice", {"view"})
+    core.set_entity_permissions(role, "core.reportsaccess", {"view"})
     viewer_user = get_user_model().objects.create_user(username="v", password="x")
     viewer_user.groups.add(role)
     viewer = APIClient()

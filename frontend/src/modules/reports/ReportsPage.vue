@@ -145,7 +145,7 @@ const ALL_TABS = [
       { name: 'bar', label: '', field: 'positions' },
     ],
   },
-  { name: 'performers', label: 'Исполнители', icon: 'badge', perm: 'billing.view_invoice', period: false, empty: '', columns: () => [] },
+  { name: 'performers', label: 'Исполнители', icon: 'badge', perm: 'core.view_revenueaccess', period: false, empty: '', columns: () => [] },
 ]
 const tabs = ALL_TABS.filter((t) => can(t.perm))
 const tab = ref(tabs[0]?.name)

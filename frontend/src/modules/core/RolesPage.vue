@@ -57,7 +57,7 @@
                 </tr>
               </thead>
               <tbody>
-                <template v-for="module in matrix.modules" :key="module.code">
+                <template v-for="module in tableModules" :key="module.code">
                   <tr class="module-row">
                     <td class="cursor-pointer" @click="toggleExpanded(module.code)">
                       <q-icon :name="expanded[module.code] ? 'expand_more' : 'chevron_right'" size="20px" />
@@ -65,8 +65,8 @@
                       <span class="text-caption text-grey-7 q-ml-xs">· {{ module.entities.length }}</span>
                     </td>
                     <td v-for="action in matrix.actions" :key="action.code" class="text-center">
-                      <q-checkbox :model-value="moduleState(module, action.code)" toggle-indeterminate
-                        :disable="!canEdit" @update:model-value="() => toggleModule(module, action.code)">
+                      <q-checkbox v-if="moduleSupports(module, action.code)" :model-value="moduleState(module, action.code)"
+                        toggle-indeterminate :disable="!canEdit" @update:model-value="() => toggleModule(module, action.code)">
                         <q-tooltip>Для всех справочников раздела</q-tooltip>
                       </q-checkbox>
                     </td>
@@ -79,7 +79,8 @@
                           <span class="text-caption text-grey-7"> · {{ group.entities.length }}</span>
                         </td>
                         <td v-for="action in matrix.actions" :key="action.code" class="text-center">
-                          <q-checkbox :model-value="groupState(group.entities, action.code)" toggle-indeterminate size="sm"
+                          <q-checkbox v-if="moduleSupports(group, action.code)" :model-value="groupState(group.entities, action.code)"
+                            toggle-indeterminate size="sm"
                             :disable="!canEdit" @update:model-value="() => toggleGroup(group.entities, action.code)">
                             <q-tooltip>{{ group.tooltip }}</q-tooltip>
                           </q-checkbox>
@@ -91,7 +92,8 @@
                           <div v-if="entity.hint" class="text-caption text-grey-7 entity-hint">{{ entity.hint }}</div>
                         </td>
                         <td v-for="action in matrix.actions" :key="action.code" class="text-center">
-                          <q-checkbox :model-value="hasAction(entity.code, action.code)" :disable="!canEdit"
+                          <q-checkbox v-if="supports(entity, action.code)" :model-value="hasAction(entity.code, action.code)"
+                            :disable="!canEdit"
                             @update:model-value="(value) => setAction(entity.code, action.code, value)" />
                         </td>
                       </tr>
@@ -175,7 +177,7 @@ async function load() {
 // Краткое описание роли: разделы, к которым есть доступ (полностью или частично).
 function summary(role) {
   const parts = []
-  for (const module of matrix.value.modules) {
+  for (const module of tableModules.value) {
     const withAccess = module.entities.filter((e) => role.access[e.code]?.length).length
     if (withAccess === module.entities.length) parts.push(module.title)
     else if (withAccess) parts.push(`${module.title} (частично)`)
@@ -190,6 +192,14 @@ const errors = ref({})
 const saving = ref(false)
 const canEdit = computed(() => can(editing.value.id ? 'auth.change_group' : 'auth.add_group'))
 
+// Разделы без строк в таблице (например, «Перенос из VetManager» — только особое право)
+// в таблице не показываются: их право настраивается в «Особых правах».
+const tableModules = computed(() => matrix.value.modules.filter((m) => m.entities.length))
+
+// У некоторых строк только «Просмотр» (разделы «Отчёты», «Выручка», «Профилактика»).
+const supports = (entity, action) => !entity.actions || entity.actions.includes(action)
+const moduleSupports = (module, action) => module.entities.some((e) => supports(e, action))
+
 const allEntities = () => matrix.value.modules.flatMap((m) => m.entities.map((e) => e.code))
 
 function openEditor(role = null, template = null) {
@@ -202,7 +212,7 @@ function openEditor(role = null, template = null) {
     : { name: template?.name || '', users: [], access, special }
   // Разделы с частичными правами раскрыты сразу — чтобы было видно, что именно разрешено.
   expanded.value = Object.fromEntries(
-    matrix.value.modules.map((m) => [m.code, matrix.value.actions.some((a) => moduleState(m, a.code) === null)]),
+    tableModules.value.map((m) => [m.code, matrix.value.actions.some((a) => moduleState(m, a.code) === null)]),
   )
   editorOpen.value = true
 }
@@ -224,7 +234,8 @@ function setAction(entity, action, value) {
 }
 
 // Групповая галочка: всё — да, ничего — нет, часть — «частично» (null).
-function groupState(entities, action) {
+function groupState(all, action) {
+  const entities = all.filter((e) => supports(e, action))
   const count = entities.filter((e) => hasAction(e.code, action)).length
   if (count === entities.length) return true
   return count === 0 ? false : null
@@ -232,7 +243,7 @@ function groupState(entities, action) {
 
 function toggleGroup(entities, action) {
   const value = groupState(entities, action) !== true
-  for (const entity of entities) setAction(entity.code, action, value)
+  for (const entity of entities.filter((e) => supports(e, action))) setAction(entity.code, action, value)
 }
 
 const moduleState = (module, action) => groupState(module.entities, action)

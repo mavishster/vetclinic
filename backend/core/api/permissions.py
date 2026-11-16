@@ -7,7 +7,7 @@
 
 from typing import Any
 
-from rest_framework.permissions import DjangoModelPermissions
+from rest_framework.permissions import BasePermission, DjangoModelPermissions
 
 
 class ModelPermissions(DjangoModelPermissions):
@@ -19,6 +19,19 @@ class ModelPermissions(DjangoModelPermissions):
         "HEAD": ["%(app_label)s.view_%(model_name)s"],
         "OPTIONS": ["%(app_label)s.view_%(model_name)s"],
     }
+
+
+def requires(code: str) -> type[BasePermission]:
+    """Право раздела («core.view_reportsaccess»…): добавляется к обычным правам API."""
+
+    class RequiresPermission(BasePermission):
+        message = "Нет доступа к этому разделу. Его открывает тот, кто настраивает роли."
+
+        def has_permission(self, request: Any, view: Any) -> bool:
+            return bool(request.user and request.user.has_perm(code))
+
+    RequiresPermission.__name__ = f"Requires_{code.replace('.', '_')}"
+    return RequiresPermission
 
 
 SPECIAL_DENIED = "Нет особого права «{title}». Его выдаёт тот, кто настраивает роли."

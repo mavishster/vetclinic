@@ -19,7 +19,7 @@ from clients.models import Client
 from core import services as core
 from core.api import reports
 from core.api.directories import DirectoryViewSet
-from core.api.permissions import require_special
+from core.api.permissions import ModelPermissions, require_special, requires
 from core.excel import xlsx_response
 from core.models import DocumentError
 
@@ -235,7 +235,8 @@ def _shift(shift: CashShift) -> dict[str, Any]:
 class MoneyReportView(APIView):
     """Деньги по дням: наличные, безнал, выдано: ?from=&to= (&export=xlsx)."""
 
-    queryset = Payment.objects.none()  # права — как на просмотр оплат
+    queryset = Payment.objects.none()  # права — просмотр оплат и раздел «Отчёты»
+    permission_classes = [ModelPermissions, requires("core.view_reportsaccess")]
 
     def get_queryset(self) -> QuerySet[Payment]:
         return Payment.objects.none()

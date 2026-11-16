@@ -137,6 +137,13 @@ MODULE_ACTIONS: dict[str, tuple[str, ...]] = {
 _EXTRA_ENTITIES = {"core": ["auth.group"]}
 _ENTITY_TITLES = {"auth.group": "Роли и права"}
 _MODULE_TITLES = {"core": "Администрирование", "vetmanager": "Перенос из VetManager"}
+# Разделы доступа без своих данных (core.models: managed = False) — в таблице прав это
+# отдельные верхние разделы с одной галочкой «Просмотр»: «Отчёты», «Выручка», «Профилактика».
+SECTION_MODELS = {
+    "core.reportsaccess": ("reports", "Отчёты"),
+    "core.revenueaccess": ("revenue", "Выручка"),
+    "core.preventionreportaccess": ("prevention", "Профилактика"),
+}
 # Особые права модулей без собственных строк в таблице прав.
 _EXTRA_SPECIALS = {"vetmanager": [("vetmanager.run_import", "Переносить данные из VetManager")]}
 
@@ -146,6 +153,7 @@ class PermissionEntity(TypedDict):
     title: str
     is_directory: bool  # справочник (списки для выбора) или рабочие данные раздела
     hint: str  # что именно разрешается — первая фраза описания модели
+    actions: list[str]  # какие галочки есть у строки: у разделов доступа — только «view»
 
 
 class SpecialPermission(TypedDict):
@@ -167,6 +175,15 @@ def _entity_title(model: type[Any]) -> str:
 
 # Пояснения к строкам таблицы прав — для того, кто настраивает роли (не для разработчика).
 PERMISSION_HINTS = {
+    "core.reportsaccess": (
+        "Страница «Отчёты»: продажи и деньги, популярное, должники, движение товара, остатки."
+        " Данные каждого отчёта показываются, если есть и право на сами счета, оплаты или склад."
+    ),
+    "core.revenueaccess": "Выручка по исполнителям: сколько заработал каждый врач и сотрудник.",
+    "core.preventionreportaccess": (
+        "Отчёт по профилактике: кому пора на вакцинацию или обработку. Карточка питомца"
+        " показывает прививки по праву «Медкарта → Профилактика»."
+    ),
     "core.user": "Учётные записи сотрудников: логин, пароль, ФИО.",
     "core.clinic": "Настройки клиники: реквизиты, лимиты скидок, сроки выдачи и пересчёта.",
     "core.attachment": "Файлы у клиентов, питомцев и приёмов: сканы, снимки, договоры.",
@@ -244,6 +261,7 @@ def permission_modules() -> list[PermissionModule]:
             for model in config.get_models()
             if model._meta.default_permissions
             and not model._meta.label_lower.split(".")[1].startswith("historical")
+            and model._meta.label_lower not in SECTION_MODELS
         ]
         # Сначала основные данные раздела (клиенты, документы), затем справочники.
         models_with_rights.sort(key=lambda model: issubclass(model, Directory))
@@ -253,6 +271,7 @@ def permission_modules() -> list[PermissionModule]:
                 "title": _entity_title(model),
                 "is_directory": issubclass(model, Directory),
                 "hint": _entity_hint(model),
+                "actions": list(MODULE_ACTIONS),
             }
             for model in models_with_rights
         ]
@@ -262,6 +281,7 @@ def permission_modules() -> list[PermissionModule]:
                 "title": _ENTITY_TITLES[code],
                 "is_directory": False,
                 "hint": PERMISSION_HINTS.get(code, ""),
+                "actions": list(MODULE_ACTIONS),
             }
             for code in _EXTRA_ENTITIES.get(app, [])
         ]
@@ -274,6 +294,16 @@ def permission_modules() -> list[PermissionModule]:
         if entities or special:
             title = _MODULE_TITLES.get(app, str(config.verbose_name))
             result.append({"code": app, "title": title, "entities": entities, "special": special})
+    for label, (code, title) in SECTION_MODELS.items():
+        model = apps.get_model(label)
+        entity: PermissionEntity = {
+            "code": label,
+            "title": str(model._meta.verbose_name_plural),
+            "is_directory": False,
+            "hint": PERMISSION_HINTS.get(label, ""),
+            "actions": ["view"],
+        }
+        result.append({"code": code, "title": title, "entities": [entity], "special": []})
     return result
 
 
@@ -349,6 +379,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "inpatient.hospitalization": [_V, _E],
             "medical.texttemplate": [_V, _E],
             "medical.prevention": [_V, _E],
+            "core.preventionreportaccess": [_V],
             "medical.diagnosis": [_V, _E],
             "catalog.item": [_V],
             "inventory.stockmovement": [_V],
@@ -380,6 +411,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "scheduling.appointment": [_V, _E, _D],
             "medical.visit": [_V],
             "medical.prevention": [_V],
+            "core.preventionreportaccess": [_V],
             "catalog.item": [_V],
             "billing.invoice": [_V, _E],
             "cash.payment": [_V, _E],
@@ -404,6 +436,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "cash.cashmovement": [_V],
             "cash.cashshift": [_V],
             "core.counterparty": [_V],
+            "core.reportsaccess": [_V],
         },
         "special": ["cash.refund_payment", "cash.return_advance", "cash.close_shift"],
     },
@@ -425,6 +458,7 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
             "inventory.warehouse": [_V, _E],
             "inventory.manufacturer": [_V, _E],
             "core.counterparty": [_V, _E],
+            "core.reportsaccess": [_V],
         },
         "special": ["inventory.rollback_stockdocument", "catalog.view_cost"],
     },

@@ -18,7 +18,7 @@ from catalog.models import Item, Kind
 from core import services as core
 from core.api import reports
 from core.api.directories import DirectoryViewSet
-from core.api.permissions import can_view_cost, require_special
+from core.api.permissions import ModelPermissions, can_view_cost, require_special, requires
 from core.excel import xlsx_response
 from core.models import DocumentError, PrintTemplate
 from inventory import importing, labels, services
@@ -500,7 +500,8 @@ class StockImportView(APIView):
 class TurnoverReportView(APIView):
     """Движение товара: ?from=&to=&warehouse=&search= (&export=xlsx)."""
 
-    queryset = StockMovement.objects.none()  # права — как на остатки
+    queryset = StockMovement.objects.none()  # права — как на остатки и раздел «Отчёты»
+    permission_classes = [ModelPermissions, requires("core.view_reportsaccess")]
 
     def get_queryset(self) -> QuerySet[StockMovement]:
         return StockMovement.objects.none()
@@ -587,6 +588,7 @@ class WarehouseTotalsView(APIView):
     """Остатки по складам: позиций в наличии и сумма по себестоимости (с правом)."""
 
     queryset = StockMovement.objects.none()
+    permission_classes = [ModelPermissions, requires("core.view_reportsaccess")]
 
     def get_queryset(self) -> QuerySet[StockMovement]:
         return StockMovement.objects.none()

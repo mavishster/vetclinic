@@ -21,7 +21,7 @@ from rest_framework.views import APIView
 
 from catalog import services as catalog
 from core.api import reports
-from core.api.permissions import can_view_cost, require_special
+from core.api.permissions import can_view_cost, require_special, requires
 from core.excel import xlsx_response
 from core.models import DocumentError
 from inventory import departments as dept
@@ -186,7 +186,7 @@ class DepartmentStockView(APIView):
 class DepartmentSummaryView(APIView):
     """Расход по отделениям за период: ?from=&to=&department= (&export=xlsx)."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, requires("core.view_reportsaccess")]
 
     def get(self, request: Request) -> HttpResponse:
         _require_view(request)
@@ -214,7 +214,7 @@ class DepartmentSummaryView(APIView):
 class DepartmentJournalView(APIView):
     """Журнал отделений по датам: ?from=&to=&department=&item=&user= (&export=xlsx)."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, requires("core.view_reportsaccess")]
 
     def get(self, request: Request) -> HttpResponse:
         _require_view(request)

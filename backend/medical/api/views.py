@@ -20,7 +20,7 @@ from catalog import services as catalog
 from clients.models import Pet
 from core import services as core
 from core.api.directories import DirectoryViewSet
-from core.api.permissions import can_view_cost
+from core.api.permissions import can_view_cost, requires
 from core.excel import xlsx_response
 from core.models import PrintTemplate
 from medical import services
@@ -480,7 +480,11 @@ class PreventionViewSet(viewsets.ReadOnlyModelViewSet):  # type: ignore[type-arg
             [{"id": str(i.pk), "name": i.name} for i in services.preparations(prevention_type)]
         )
 
-    @action(detail=False, methods=["get"])
+    @action(
+        detail=False,
+        methods=["get"],
+        permission_classes=[requires("core.view_preventionreportaccess")],
+    )
     def report(self, request: Request) -> HttpResponse:
         today = timezone.localdate()
         params = request.query_params
