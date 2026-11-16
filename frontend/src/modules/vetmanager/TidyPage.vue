@@ -49,7 +49,10 @@
             </td>
             <td class="text-right text-grey-7">{{ row.documents || '' }}</td>
             <td class="text-right" style="width: 150px">
-              <span v-if="row.used" class="text-caption text-negative">уже используется</span>
+              <span v-if="row.used" class="text-caption text-negative">
+                есть количества
+                <q-tooltip>{{ row.used_in }} — единицу учёта менять поздно</q-tooltip>
+              </span>
               <template v-else>
                 <q-btn color="primary" unelevated dense label="Поправить" :loading="fixing === row.id"
                   :disable="!(Number(row.quantity) > 1 && row.inside)" @click="fixPackaging(row)" />

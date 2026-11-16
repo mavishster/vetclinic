@@ -249,7 +249,7 @@ def test_packaging_refuses_used_item(db) -> None:
     owner = clients.save_client(Client(last_name="Петров"))
     billing.save_invoice(Invoice(client=owner), [{"item_unit": item.units.get()}])
 
-    with pytest.raises(catalog.CatalogError, match="уже используется"):
+    with pytest.raises(catalog.CatalogError, match="нет количеств"):
         tidy.set_packaging(str(item.pk), D("8"), "таб.", D("25"))
 
 
@@ -351,3 +351,37 @@ def test_merged_bottle_and_ml(db) -> None:
     assert units["мл"] == (D("1.000000"), D("120.00"))
     assert units["фл."] == (D("10.000000"), D("1200.00"))
     assert Item.objects.filter(name__startswith="Supramil").count() == 1
+
+
+def test_combination_does_not_block_packaging(db) -> None:
+    """Вхождение в комбинацию и привязка к профилактике менять единицу не мешают."""
+    from catalog.models import CombinationLine
+
+    item = goods("Ношпа уп. 8 табл.", "упак.", "160")
+    combination = catalog.save_item(
+        Item(
+            kind=Kind.COMBO,
+            name="Приём с уколом",
+            group=ItemGroup.objects.filter(kind=Kind.SERVICE).first(),
+            base_unit=Unit.objects.get(name="усл."),
+        ),
+        [
+            {
+                "unit": Unit.objects.get(name="усл.").pk,
+                "ratio": D("1"),
+                "pricing": "fixed",
+                "price": D("500"),
+                "for_sale": True,
+            }
+        ],
+    )
+    CombinationLine.objects.create(
+        combination=combination, item_unit=item.units.get(), quantity=D("1")
+    )
+
+    rows = {row["name"]: row for row in tidy.packaging_rows(with_documents=False)}
+
+    assert rows["Ношпа уп. 8 табл."]["used"] is False
+    tidy.set_packaging(str(item.pk), D("8"), "таб.", D("25"))  # и правится без помех
+    item.refresh_from_db()
+    assert item.base_unit.name == "таб."

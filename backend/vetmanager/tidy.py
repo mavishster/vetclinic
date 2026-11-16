@@ -18,6 +18,7 @@ from django.db import transaction
 
 from catalog import services as catalog
 from catalog.models import Item, ItemUnit, Kind, Unit
+from core import services as core
 from vetmanager import client
 
 # Хвост названия с фасовкой: «(уп 30 саше)», «уп. 8 табл.», «№30», «x10», «10 табл.»
@@ -371,6 +372,24 @@ def skip_packaging(item_id: str) -> None:
     )
 
 
+# Менять единицу учёта мешают только количества: приходы, списания, строки счетов.
+# Вхождение в комбинацию или привязка к профилактике этому не мешают.
+QUANTITY_APPS = {"inventory", "billing"}
+
+
+def _quantity_usage(item: Item) -> list[str]:
+    """Где по позиции есть количества — из-за них единицу учёта менять нельзя."""
+    records = core.usage_records(item)
+    for unit in ItemUnit.all_objects.filter(item=item):
+        for model, pks in core.usage_records(unit).items():
+            records.setdefault(model, set()).update(pks)
+    return sorted(
+        str(model._meta.verbose_name_plural)
+        for model in records
+        if model._meta.app_label in QUANTITY_APPS
+    )
+
+
 def packaging_rows(with_documents: bool = True) -> list[dict[str, Any]]:
     """Препараты, у которых остаток ведётся упаковками, а отпускают поштучно.
 
@@ -395,6 +414,7 @@ def packaging_rows(with_documents: bool = True) -> list[dict[str, Any]]:
             continue  # поштучная единица уже заведена внутри позиции
         if str(item.pk) in marked_ok:
             continue  # пользователь сказал: эту позицию не трогать
+        blocking = _quantity_usage(item)
         quantity, inside = _inside_pack(item.name)
         if inside == base:
             quantity, inside = None, ""
@@ -407,7 +427,8 @@ def packaging_rows(with_documents: bool = True) -> list[dict[str, Any]]:
                 "inside": inside,
                 "price": str(_price(item) or ""),
                 "documents": documents.get(str(item.pk), 0),
-                "used": bool(catalog.item_usage(item)),
+                "used": bool(blocking),
+                "used_in": ", ".join(blocking),
             }
         )
     rows.sort(key=lambda row: (-row["documents"], row["name"]))
@@ -431,10 +452,11 @@ def set_packaging(item_id: str, quantity: Decimal, inside: str, price: Decimal |
     piece = _find_unit(inside)
     if piece is None:
         raise catalog.CatalogError(f"Нет единицы «{inside}» — заведите её в справочнике единиц.")
-    if catalog.item_usage(item):
+    blocking = _quantity_usage(item)
+    if blocking:
         raise catalog.CatalogError(
-            f"«{item.name}» уже используется: единицу учёта можно менять, пока по позиции "
-            "не было приходов и продаж."
+            f"«{item.name}»: единицу учёта можно менять, пока по позиции нет количеств. "
+            f"Сейчас есть: {', '.join(blocking)}."
         )
     pack = item.base_unit
     source = item.units.filter(unit=pack).first() or item.units.first()
