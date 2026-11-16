@@ -78,3 +78,24 @@ def test_filled_items_are_not_touched() -> None:
     call_command("fill_drug_info", "--apply", stdout=StringIO())
 
     assert [s.name for s in item.substances.all()] == [other.name]
+
+
+@pytest.mark.django_db
+def test_missing_substance_is_created() -> None:
+    """Вещества нет в справочнике — заводим его: иначе препарат не связать."""
+    item = drug("Апомед 16 мг уп. 10 табл.")
+
+    call_command("fill_drug_info", "--apply", stdout=StringIO())
+
+    assert [s.name.lower() for s in item.substances.all()] == ["апоморфин"]
+
+
+@pytest.mark.django_db
+def test_vaccines_get_group_without_substance() -> None:
+    """У вакцин действующего вещества нет — ставим только группу."""
+    item = drug("Вакцина Нобивак DHPPI")
+
+    call_command("fill_drug_info", "--apply", stdout=StringIO())
+
+    assert not item.substances.exists()
+    assert [g.name for g in item.drug_groups.all()] == ["Вакцины"]

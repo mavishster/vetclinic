@@ -15,7 +15,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from catalog import services
-from catalog.models import Item, Kind, Substance
+from catalog.models import DrugGroup, Item, Kind, Substance
 
 # Торговые названия → действующее вещество. Берём только те, где сомнений нет;
 # остальное врач проставит сам.
@@ -73,7 +73,51 @@ BRANDS = {
     "synulox": "амоксициллин",
     "metacam": "мелоксикам",
     "rimadyl": "карпрофен",
+    # Добавлено по прайсу клиники.
+    "азитронит": "азитромицин",
+    "антимедин": "атипамезол",
+    "атакса": "имидаклоприд",
+    "бицилин": "бензатина бензилпенициллин",
+    "везотил": "тилетамин",
+    "ветфлоксацин": "левофлоксацин",
+    "гапентин": "габапентин",
+    "гельминтал": "празиквантел",
+    "гепаветариум": "адеметионин",
+    "дексодия": "дексмедетомидин",
+    "дехинел": "празиквантел",
+    "диронет": "празиквантел",
+    "догферон": "интерферон",
+    "фелиферон": "интерферон",
+    "докситрон": "доксициклин",
+    "дронтал": "празиквантел",
+    "зоокард": "пимобендан",
+    "ивермек": "ивермектин",
+    "мильбемакс": "празиквантел",
+    "празител": "празиквантел",
+    "каниквантел": "празиквантел",
+    "стоп-цистит": "фитопрепарат",
+    "айсидивит": "витамины",
+    "гамавит": "витамины",
+    "кантарен": "гомеопатия",
+    "хондартрон": "гомеопатия",
 }
+
+# Названия, по которым видно: это вакцина. Вещества у них нет, ставим только группу.
+VACCINES = (
+    "нобивак",
+    "вакдерм",
+    "гискан",
+    "глобфел",
+    "вакцина",
+    "рабизин",
+    "пуревакс",
+    "мультикан",
+    "эурикан",
+    "феловакс",
+    "биофел",
+    "биокан",
+)
+VACCINE_GROUP = "Вакцины"
 
 
 def _simple(text: str) -> str:
@@ -95,18 +139,19 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args: Any, **options: Any) -> None:
-        by_key: dict[str, Substance] = {}
+        # Ключ поиска → название вещества. Чего нет в справочнике, заведём при записи.
+        by_key: dict[str, str] = {}
         for substance in Substance.objects.all():
             for key in _keys(substance):
-                by_key.setdefault(key, substance)
+                by_key.setdefault(key, substance.name)
         for brand, name in BRANDS.items():
-            found = Substance.objects.filter(name__iexact=name).first()
-            if found is not None:
-                by_key.setdefault(_simple(brand), found)
+            by_key.setdefault(_simple(brand), name)
+        known = {s.name.lower() for s in Substance.objects.all()}
 
         # Длинные названия ищем первыми: «аскорбиновая кислота» важнее «кислота».
         keys = sorted(by_key, key=len, reverse=True)
-        matched: list[tuple[Item, Substance]] = []
+        matched: list[tuple[Item, str]] = []
+        vaccines: list[Item] = []
         unknown: list[Item] = []
         for item in Item.objects.filter(kind=Kind.GOODS, is_active=True).prefetch_related(
             "substances"
@@ -114,13 +159,20 @@ class Command(BaseCommand):
             if item.substances.exists():
                 continue
             name = f" {_simple(item.name)} "
+            if any(word in name for word in VACCINES):
+                vaccines.append(item)
+                continue
             found = next((by_key[key] for key in keys if f" {key} " in name or key in name), None)
             (matched.append((item, found)) if found else unknown.append(item))
 
-        for item, substance in matched[: options["show"]]:
-            self.stdout.write(f"{item.name} → {substance.name}")
+        for item, name in matched[: options["show"]]:
+            mark = "" if name.lower() in known else "  (вещество будет заведено)"
+            self.stdout.write(f"{item.name} → {name}{mark}")
         self.stdout.write(
-            self.style.SUCCESS(f"\nраспозналось: {len(matched)}, не распозналось: {len(unknown)}")
+            self.style.SUCCESS(
+                f"\nраспозналось: {len(matched)}, вакцин: {len(vaccines)}, "
+                f"не распозналось: {len(unknown)}"
+            )
         )
         for item in unknown[: options["show"]]:
             self.stdout.write(self.style.WARNING(f"  ? {item.name}"))
@@ -128,6 +180,18 @@ class Command(BaseCommand):
         if not options["apply"]:
             self.stdout.write("\nЭто предварительный просмотр. Записать: --apply")
             return
-        for item, substance in matched:
+        substances: dict[str, Substance] = {}
+        for item, name in matched:
+            substance = substances.get(name.lower())
+            if substance is None:
+                substance = Substance.objects.filter(name__iexact=name).first()
+                if substance is None:
+                    substance = Substance.objects.create(name=name.capitalize())
+                    self.stdout.write(self.style.WARNING(f"новое вещество: {substance.name}"))
+                substances[name.lower()] = substance
             services.set_drug_info(item, [substance], None)  # группа — по веществу
-        self.stdout.write(self.style.SUCCESS(f"записано: {len(matched)}"))
+        if vaccines:
+            group, _ = DrugGroup.objects.get_or_create(name=VACCINE_GROUP)
+            for item in vaccines:
+                services.set_drug_info(item, None, [group])
+        self.stdout.write(self.style.SUCCESS(f"записано: {len(matched)}, вакцин: {len(vaccines)}"))
