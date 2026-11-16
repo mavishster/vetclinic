@@ -99,3 +99,34 @@ def test_vaccines_get_group_without_substance() -> None:
 
     assert not item.substances.exists()
     assert [g.name for g in item.drug_groups.all()] == ["Вакцины"]
+
+
+@pytest.mark.django_db
+def test_consumables_are_not_drugs() -> None:
+    """Воротники, катетеры и шампуни — не препараты: вещество им не ставим."""
+    collar = drug("Воротник №5")
+    catheter = drug("Катетер уретральный для кошек")
+
+    out = StringIO()
+    call_command("fill_drug_info", "--apply", stdout=out)
+
+    assert "не препаратов: 2" in out.getvalue()
+    assert not collar.substances.exists() and not catheter.substances.exists()
+
+
+@pytest.mark.django_db
+def test_second_pass_brands() -> None:
+    """Второй проход по прайсу: Клавуксицин, Марбобел, Нольпаза и другие."""
+    rows = {
+        "Клавуксицин® таблетки 250мг": "амоксициллин",
+        "Марбобел 10% , 1 мл": "марбофлоксацин",
+        "Нольпаза 40 мг": "пантопразол",
+        "Рикарфа 20мг 1 табл.": "карпрофен",
+        "Милпразон д/кошек от 2кг": "празиквантел",
+    }
+    items = {name: drug(name) for name in rows}
+
+    call_command("fill_drug_info", "--apply", stdout=StringIO())
+
+    for name, substance in rows.items():
+        assert [s.name.lower() for s in items[name].substances.all()] == [substance], name
