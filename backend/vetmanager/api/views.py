@@ -101,6 +101,12 @@ class PackagingView(_ImportView):
 
     def post(self, request: Request) -> Response:
         data = request.data
+        if data.get("skip"):
+            try:
+                tidy.skip_packaging(str(data.get("item") or ""))
+            except tidy.catalog.CatalogError as error:
+                raise ValidationError({"non_field_errors": [str(error)]}) from error
+            return Response({"skipped": True})
         try:
             price = data.get("price")
             item = tidy.set_packaging(

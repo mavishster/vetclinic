@@ -50,8 +50,14 @@
             <td class="text-right text-grey-7">{{ row.documents || '' }}</td>
             <td class="text-right" style="width: 150px">
               <span v-if="row.used" class="text-caption text-negative">уже используется</span>
-              <q-btn v-else color="primary" unelevated dense label="Поправить" :loading="fixing === row.id"
-                :disable="!(Number(row.quantity) > 1 && row.inside)" @click="fixPackaging(row)" />
+              <template v-else>
+                <q-btn color="primary" unelevated dense label="Поправить" :loading="fixing === row.id"
+                  :disable="!(Number(row.quantity) > 1 && row.inside)" @click="fixPackaging(row)" />
+                <q-btn flat dense color="grey-7" icon="check" :loading="fixing === row.id"
+                  @click="skipPackaging(row)">
+                  <q-tooltip>Не трогать: позиция и так в порядке</q-tooltip>
+                </q-btn>
+              </template>
             </td>
           </tr>
         </tbody>
@@ -158,6 +164,14 @@ async function fixPackaging(row) {
   if (!ok) return (error.value = Object.values(fieldErrors(data || {}))[0] || 'Не удалось поправить')
   $q.notify({ type: 'positive', message: `${data.name}: учёт в «${data.base_unit}»` })
   packaging.value = packaging.value.filter((item) => item.id !== row.id)
+}
+
+// «Не трогать»: позиция продаётся целиком (набор, флакон без отлива) — убираем из списка.
+async function skipPackaging(row) {
+  fixing.value = row.id
+  const { ok } = await apiPost('vetmanager/packaging/', { item: row.id, skip: true })
+  fixing.value = ''
+  if (ok) packaging.value = packaging.value.filter((item) => item.id !== row.id)
 }
 
 async function merge(row) {

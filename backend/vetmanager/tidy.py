@@ -255,8 +255,9 @@ def merge(name: str, parts: list[dict[str, Any]]) -> Item:
 
 # --- Фасовки препаратов ----------------------------------------------------------------
 
-# Единицы, в которых товар обычно приходит на склад, но не продаётся поштучно.
-PACK_UNITS = {"упак.", "уп.", "коробка", "набор", "блистер", "фл.", "флакон", "туба", "саше"}
+# Единицы, в которых препарат приходит на склад, но отпускается поштучно.
+# «Набор» и «саше» сюда не входят: набор продают целиком, саше — само по себе штука.
+PACK_UNITS = {"упак.", "уп.", "упаковка", "коробка", "блистер", "фл.", "флакон", "туба"}
 # Самое мелкое, чем отпускают: в этом и стоит вести остаток.
 PIECE_UNITS = {"таб.", "капс.", "мл", "г", "мг", "доза", "амп.", "шт.", "саше"}
 # Сколько мелких единиц в упаковке — из названия: «уп. 8 табл.», «фл 10мл», «100 мл».
@@ -289,6 +290,25 @@ def _inside_pack(name: str) -> tuple[Decimal | None, str]:
     return best
 
 
+def _marked_ok() -> set[str]:
+    """Позиции, которые пользователь пометил «не трогать»."""
+    from vetmanager.models import Imported
+
+    return set(Imported.objects.filter(kind="packaging_ok").values_list("external_id", flat=True))
+
+
+def skip_packaging(item_id: str) -> None:
+    """Пометить позицию разобранной: в списке фасовок больше не показывать."""
+    from vetmanager.models import Imported
+
+    item = Item.objects.filter(pk=item_id).first()
+    if item is None:
+        raise catalog.CatalogError("Позиция не найдена — обновите страницу.")
+    Imported.objects.update_or_create(
+        kind="packaging_ok", external_id=str(item.pk), defaults={"target_id": item.pk}
+    )
+
+
 def packaging_rows(with_documents: bool = True) -> list[dict[str, Any]]:
     """Препараты, у которых остаток ведётся упаковками, а отпускают поштучно.
 
@@ -296,6 +316,7 @@ def packaging_rows(with_documents: bool = True) -> list[dict[str, Any]]:
     целый флакон. Для каждой подсказываем, сколько мелких единиц внутри.
     """
     documents = documents_by_item() if with_documents else {}
+    marked_ok = _marked_ok()
     rows = []
     for item in (
         # Складской учёт не проверяем: при переносе отметка ставится по карточке
@@ -310,6 +331,8 @@ def packaging_rows(with_documents: bool = True) -> list[dict[str, Any]]:
         units = {unit.unit.name for unit in item.units.all()}
         if units & (PIECE_UNITS - {base}):
             continue  # поштучная единица уже заведена внутри позиции
+        if str(item.pk) in marked_ok:
+            continue  # пользователь сказал: эту позицию не трогать
         quantity, inside = _inside_pack(item.name)
         if inside == base:
             quantity, inside = None, ""

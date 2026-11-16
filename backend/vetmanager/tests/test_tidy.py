@@ -250,3 +250,24 @@ def test_packaging_refuses_used_item(db) -> None:
 
     with pytest.raises(catalog.CatalogError, match="уже используется"):
         tidy.set_packaging(str(item.pk), D("8"), "таб.", D("25"))
+
+
+def test_sets_and_pieces_are_not_listed(db) -> None:
+    """Наборы и саше продаются целиком — делить их не нужно."""
+    goods("Набор для приёма", "набор", "150")
+    goods("АКТИФЛОРА (1 саше)", "саше", "60")
+    goods("Ношпа уп. 8 табл.", "упак.", "160")
+
+    names = {row["name"] for row in tidy.packaging_rows(with_documents=False)}
+
+    assert names == {"Ношпа уп. 8 табл."}
+
+
+def test_marked_ok_disappears_from_list(db) -> None:
+    """«Не трогать»: позиция уходит из списка и не возвращается."""
+    item = goods("Гептрал 1фл", "фл.", "600")
+    assert tidy.packaging_rows(with_documents=False)
+
+    tidy.skip_packaging(str(item.pk))
+
+    assert tidy.packaging_rows(with_documents=False) == []
