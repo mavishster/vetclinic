@@ -34,6 +34,11 @@ class ClinicSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "department_issue_days",
             "department_count_from_days",
             "department_count_due_days",
+            "qr_base_url",
+            "qr_size_mm",
+            "qr_label_width_mm",
+            "qr_label_height_mm",
+            "qr_fields",
             "logo_version",
         ]
         read_only_fields = ["id"]
@@ -49,6 +54,7 @@ class ClinicSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         ):
             if attrs.get(field, 0) > 365:
                 raise serializers.ValidationError({field: ["Не больше 365 дней."]})
+        self._validate_qr(attrs)
         start = attrs.get(
             "department_count_from_days", self.instance and self.instance.department_count_from_days
         )
@@ -60,6 +66,32 @@ class ClinicSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
                 {"department_count_from_days": ["«Через» не может быть больше, чем «не позже»."]}
             )
         return attrs
+
+    def _validate_qr(self, attrs: dict[str, Any]) -> None:
+        if url := attrs.get("qr_base_url", "").strip():
+            if not url.lower().startswith(("http://", "https://")) or " " in url:
+                raise serializers.ValidationError(
+                    {"qr_base_url": ["Адрес — вида http://192.168.0.10 или https://vet.clinic.kg."]}
+                )
+            attrs["qr_base_url"] = url.rstrip("/")
+        if "qr_size_mm" in attrs and not 15 <= attrs["qr_size_mm"] <= 120:
+            raise serializers.ValidationError({"qr_size_mm": ["QR-код — от 15 до 120 мм."]})
+        for field in ("qr_label_width_mm", "qr_label_height_mm"):
+            if field in attrs and not 40 <= attrs[field] <= 200:
+                raise serializers.ValidationError({field: ["Этикетка — от 40 до 200 мм."]})
+        fields = attrs.get("qr_fields")
+        if fields is not None and (
+            not isinstance(fields, list)
+            or len(fields) > 30
+            or not all(isinstance(f, str) and len(f) <= 40 for f in fields)
+        ):
+            raise serializers.ValidationError({"qr_fields": ["Ожидается список полей."]})
+        size = attrs.get("qr_size_mm", self.instance and self.instance.qr_size_mm)
+        width = attrs.get("qr_label_width_mm", self.instance and self.instance.qr_label_width_mm)
+        if size and width and size + 8 > width:
+            raise serializers.ValidationError(
+                {"qr_size_mm": ["QR-код должен помещаться в этикетку по ширине (с полями 4 мм)."]}
+            )
 
 
 class ClinicView(APIView):

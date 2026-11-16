@@ -86,6 +86,7 @@ class Hospitalization(ClinicScopedModel):
         verbose_name = "госпитализация"
         verbose_name_plural = "стационар"
         ordering = ["-admitted_at"]
+        permissions = [("print_qr", "Печатать QR-этикетки пациентов стационара")]
 
     def __str__(self) -> str:
         return f"{self.pet} — {self.ward}"

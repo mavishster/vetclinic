@@ -73,6 +73,51 @@
             :error="!!errors.department_count_due_days" :error-message="errors.department_count_due_days" />
         </q-card-section>
       </q-card>
+      <q-card flat bordered class="q-mb-md">
+        <q-card-section>
+          <div class="text-subtitle1">Стационар: QR-этикетка пациента</div>
+          <div class="text-caption text-grey-7">
+            Этикетку печатают на листе А4 и вырезают по пунктиру, клеят на клетку. Сканируют камерой телефона:
+            откроется карточка пациента (нужны вход и право на стационар). В код зашита только ссылка.
+          </div>
+        </q-card-section>
+        <q-card-section class="q-pt-none row q-col-gutter-sm">
+          <q-input v-model="form.qr_base_url" outlined dense class="col-12" :readonly="!canEdit"
+            label="Адрес системы для QR-кодов" placeholder="http://192.168.0.10"
+            hint="Адрес, по которому телефоны открывают систему в сети клиники. Лучше постоянный: при смене адреса старые этикетки перестанут открываться."
+            :error="!!errors.qr_base_url" :error-message="errors.qr_base_url" />
+          <q-input v-model.number="form.qr_size_mm" type="number" step="1" min="15" max="120" outlined dense suffix="мм"
+            label="Размер QR-кода" class="col-12 col-sm-4" :readonly="!canEdit" :error="!!errors.qr_size_mm"
+            :error-message="errors.qr_size_mm" />
+          <q-input v-model.number="form.qr_label_width_mm" type="number" step="1" min="40" max="200" outlined dense suffix="мм"
+            label="Ширина этикетки" class="col-6 col-sm-4" :readonly="!canEdit" :error="!!errors.qr_label_width_mm"
+            :error-message="errors.qr_label_width_mm" />
+          <q-input v-model.number="form.qr_label_height_mm" type="number" step="1" min="40" max="200" outlined dense suffix="мм"
+            label="Высота этикетки" class="col-6 col-sm-4" :readonly="!canEdit" :error="!!errors.qr_label_height_mm"
+            :error-message="errors.qr_label_height_mm" />
+          <div class="col-12 text-caption text-grey-7">
+            На листе А4 помещается {{ perSheet }} эт. Поля листа — по 5 мм.
+          </div>
+          <div class="col-12">
+            <div class="text-weight-medium q-mb-xs">Что печатать над QR-кодом (порядок — стрелками)</div>
+            <q-list bordered separator dense class="rounded-borders">
+              <q-item v-for="row in qrRows" :key="row.code" dense>
+                <q-item-section side>
+                  <q-checkbox :model-value="row.on" dense :disable="!canEdit" @update:model-value="toggleQr(row.code)" />
+                </q-item-section>
+                <q-item-section :class="row.on ? '' : 'text-grey-6'">{{ row.label }}</q-item-section>
+                <q-item-section v-if="canEdit && row.on" side>
+                  <div class="row no-wrap">
+                    <q-btn flat round dense size="sm" icon="arrow_upward" :disable="row.index === 0" @click="moveQr(row.code, -1)" />
+                    <q-btn flat round dense size="sm" icon="arrow_downward" :disable="row.index === form.qr_fields.length - 1" @click="moveQr(row.code, 1)" />
+                  </div>
+                </q-item-section>
+              </q-item>
+            </q-list>
+            <div v-if="errors.qr_fields" class="text-negative text-caption">{{ errors.qr_fields }}</div>
+          </div>
+        </q-card-section>
+      </q-card>
       <q-btn v-if="canEdit" type="submit" color="primary" unelevated icon="save" label="Сохранить" :loading="saving" />
     </q-form>
   </q-page>
@@ -127,6 +172,35 @@ async function removeLogo() {
   if (ok) logoChanged(data)
 }
 
+// QR-этикетка: поля из перечня системы; выбранные — в заданном порядке, остальные — ниже.
+const qrCatalogue = ref([])
+const qrRows = computed(() => {
+  const chosen = form.value.qr_fields ?? []
+  const label = (code) => qrCatalogue.value.find((f) => f.code === code)?.label
+  const on = chosen.filter(label).map((code, index) => ({ code, label: label(code), on: true, index }))
+  const off = qrCatalogue.value.filter((f) => !chosen.includes(f.code)).map((f) => ({ ...f, on: false }))
+  return [...on, ...off]
+})
+const perSheet = computed(() => {
+  const w = Number(form.value.qr_label_width_mm) || 95
+  const h = Number(form.value.qr_label_height_mm) || 140
+  return Math.max(Math.floor(200 / w), 1) * Math.max(Math.floor(287 / h), 1)
+})
+
+function toggleQr(code) {
+  const chosen = form.value.qr_fields ?? []
+  form.value.qr_fields = chosen.includes(code) ? chosen.filter((c) => c !== code) : [...chosen, code]
+}
+
+function moveQr(code, step) {
+  const list = [...form.value.qr_fields]
+  const from = list.indexOf(code)
+  const to = from + step
+  if (to < 0 || to >= list.length) return
+  list.splice(to, 0, list.splice(from, 1)[0])
+  form.value.qr_fields = list
+}
+
 async function save() {
   errors.value = {}
   saving.value = true
@@ -139,6 +213,8 @@ async function save() {
 
 onMounted(async () => {
   form.value = (await apiGet('core/clinic/')).data ?? {}
+  const fields = await apiGet('inpatient/qr-fields/')
+  qrCatalogue.value = fields.ok && Array.isArray(fields.data) ? fields.data : []
 })
 </script>
 

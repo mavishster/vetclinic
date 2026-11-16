@@ -4,6 +4,8 @@
       <h1 class="text-h5 q-my-none col-grow">Стационар</h1>
       <q-btn-toggle v-model="status" no-caps unelevated toggle-color="primary" @update:model-value="load"
         :options="[{ label: 'В стационаре', value: 'active' }, { label: 'Выписанные', value: 'discharged' }]" />
+      <q-btn v-if="can('inpatient.print_qr') && status === 'active' && rows.length" flat no-caps icon="qr_code_2"
+        label="QR всех пациентов" @click="printAllQr"><q-tooltip>Этикетки всех, кто сейчас в стационаре (лист А4)</q-tooltip></q-btn>
       <q-btn v-if="can('inpatient.add_hospitalization')" color="primary" unelevated icon="local_hotel" label="Принять" @click="admitOpen = true" />
     </div>
 
@@ -51,6 +53,8 @@ const rows = ref([])
 const loading = ref(false)
 const status = ref('active')
 const admitOpen = ref(false)
+
+const printAllQr = () => window.open('/api/inpatient/hospitalizations/qr-labels/', '_blank')
 
 async function load() {
   loading.value = true

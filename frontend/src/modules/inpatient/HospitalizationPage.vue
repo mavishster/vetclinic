@@ -15,6 +15,13 @@
           </div>
         </div>
         <q-btn flat icon="print" label="Лист" @click="printSheet" />
+        <q-btn-dropdown v-if="can('inpatient.print_qr')" flat no-caps icon="qr_code_2" label="QR для клетки">
+          <q-list>
+            <q-item v-for="n in [1, 2, 4]" :key="n" v-close-popup clickable @click="printQr(n)">
+              <q-item-section>{{ n === 4 ? '4 этикетки (весь лист)' : n === 1 ? '1 этикетка' : `${n} этикетки` }}</q-item-section>
+            </q-item>
+          </q-list>
+        </q-btn-dropdown>
         <q-btn v-if="can('billing.add_invoice')" outline color="primary" icon="receipt_long" label="Счёт" @click="invoice" />
         <q-btn v-if="h.status === 'active' && canEdit" color="positive" unelevated icon="logout" label="Выписать" @click="discharge" />
       </div>
@@ -266,6 +273,7 @@ async function invoice() {
   router.push(`/invoices/${data.invoice}`)
 }
 
+const printQr = (copies) => window.open(`/api/${base.value}/qr-label/?copies=${copies}`, '_blank')
 const printSheet = () => window.open(`/api/${base.value}/print-sheet/?date=${day.value}`, '_blank')
 
 let timer = null

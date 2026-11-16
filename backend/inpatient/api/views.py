@@ -10,13 +10,16 @@ from django.utils import timezone
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from core import services as core
 from core.api.directories import DirectoryViewSet
+from core.api.permissions import require_special
 from core.models import PrintTemplate
-from inpatient import services
+from inpatient import qr, services
 from inpatient.models import Hospitalization, Observation, TreatmentPlan, TreatmentTask, Ward
 
 
@@ -335,3 +338,59 @@ class HospitalizationViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             raise ValidationError({"template": ["Нет печатной формы «Лист назначений»."]})
         pdf = core.render_print(template, services.sheet_context(h, self._day(request)))
         return HttpResponse(pdf, content_type="application/pdf")
+
+    def _qr_pdf(self, request: Request, items: list[tuple[Hospitalization, int]]) -> HttpResponse:
+        require_special(request, "inpatient.print_qr")
+        template = (
+            PrintTemplate.objects.filter(kind="hospitalization_qr", is_active=True)
+            .order_by("name")
+            .first()
+        )
+        if template is None:
+            raise ValidationError({"template": ["Нет печатной формы «QR-этикетка пациента»."]})
+        if not items:
+            raise ValidationError({"ids": ["Нет пациентов для печати."]})
+        context = qr.sheet_context(items, request.build_absolute_uri("/"))
+        return HttpResponse(core.render_print(template, context), content_type="application/pdf")
+
+    @staticmethod
+    def _copies(request: Request) -> int:
+        try:
+            return max(1, min(int(request.query_params.get("copies", 1)), qr.MAX_COPIES))
+        except ValueError:
+            return 1
+
+    @action(detail=True, methods=["get"], url_path="qr-label")
+    def qr_label(self, request: Request, pk: str | None = None) -> HttpResponse:
+        """PDF с QR-этикеткой пациента (лист А4, этикетки для вырезания): ?copies=1…8."""
+        return self._qr_pdf(request, [(self.get_object(), self._copies(request))])
+
+    @action(detail=False, methods=["get"], url_path="qr-labels")
+    def qr_labels(self, request: Request) -> HttpResponse:
+        """PDF с этикетками нескольких пациентов: ?ids=a,b,c; без ids — все в стационаре."""
+        ids = [i for i in request.query_params.get("ids", "").split(",") if i]
+        queryset = self.get_queryset().filter(status="active")
+        if ids:
+            queryset = queryset.filter(pk__in=ids)
+        return self._qr_pdf(request, [(h, 1) for h in queryset.order_by("ward__name", "place")])
+
+
+class CanConfigureQr(BasePermission):
+    """Перечень полей нужен тем, кто настраивает этикетку или печатает её."""
+
+    def has_permission(self, request: Request, view: Any) -> bool:
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.has_perm("core.change_clinic") or user.has_perm("inpatient.print_qr"))
+        )
+
+
+class QrFieldsView(APIView):
+    """Какие поля можно выводить на QR-этикетке — для настройки в администрировании."""
+
+    permission_classes = [CanConfigureQr]
+
+    def get(self, request: Request) -> Response:
+        return Response(qr.available_fields())

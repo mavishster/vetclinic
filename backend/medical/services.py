@@ -717,6 +717,16 @@ def visit_still_needs_revisit(visit_id: Any) -> bool:
     return any(v.pk == visit_id for v in revisits_due(timezone.localdate() + timedelta(days=3650)))
 
 
+def visit_diagnoses(visit_id: Any) -> str:
+    """Диагнозы записи медкарты одной строкой — для этикетки стационара."""
+    from medical.models import VisitDiagnosis
+
+    names = VisitDiagnosis.objects.filter(visit_id=visit_id).values_list(
+        "diagnosis__name", flat=True
+    )
+    return ", ".join(names)
+
+
 def prescriptions_of(visit_id: Any) -> list[dict[str, Any]]:
     """Назначения записи медкарты — для стационара (перенести в лист назначений)."""
     from medical.models import Prescription

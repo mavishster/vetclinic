@@ -186,6 +186,14 @@ def logo_path(instance: "Clinic", filename: str) -> str:
     return f"clinic/logo-{uuid.uuid4().hex[:12]}.png"
 
 
+def default_qr_fields() -> list[str]:
+    """Поля QR-этикетки по умолчанию (перечень всех полей — в модуле стационара)."""
+    return [
+        "pet_name", "age", "diagnosis", "species_breed", "sex", "weight",
+        "ward_place", "admitted", "doctor", "day",
+    ]  # fmt: skip
+
+
 class Clinic(BaseModel):
     """Клиника (филиал). В первой версии — одна, создаётся миграцией."""
 
@@ -213,6 +221,13 @@ class Clinic(BaseModel):
     department_count_due_days = models.PositiveSmallIntegerField(
         "отделения: вносить остатки не позже N дней после выдачи", default=7
     )
+    # QR-этикетка пациента стационара (клеится на клетку): адрес, который зашит в код,
+    # размеры в мм и какие поля печатать над кодом (их перечень — в модуле стационара).
+    qr_base_url = models.CharField("адрес системы для QR-кодов", max_length=200, blank=True)
+    qr_size_mm = models.PositiveSmallIntegerField("размер QR-кода, мм", default=35)
+    qr_label_width_mm = models.PositiveSmallIntegerField("ширина этикетки, мм", default=95)
+    qr_label_height_mm = models.PositiveSmallIntegerField("высота этикетки, мм", default=140)
+    qr_fields = models.JSONField("поля на QR-этикетке", default=default_qr_fields)
 
     class Meta:
         verbose_name = "клиника"
