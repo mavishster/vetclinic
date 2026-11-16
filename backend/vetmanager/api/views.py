@@ -82,6 +82,12 @@ class TidyView(_ImportView):
         return Response(tidy.suggestions())
 
     def post(self, request: Request) -> Response:
+        if request.data.get("skip"):
+            try:
+                tidy.skip_pair(str(request.data.get("base_name") or ""))
+            except tidy.catalog.CatalogError as error:
+                raise ValidationError({"non_field_errors": [str(error)]}) from error
+            return Response({"skipped": True})
         try:
             item = tidy.merge(str(request.data.get("name") or ""), request.data.get("parts") or [])
         except tidy.catalog.CatalogError as error:

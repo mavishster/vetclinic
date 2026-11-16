@@ -8,6 +8,7 @@
 """
 
 import re
+import uuid
 from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
@@ -20,7 +21,8 @@ from catalog.models import Item, ItemUnit, Kind, Unit
 from vetmanager import client
 
 # Хвост названия с фасовкой: «(уп 30 саше)», «уп. 8 табл.», «№30», «x10», «10 табл.»
-_PACK_WORDS = r"(?:уп|упак|упаковка|пач|пачка|блистер|бл|короб|кор|набор|№|n|x|х)"
+# «№5» и «x5» сюда не входят: у «Воротник №5» это размер, а не количество в упаковке.
+_PACK_WORDS = r"(?:уп|упак|упаковка|пач|пачка|блистер|бл|короб|кор|набор)"
 # Только штучные фасовки. Вес и объём («2 кг», «75 г», «10 мл») — характеристика товара,
 # а не упаковка: «Корм Hills 2 кг» не должен стать «2 корма».
 _UNIT_WORDS = r"(?:саше|таб|табл|таблет\w*|капс\w*|амп\w*|шт|доз\w*|фл|флак\w*|пипет\w*|блистер\w*)"
@@ -71,9 +73,24 @@ class PackPart:
     price: Decimal | None
 
 
+# Хвост названия с объёмом или весом: «…, 10 мл.», «… 5 мл», «… 2 кг».
+_TRAILING = re.compile(r"[,\s]*\(?\s*(\d+[.,]?\d*)\s*(мл|г|кг|мг|л)\.?\s*\)?\s*$", re.IGNORECASE)
+
+
+def _trailing(name: str) -> tuple[Decimal | None, str]:
+    """Объём или вес в конце названия: «Supramil …, 10 мл.» → 10, «мл»."""
+    found = _TRAILING.search(name)
+    if not found:
+        return None, ""
+    return Decimal(found.group(1).replace(",", ".")), found.group(2).lower()
+
+
 def _clean(name: str) -> str:
-    """Название без хвоста с фасовкой и лишних пробелов."""
-    stripped = name
+    """Название без хвоста с фасовкой, объёмом или весом и без лишних пробелов.
+
+    «Supramil … от 25 кг до 50, 10 мл.» и «… 1 мл.» — это один препарат в двух фасовках.
+    """
+    stripped = _TRAILING.sub("", name)
     for pattern in _PACK_PATTERNS:
         stripped = pattern.sub("", stripped)
     return " ".join(stripped.replace("()", " ").split()).strip(" ,.-—")
@@ -110,6 +127,12 @@ def _price(item: Item) -> Decimal | None:
 
 
 def _dose(name: str) -> str:
+    """Дозировка внутри названия: «1 г», «50 мг/мл». Хвост с объёмом сюда не входит."""
+    name = _TRAILING.sub("", name)
+    return _doses_in(name)
+
+
+def _doses_in(name: str) -> str:
     """Дозировка внутри названия: «1 г», «50 мг/мл» — её нельзя путать с фасовкой."""
     found = re.findall(
         r"\d+[.,]?\d*\s*(?:мг|мкг|ме|г|мл)\s*(?:/\s*(?:мл|кг|доз\w*))?", name, re.IGNORECASE
@@ -139,12 +162,30 @@ def documents_by_item() -> dict[str, int]:
     return found
 
 
+def skip_pair(name: str) -> None:
+    """«Не объединять»: разные товары с похожими названиями (размеры, модели)."""
+    from vetmanager.models import Imported
+
+    if not name.strip():
+        raise catalog.CatalogError("Не поняли, какую пару не объединять.")
+    Imported.objects.update_or_create(
+        kind="pair_ok", external_id=name.strip().lower()[:50], defaults={"target_id": uuid.uuid4()}
+    )
+
+
+def _skipped_pairs() -> set[str]:
+    from vetmanager.models import Imported
+
+    return set(Imported.objects.filter(kind="pair_ok").values_list("external_id", flat=True))
+
+
 def suggestions(with_documents: bool = True) -> list[dict[str, Any]]:
     """Что можно привести в порядок: дубли и фасовки одной позиции.
 
     Возвращает предложения — применять их или нет, решает пользователь.
     """
     documents = documents_by_item() if with_documents else {}
+    skipped = _skipped_pairs()
     items = list(
         Item.objects.filter(kind=Kind.GOODS, is_active=True)
         .select_related("base_unit", "group")
@@ -157,15 +198,25 @@ def suggestions(with_documents: bool = True) -> list[dict[str, Any]]:
         )
     result = []
     for (base_name, _dosage, _group), found in groups.items():
-        if len(found) < 2:
+        if len(found) < 2 or base_name[:50] in skipped:
             continue
         parts = []
         for item in sorted(found, key=lambda i: i.name):
             quantity, unit_name = _pack_of(item.name)
+            if quantity is None:
+                # «Supramil …, 10 мл.»: количество в хвосте названия.
+                quantity, unit_name = _trailing(item.name)
             parts.append(
                 PackPart(item=item, quantity=quantity, unit_name=unit_name, price=_price(item))
             )
+        # Мелкая фасовка — первой: так понятнее, что станет единицей учёта.
+        parts.sort(key=lambda part: (part.quantity is None, part.quantity or 0))
         duplicates = all(part.quantity == parts[0].quantity for part in parts)
+        units_differ = len({part.item.base_unit_id for part in parts}) > 1
+        from_trailing = any(_pack_of(part.item.name)[0] is None for part in parts)
+        if from_trailing and not units_differ and not duplicates:
+            # «Цефтриаксон 0,5 г» и «1 г» — разные дозировки, а не фасовки одного.
+            continue
         result.append(
             {
                 "kind": "duplicates" if duplicates else "packs",
@@ -193,6 +244,13 @@ def suggestions(with_documents: bool = True) -> list[dict[str, Any]]:
         row["documents"] = sum(part["documents"] or 0 for part in row["items"])
     result.sort(key=lambda row: (-row["documents"], row["name"]))
     return result
+
+
+def _sized_unit(pack: Unit, ratio: Decimal, base_unit: Unit) -> Unit:
+    """Отдельная единица для упаковки своего размера: «упак. 6 таб.»."""
+    amount = format(ratio.normalize(), "f").rstrip("0").rstrip(".")
+    name = f"{pack.name} {amount} {base_unit.name}"[:20]
+    return _find_unit(name) or Unit.objects.create(name=name)
 
 
 @transaction.atomic
@@ -228,6 +286,10 @@ def merge(name: str, parts: list[dict[str, Any]]) -> Item:
     for item, quantity, unit_name in chosen:
         ratio = (quantity / base_quantity).quantize(Decimal("0.000001"))
         unit = base_unit if ratio == 1 else (_find_unit(unit_name) or item.base_unit)
+        if any(row["unit"] == unit.pk and row["ratio"] != ratio for row in units):
+            # Упаковки разного размера («2 таб.» и «6 таб.») — у каждой своя единица,
+            # иначе одна затёрла бы другую.
+            unit = _sized_unit(unit, ratio, base_unit)
         if any(row["unit"] == unit.pk for row in units):
             continue  # одинаковые фасовки (дубли) — одна единица
         source = item.units.filter(for_sale=True).first() or item.units.first()

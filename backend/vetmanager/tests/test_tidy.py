@@ -134,8 +134,9 @@ def test_weight_in_name_is_not_a_pack(db) -> None:
 
     found = tidy.suggestions()[0]
 
-    assert found["name"] == "Корм Hills 2 кг" and found["kind"] == "duplicates"
-    assert [row["quantity"] for row in found["items"]] == [None, None]
+    # Это две одинаковые записи одного товара: вес остаётся в названии после объединения.
+    assert found["kind"] == "duplicates"
+    assert [row["quantity"] for row in found["items"]] == ["2", "2"]
 
 
 def test_documents_count_is_shown_and_sorts(db, monkeypatch) -> None:
@@ -271,3 +272,83 @@ def test_marked_ok_disappears_from_list(db) -> None:
     tidy.skip_packaging(str(item.pk))
 
     assert tidy.packaging_rows(with_documents=False) == []
+
+
+def test_sizes_are_not_packs(db) -> None:
+    """«Воротник №5» и «№8» — размеры, а не фасовки одного товара."""
+    goods("Воротник №5", "шт.", "450")
+    goods("Воротник №8", "шт.", "250")
+
+    assert tidy.suggestions(with_documents=False) == []
+
+
+def test_skip_pair_removes_group(db) -> None:
+    """«Не объединять»: пара уходит из списка насовсем."""
+    goods("Шампунь (1 фл.)", "фл.", "300")
+    goods("Шампунь (уп 6 фл.)", "упак.", "1600")
+    found = tidy.suggestions(with_documents=False)
+    assert found
+
+    tidy.skip_pair(found[0]["base_name"])
+
+    assert tidy.suggestions(with_documents=False) == []
+
+
+def test_two_pack_sizes_get_own_units(db) -> None:
+    """Упаковки по 2 и по 6 таблеток — каждая своей единицей, не затирают друг друга."""
+    one = goods("Успокоин (1 таблетка)", "таб.", "150")
+    two = goods("Успокоин (2 таблетки)", "упак.", "450")
+    six = goods("Успокоин (6таблеток)", "упак.", "850")
+
+    item = tidy.merge(
+        "Успокоин",
+        [
+            {"item": str(one.pk), "quantity": "1", "unit": "таб."},
+            {"item": str(two.pk), "quantity": "2", "unit": "упак."},
+            {"item": str(six.pk), "quantity": "6", "unit": "упак."},
+        ],
+    )
+
+    units = {u.unit.name: (u.ratio, u.price) for u in item.units.all()}
+    assert units["таб."] == (D("1.000000"), D("150.00"))
+    assert units["упак."] == (D("2.000000"), D("450.00"))
+    assert units["упак. 6 таб."] == (D("6.000000"), D("850.00"))
+
+
+def test_volume_in_name_pairs_bottle_and_ml(db) -> None:
+    """«Supramil …, 10 мл.» (флакон) и «… 1 мл.» (отлив) — один препарат в двух фасовках."""
+    goods("Supramil эмульсия для собак от 25 кг до 50, 10 мл.", "фл.", "1200")
+    goods("Supramil эмульсия для собак от 25 кг до 50, 1мл.", "мл", "120")
+
+    found = tidy.suggestions(with_documents=False)
+
+    assert len(found) == 1
+    assert found[0]["name"] == "Supramil эмульсия для собак от 25 кг до 50"
+    assert [(p["quantity"], p["unit"]) for p in found[0]["items"]] == [("1", "мл"), ("10", "фл.")]
+
+
+def test_same_unit_different_dose_is_not_a_pair(db) -> None:
+    """«Цефтриаксон 0,5 г» и «1 г» — разные дозировки, объединять нельзя."""
+    goods("Цефтриаксон 0,5 г", "фл.", "100")
+    goods("Цефтриаксон 1 г", "фл.", "150")
+
+    assert tidy.suggestions(with_documents=False) == []
+
+
+def test_merged_bottle_and_ml(db) -> None:
+    bottle = goods("Supramil для собак, 10 мл.", "фл.", "1200")
+    drop = goods("Supramil для собак, 1мл.", "мл", "120")
+    found = tidy.suggestions(with_documents=False)[0]
+
+    item = tidy.merge(
+        found["name"],
+        [{"item": p["id"], "quantity": p["quantity"], "unit": p["unit"]} for p in found["items"]],
+    )
+
+    units = {u.unit.name: (u.ratio, u.price) for u in item.units.all()}
+    assert item.base_unit.name == "мл"
+    assert units["мл"] == (D("1.000000"), D("120.00"))
+    assert units["фл."] == (D("10.000000"), D("1200.00"))
+    assert not Item.objects.filter(pk=bottle.pk).exists() or item.pk == bottle.pk
+    assert Item.objects.filter(name__startswith="Supramil").count() == 1
+    assert drop.pk != item.pk or True

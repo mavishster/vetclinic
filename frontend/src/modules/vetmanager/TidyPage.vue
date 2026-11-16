@@ -86,6 +86,9 @@
         <q-input v-model="row.name" dense outlined class="col" label="Название после объединения" />
         <q-btn color="primary" unelevated icon="merge" label="Объединить" :loading="merging === row.base_name"
           :disable="!ready(row)" @click="merge(row)" />
+        <q-btn flat color="grey-7" label="Не объединять" :loading="merging === row.base_name" @click="skipPair(row)">
+          <q-tooltip>Это разные товары — размеры, модели</q-tooltip>
+        </q-btn>
       </q-card-section>
       <q-separator />
       <q-markup-table flat dense>
@@ -97,7 +100,8 @@
             <td>{{ part.name }}</td>
             <td style="width: 140px">
               <q-select v-model="part.unit" :options="units" option-value="name" option-label="name" emit-value map-options
-                dense borderless :disable="part.used" />
+                dense borderless use-input new-value-mode="add-unique" :disable="part.used"
+                @new-value="(value, done) => done(value)" />
             </td>
             <td style="width: 150px">
               <q-input v-model="part.quantity" type="number" min="0" step="1" dense outlined :disable="part.used"
@@ -172,6 +176,14 @@ async function skipPackaging(row) {
   const { ok } = await apiPost('vetmanager/packaging/', { item: row.id, skip: true })
   fixing.value = ''
   if (ok) packaging.value = packaging.value.filter((item) => item.id !== row.id)
+}
+
+// «Не объединять»: «Воротник №5» и «№8» — разные размеры, а не фасовки одного товара.
+async function skipPair(row) {
+  merging.value = row.base_name
+  const { ok } = await apiPost('vetmanager/tidy/', { skip: true, base_name: row.base_name })
+  merging.value = ''
+  if (ok) rows.value = rows.value.filter((item) => item.base_name !== row.base_name)
 }
 
 async function merge(row) {
