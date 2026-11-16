@@ -78,9 +78,17 @@ class PackPart:
 _TRAILING = re.compile(r"[,\s]*\(?\s*(\d+[.,]?\d*)\s*(мл|г|кг|мг|л)\.?\s*\)?\s*$", re.IGNORECASE)
 
 
+# Пометка в конце названия без цифр: «(МАГ)», «(Чехия)» — за ней может стоять объём.
+_TAIL_TAG = re.compile(r"\s*\((?=[^)]*\))(?![^)]*\d)[^)]*\)\s*$")
+
+
+def _without_tag(name: str) -> str:
+    return _TAIL_TAG.sub("", name).strip()
+
+
 def _trailing(name: str) -> tuple[Decimal | None, str]:
     """Объём или вес в конце названия: «Supramil …, 10 мл.» → 10, «мл»."""
-    found = _TRAILING.search(name)
+    found = _TRAILING.search(_without_tag(name))
     if not found:
         return None, ""
     return Decimal(found.group(1).replace(",", ".")), found.group(2).lower()
@@ -91,7 +99,7 @@ def _clean(name: str) -> str:
 
     «Supramil … от 25 кг до 50, 10 мл.» и «… 1 мл.» — это один препарат в двух фасовках.
     """
-    stripped = _TRAILING.sub("", name)
+    stripped = _TRAILING.sub("", _without_tag(name))
     for pattern in _PACK_PATTERNS:
         stripped = pattern.sub("", stripped)
     return " ".join(stripped.replace("()", " ").split()).strip(" ,.-—")
@@ -129,8 +137,7 @@ def _price(item: Item) -> Decimal | None:
 
 def _dose(name: str) -> str:
     """Дозировка внутри названия: «1 г», «50 мг/мл». Хвост с объёмом сюда не входит."""
-    name = _TRAILING.sub("", name)
-    return _doses_in(name)
+    return _doses_in(_TRAILING.sub("", _without_tag(name)))
 
 
 def _doses_in(name: str) -> str:
@@ -215,12 +222,12 @@ def suggestions(with_documents: bool = True) -> list[dict[str, Any]]:
         duplicates = all(part.quantity == parts[0].quantity for part in parts)
         units_differ = len({part.item.base_unit_id for part in parts}) > 1
         from_trailing = any(_pack_of(part.item.name)[0] is None for part in parts)
-        if from_trailing and not units_differ and not duplicates:
-            # «Цефтриаксон 0,5 г» и «1 г» — разные дозировки, а не фасовки одного.
-            continue
+        # Одна и та же единица у обоих («Ациломаг 1 мл» и «100 мл») — это может быть
+        # и фасовка, и разные дозировки. Решает человек: помечаем «проверьте».
+        check = from_trailing and not units_differ and not duplicates
         result.append(
             {
-                "kind": "duplicates" if duplicates else "packs",
+                "kind": "check" if check else ("duplicates" if duplicates else "packs"),
                 "name": _clean(found[0].name) or found[0].name,
                 "base_name": base_name,
                 "items": [

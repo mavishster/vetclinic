@@ -327,12 +327,16 @@ def test_volume_in_name_pairs_bottle_and_ml(db) -> None:
     assert [(p["quantity"], p["unit"]) for p in found[0]["items"]] == [("1", "мл"), ("10", "фл.")]
 
 
-def test_same_unit_different_dose_is_not_a_pair(db) -> None:
-    """«Цефтриаксон 0,5 г» и «1 г» — разные дозировки, объединять нельзя."""
-    goods("Цефтриаксон 0,5 г", "фл.", "100")
-    goods("Цефтриаксон 1 г", "фл.", "150")
+def test_same_unit_pairs_are_marked_for_check(db) -> None:
+    """Одинаковая единица у обоих — решает человек: «Ациломаг 1 мл» и «100 мл» объединяют,
+    «Цефтриаксон 0,5 г» и «1 г» — нет. Показываем с пометкой «проверьте»."""
+    goods("Ациломаг 1 мл (МАГ)", "мл", "50")
+    goods("Ациломаг 100 мл (МАГ)", "мл", "1300")
 
-    assert tidy.suggestions(with_documents=False) == []
+    found = tidy.suggestions(with_documents=False)
+
+    assert len(found) == 1 and found[0]["kind"] == "check"
+    assert [(p["quantity"], p["unit"]) for p in found[0]["items"]] == [("1", "мл"), ("100", "мл")]
 
 
 def test_merged_bottle_and_ml(db) -> None:

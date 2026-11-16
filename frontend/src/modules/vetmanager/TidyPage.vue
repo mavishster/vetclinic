@@ -81,8 +81,12 @@
 
     <q-card v-for="row in rows" :key="row.base_name" flat bordered class="q-mb-sm">
       <q-card-section class="row items-center q-py-sm q-gutter-sm">
-        <q-badge :color="row.kind === 'duplicates' ? 'orange' : 'primary'" outline
-          :label="row.kind === 'duplicates' ? 'дубли' : 'фасовки'" />
+        <q-badge :color="BADGE[row.kind].color" outline :label="BADGE[row.kind].label">
+          <q-tooltip v-if="row.kind === 'check'">
+            Одинаковая единица у обоих: это может быть фасовка (флакон и отлив),
+            а может — разные дозировки. Объединяйте, только если это один препарат.
+          </q-tooltip>
+        </q-badge>
         <q-badge v-if="row.documents" color="grey-7" outline :label="`в счетах: ${row.documents}`">
           <q-tooltip>Сколько раз позиции встречаются в счетах VetManager</q-tooltip>
         </q-badge>
@@ -134,6 +138,11 @@ import { apiGet, apiPost, fieldErrors } from '@/api'
 import { money } from '@/modules/catalog/money'
 
 const $q = useQuasar()
+const BADGE = {
+  packs: { color: 'primary', label: 'фасовки' },
+  duplicates: { color: 'orange', label: 'дубли' },
+  check: { color: 'warning', label: 'проверьте' },
+}
 const tab = ref('packaging')
 const rows = ref([])
 const packaging = ref([])
