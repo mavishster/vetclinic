@@ -130,3 +130,22 @@ def test_second_pass_brands() -> None:
 
     for name, substance in rows.items():
         assert [s.name.lower() for s in items[name].substances.all()] == [substance], name
+
+
+@pytest.mark.django_db
+def test_third_pass_brands() -> None:
+    """Третий проход: Симпарика, Фенпраз, Ципровет, Флексопрофен и другие."""
+    rows = {
+        "Симпарика 40мг д/собак 10-20 кг 1шт": "сароланер",
+        "Фенпраз сусп. д/кошек 5мл": "празиквантел",
+        "Ципровет д/собак 1табл.": "ципрофлоксацин",
+        "Флексопрофен 5% 50мл": "кетопрофен",
+        "Соладокси 100 мг для кошек и собак": "доксициклин",
+        "Фебтал для собак и кошек": "фенбендазол",
+    }
+    items = {name: drug(name) for name in rows}
+
+    call_command("fill_drug_info", "--apply", stdout=StringIO())
+
+    for name, substance in rows.items():
+        assert [s.name.lower() for s in items[name].substances.all()] == [substance], name
