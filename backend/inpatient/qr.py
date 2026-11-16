@@ -132,17 +132,32 @@ def sheet_context(
     }
 
 
+# Примеры значений для предпросмотра в редакторе печатных форм.
+SAMPLE_VALUES = {
+    "pet_name": "Барсик",
+    "age": "3 года 2 мес.",
+    "diagnosis": "Гастроэнтерит",
+    "species_breed": "Кошки, Метис",
+    "sex": "кот",
+    "weight": "4,2 кг",
+    "ward_place": "Палата 1, место 2",
+    "admitted": date.today().strftime("%d.%m.%Y"),
+    "doctor": "Иванова А.",
+    "day": "2-е сутки",
+    "owner": "Петров Пётр Петрович",
+}
+
+
 def sample_context() -> dict[str, Any]:
-    """Пример для редактора печатных форм."""
+    """Пример для редактора печатных форм: поля — те, что выбраны в настройках клиники."""
     url = "http://192.168.0.10/inpatient/00000000-0000-0000-0000-000000000000"
     clinic = core.current_clinic()
     grid = layout(clinic.qr_label_width_mm, clinic.qr_label_height_mm)
     label = {
         "fields": [
-            {"code": "pet_name", "label": "Кличка", "value": "Барсик"},
-            {"code": "age", "label": "Возраст", "value": "3 года 2 мес."},
-            {"code": "diagnosis", "label": "Диагноз", "value": "Гастроэнтерит"},
-            {"code": "ward_place", "label": "Палата и место", "value": "Палата 1, место 2"},
+            {"code": code, "label": FIELDS[code][0], "value": SAMPLE_VALUES[code]}
+            for code in clinic.qr_fields or []
+            if code in FIELDS
         ],
         "url": url,
         "qr": qr_data_uri(url),

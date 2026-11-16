@@ -157,3 +157,15 @@ def test_configured_base_url_is_used_when_given(hosp) -> None:
     context = qr.sheet_context([(hosp, 1)], "")
 
     assert context["labels"][0]["url"].startswith("https://vet.example.kg/inpatient/")
+
+
+def test_template_preview_uses_fields_chosen_in_settings() -> None:
+    """Предпросмотр в редакторе печатных форм показывает те же поля, что и настоящая печать."""
+    clinic = core.current_clinic()
+    clinic.qr_fields = ["pet_name", "weight", "nonsense", "owner"]
+    clinic.save()
+
+    sample = qr.sample_context()
+
+    assert [f["code"] for f in sample["labels"][0]["fields"]] == ["pet_name", "weight", "owner"]
+    assert set(qr.SAMPLE_VALUES) == set(qr.FIELDS)  # у каждого поля есть пример
