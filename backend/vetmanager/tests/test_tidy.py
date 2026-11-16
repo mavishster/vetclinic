@@ -336,8 +336,9 @@ def test_same_unit_different_dose_is_not_a_pair(db) -> None:
 
 
 def test_merged_bottle_and_ml(db) -> None:
-    bottle = goods("Supramil для собак, 10 мл.", "фл.", "1200")
-    drop = goods("Supramil для собак, 1мл.", "мл", "120")
+    """Флакон и отлив становятся одной позицией: остаток в мл, флакон = 10 мл."""
+    goods("Supramil для собак, 10 мл.", "фл.", "1200")
+    goods("Supramil для собак, 1мл.", "мл", "120")
     found = tidy.suggestions(with_documents=False)[0]
 
     item = tidy.merge(
@@ -349,6 +350,4 @@ def test_merged_bottle_and_ml(db) -> None:
     assert item.base_unit.name == "мл"
     assert units["мл"] == (D("1.000000"), D("120.00"))
     assert units["фл."] == (D("10.000000"), D("1200.00"))
-    assert not Item.objects.filter(pk=bottle.pk).exists() or item.pk == bottle.pk
     assert Item.objects.filter(name__startswith="Supramil").count() == 1
-    assert drop.pk != item.pk or True
