@@ -3,11 +3,16 @@
 Таблицы модуля — его личное дело: другие модули в них не пишут (PROJECT_PLAN, 4.3).
 """
 
+from datetime import datetime, timedelta
+
 from django.conf import settings
 from django.db import models
 
 from core.fields import QuantityField
 from core.models import ClinicScopedModel, Directory
+
+# Если у отметки нет промежутка «с — до», просроченной она становится через час.
+DEFAULT_WINDOW_MINUTES = 60
 
 
 class Ward(Directory):
@@ -127,7 +132,8 @@ class TreatmentPlan(models.Model):
     title = models.CharField("препарат или процедура", max_length=255)
     dose = models.CharField("доза", max_length=100, blank=True)
     route = models.CharField("способ", max_length=10, choices=Route.choices, default=Route.ORAL)
-    times = models.JSONField("часы", default=list)  # ["08:00", "20:00"]
+    # Часы выполнения: "08:00" (срок — час после) или промежуток "08:00-20:00" (с и до).
+    times = models.JSONField("часы", default=list)
     start_date = models.DateField("с даты")
     days = models.PositiveSmallIntegerField("дней", default=1)
     note = models.CharField("примечание", max_length=255, blank=True)
@@ -156,7 +162,8 @@ class TreatmentTask(models.Model):
     hospitalization = models.ForeignKey(
         Hospitalization, on_delete=models.CASCADE, related_name="tasks"
     )
-    scheduled_at = models.DateTimeField("когда", db_index=True)
+    scheduled_at = models.DateTimeField("когда (с)", db_index=True)
+    due_until = models.DateTimeField("выполнить до", null=True, blank=True)
     status = models.CharField(
         "статус", max_length=8, choices=Status.choices, default=Status.PLANNED
     )
@@ -180,6 +187,15 @@ class TreatmentTask(models.Model):
 
     def __str__(self) -> str:
         return f"{self.plan} — {self.scheduled_at:%d.%m %H:%M}"
+
+    @property
+    def deadline(self) -> datetime:
+        """Когда отметка считается просроченной: конец промежутка «с — до»
+        или, если он не задан, час после назначенного времени."""
+        return self.due_until or self.scheduled_at + timedelta(minutes=DEFAULT_WINDOW_MINUTES)
+
+    def is_overdue(self, now: datetime) -> bool:
+        return self.status == self.Status.PLANNED and self.deadline < now
 
 
 class Observation(models.Model):

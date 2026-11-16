@@ -100,7 +100,27 @@ def discharge(hospitalization: Hospitalization, outcome: str = "") -> Hospitaliz
 
 # --- Назначения и лист назначений ---------------------------------------------------
 
-_TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_HM = r"([01]\d|2[0-3]):[0-5]\d"
+_SLOT = re.compile(rf"^({_HM})(?:\s*[-–—]\s*({_HM}))?$")
+
+
+def _parse_slots(times: list[str]) -> list[tuple[str, str | None]]:
+    """«08:00» или «08:00-20:00» (с — до) → [(с, до | None)], по возрастанию «с»."""
+    slots: dict[str, str | None] = {}
+    for raw in times:
+        text = (raw or "").strip()
+        if not text:
+            continue
+        match = _SLOT.match(text)
+        if match is None:
+            raise InpatientError("Укажите часы в виде 08:00 или промежутка 08:00-20:00.")
+        start, end = match.group(1), match.group(3)
+        if end == start:
+            raise InpatientError(f"Промежуток {text}: «с» и «до» совпадают.")
+        slots[start] = end
+    if not slots:
+        raise InpatientError("Укажите часы в виде 08:00 или промежутка 08:00-20:00.")
+    return sorted(slots.items())
 
 
 @transaction.atomic
@@ -120,9 +140,7 @@ def add_plan(
     title = (title or (item.name if item else "")).strip()
     if not title:
         raise InpatientError("Укажите препарат или процедуру.")
-    times = sorted({t.strip() for t in times if t and t.strip()})
-    if not times or any(not _TIME.match(t) for t in times):
-        raise InpatientError("Укажите часы в виде 08:00, 20:00.")
+    slots = _parse_slots(times)
     if days < 1 or days > 60:
         raise InpatientError("Число дней — от 1 до 60.")
     plan = TreatmentPlan.objects.create(
@@ -131,23 +149,28 @@ def add_plan(
         title=title,
         dose=dose.strip(),
         route=route,
-        times=times,
+        times=[f"{a}-{b}" if b else a for a, b in slots],
         start_date=start_date,
         days=days,
         note=note.strip(),
     )
     zone = timezone.get_current_timezone()
-    TreatmentTask.objects.bulk_create(
-        TreatmentTask(
-            plan=plan,
-            hospitalization=hospitalization,
-            scheduled_at=datetime.combine(
-                start_date + timedelta(days=d), time.fromisoformat(t), zone
-            ),
-        )
-        for d in range(days)
-        for t in times
-    )
+    tasks = []
+    for d in range(days):
+        day = start_date + timedelta(days=d)
+        for start, end in slots:
+            begin = datetime.combine(day, time.fromisoformat(start), zone)
+            until = None
+            if end:
+                until = datetime.combine(day, time.fromisoformat(end), zone)
+                if until <= begin:  # «22:00-02:00» — «до» следующей ночью
+                    until += timedelta(days=1)
+            tasks.append(
+                TreatmentTask(
+                    plan=plan, hospitalization=hospitalization, scheduled_at=begin, due_until=until
+                )
+            )
+    TreatmentTask.objects.bulk_create(tasks)
     return plan
 
 
@@ -292,6 +315,13 @@ def active() -> QuerySet[Hospitalization]:
 # --- Печать -------------------------------------------------------------------------
 
 
+def _window_text(task: TreatmentTask) -> str:
+    start = f"{timezone.localtime(task.scheduled_at):%H:%M}"
+    if task.due_until is None:
+        return start
+    return f"{start}–{timezone.localtime(task.due_until):%H:%M}"
+
+
 def sheet_context(hospitalization: Hospitalization, day: date) -> dict[str, Any]:
     """Лист назначений на день — для печати и подписи персонала."""
     pet = hospitalization.pet
@@ -306,7 +336,7 @@ def sheet_context(hospitalization: Hospitalization, day: date) -> dict[str, Any]
         "reason": hospitalization.reason,
         "tasks": [
             {
-                "time": f"{timezone.localtime(t.scheduled_at):%H:%M}",
+                "time": _window_text(t),
                 "title": t.plan.title,
                 "dose": t.plan.dose,
                 "route": t.plan.get_route_display(),

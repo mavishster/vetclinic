@@ -10,7 +10,7 @@
         </q-item-label>
         <q-item v-for="t in tasks" :key="t.id" clickable @click="$router.push(`/inpatient/${t.hospitalization}`)">
           <q-item-section side class="text-weight-bold" :class="t.overdue ? 'text-negative' : ''" style="min-width: 52px">
-            {{ time(t.scheduled_at) }}
+            {{ windowText(t) }}
           </q-item-section>
           <q-item-section>
             <q-item-label>{{ t.pet_name }} · {{ t.title }} <span class="text-grey-7">{{ t.dose }}</span></q-item-label>
@@ -54,6 +54,7 @@ const overdue = computed(() => tasks.value.some((t) => t.overdue))
 const notified = new Set()
 let timer = null
 const time = (v) => new Date(v).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+const windowText = (t) => (t.due_until ? `${time(t.scheduled_at)}–${time(t.due_until)}` : time(t.scheduled_at))
 
 async function load() {
   const { ok, data } = await apiGet(`inpatient/hospitalizations/my-tasks/${everyone.value ? '?all=1' : ''}`)

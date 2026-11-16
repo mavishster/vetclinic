@@ -48,6 +48,7 @@ class TaskSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "dose",
             "route_label",
             "scheduled_at",
+            "due_until",
             "status",
             "done_at",
             "done_by_name",
@@ -57,7 +58,7 @@ class TaskSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         ]
 
     def get_overdue(self, task: TreatmentTask) -> bool:
-        return task.status == TreatmentTask.Status.PLANNED and task.scheduled_at < timezone.now()
+        return task.is_overdue(timezone.now())
 
 
 class PlanSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
@@ -157,7 +158,7 @@ class HospitalizationSerializer(serializers.ModelSerializer):  # type: ignore[ty
         return {
             "total": len(tasks),
             "done": sum(t.status == "done" for t in tasks),
-            "overdue": sum(t.status == "planned" and t.scheduled_at < now for t in tasks),
+            "overdue": sum(t.is_overdue(now) for t in tasks),
         }
 
     def create(self, validated_data: dict[str, Any]) -> Hospitalization:
@@ -223,7 +224,8 @@ class HospitalizationViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
                     "dose": t.plan.dose,
                     "route_label": t.plan.get_route_display(),
                     "scheduled_at": t.scheduled_at,
-                    "overdue": t.scheduled_at < now,
+                    "due_until": t.due_until,
+                    "overdue": t.is_overdue(now),
                 }
                 for t in tasks
             ]

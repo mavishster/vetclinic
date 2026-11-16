@@ -50,13 +50,13 @@
         </div>
         <q-list bordered separator class="rounded-borders">
           <q-item v-for="t in sheet" :key="t.id" :class="{ 'row-highlight-negative': t.overdue, 'row-highlight-positive': t.status === 'done' }">
-            <q-item-section side class="text-weight-bold" style="width: 64px">{{ time(t.scheduled_at) }}</q-item-section>
+            <q-item-section side class="text-weight-bold" style="min-width: 64px">{{ windowText(t) }}</q-item-section>
             <q-item-section>
               <q-item-label>{{ t.title }} <span class="text-grey-8">{{ t.dose }}</span> <span class="text-caption text-grey-7">· {{ t.route_label }}</span></q-item-label>
               <q-item-label v-if="t.status !== 'planned'" caption>
                 {{ t.status === 'done' ? 'выполнено' : 'пропущено' }} {{ t.done_at ? time(t.done_at) : '' }} · {{ t.done_by_name }}{{ t.note ? ` · ${t.note}` : '' }}
               </q-item-label>
-              <q-item-label v-else-if="t.overdue" caption class="text-negative">время прошло — не отмечено</q-item-label>
+              <q-item-label v-else-if="t.overdue" caption class="text-negative">срок{{ t.due_until ? ` до ${time(t.due_until)}` : '' }} прошёл — не отмечено</q-item-label>
             </q-item-section>
             <q-item-section v-if="canEdit" side>
               <div class="row no-wrap q-gutter-x-xs">
@@ -84,7 +84,7 @@
             <q-input v-model="plan.dose" outlined dense label="Доза" class="col-6 col-md-2" />
             <q-select v-model="plan.route" :options="ROUTES" emit-value map-options outlined dense label="Способ" class="col-6 col-md-2" />
             <q-select v-model="plan.times" multiple use-chips use-input new-value-mode="add-unique" hide-dropdown-icon outlined dense
-              label="Часы (08:00 + Enter)" class="col-12 col-md-4" :options="[]" />
+              label="Часы: 08:00 или с—до 08:00-20:00 (+ Enter)" class="col-12 col-md-4" :options="[]" />
           </div>
           <div class="row q-col-gutter-sm items-center">
             <div class="col-auto q-gutter-x-xs">
@@ -163,6 +163,7 @@ const PRESETS = [
 ]
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const time = (v) => new Date(v).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+const windowText = (t) => (t.due_until ? `${time(t.scheduled_at)}–${time(t.due_until)}` : time(t.scheduled_at))
 const fmtDate = (v) => new Date(v).toLocaleDateString('ru-RU')
 const fmtDateTime = (v) => new Date(v).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 

@@ -229,10 +229,41 @@ def test_my_tasks_api_and_staff_names(pet, doctor, ward) -> None:
     admin.force_authenticate(get_user_model().objects.create_superuser(username="a", password="x"))
     h = admin.post("/api/inpatient/hospitalizations/", {"pet": str(pet.pk), "ward": str(ward.pk), "doctor": str(doctor.pk),
                    "staff": [assistant.pk]}, format="json").json()  # fmt: skip
-    now = timezone.localtime() - timedelta(minutes=5)
+    now = timezone.localtime() - timedelta(minutes=90)
     admin.post(f"/api/inpatient/hospitalizations/{h['id']}/plans/", {"title": "Осмотр", "times": [now.strftime("%H:%M")],
                "start_date": now.date().isoformat()}, format="json")  # fmt: skip
 
     tasks = admin.get("/api/inpatient/hospitalizations/my-tasks/?all=1").json()
     assert h["staff_names"] == ["Сидорова О."]
     assert tasks[0]["pet_name"] == "Барсик" and tasks[0]["overdue"] is True
+
+
+def test_task_window_from_to_and_overdue_only_after_it(pet, doctor, ward) -> None:
+    h = services.admit(pet, ward, doctor)
+    plan = services.add_plan(
+        h, "Капельница", ["08:00-20:00", "22:00-02:00", "09:00"], timezone.localdate()
+    )
+
+    day, plain, night = plan.tasks.order_by("scheduled_at")
+    zone = timezone.get_current_timezone()
+    noon = timezone.make_aware(
+        timezone.datetime.combine(timezone.localdate(), timezone.datetime.min.time()), zone
+    ).replace(hour=16, minute=2)
+
+    assert plan.times == ["08:00-20:00", "09:00", "22:00-02:00"]
+    assert timezone.localtime(day.due_until).strftime("%H:%M") == "20:00"
+    assert not day.is_overdue(noon)  # в 16:02 окно 08:00–20:00 ещё открыто
+    assert day.is_overdue(noon.replace(hour=20, minute=1))
+    assert plain.due_until is None and plain.is_overdue(noon)  # без «до» — через час
+    assert not plain.is_overdue(noon.replace(hour=9, minute=30))
+    assert (
+        timezone.localtime(night.due_until).date() > timezone.localtime(night.scheduled_at).date()
+    )
+
+
+def test_bad_time_window_is_rejected(pet, doctor, ward) -> None:
+    h = services.admit(pet, ward, doctor)
+
+    for bad in (["8-20"], ["08:00-08:00"], [""]):
+        with pytest.raises(InpatientError):
+            services.add_plan(h, "Осмотр", bad, timezone.localdate())
