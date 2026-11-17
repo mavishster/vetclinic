@@ -567,10 +567,13 @@ def reset_combination_prices(combination: Item) -> None:
 
 
 def preparations(prevention_kind: str) -> QuerySet[Item]:
-    """Товары и услуги для вида профилактики: своя отметка позиции или отметка её группы."""
+    """Препараты (товары) для вида профилактики: своя отметка позиции или отметка её группы.
+
+    Услуги сюда не попадают: в профилактике выбирают препарат, а саму услугу врач
+    добавляет в счёт отдельно, рядом с препаратом.
+    """
     return (
-        Item.objects.filter(is_active=True)
-        .exclude(kind=Kind.COMBO)
+        Item.objects.filter(is_active=True, kind=Kind.GOODS)
         .filter(
             Q(prevention_kind=prevention_kind)
             | Q(prevention_kind="", group__prevention_kind=prevention_kind)

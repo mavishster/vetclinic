@@ -162,7 +162,7 @@ K = PreventionType.Kind
 
 
 def preparations(prevention_type: PreventionType) -> list[Any]:
-    """Что предлагать для вида профилактики: товары и услуги с этим видом в каталоге."""
+    """Что предлагать для вида профилактики: товары (препараты) с этим видом в каталоге."""
     return list(catalog.preparations(prevention_type.kind))
 
 

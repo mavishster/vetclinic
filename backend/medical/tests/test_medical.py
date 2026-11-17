@@ -195,6 +195,25 @@ def test_repeat_date_defaults_from_type_and_deworming_closes_any_product(pet, do
     assert [i.name for i in services.preparations(ptype("deworming"))] == ["Мильбемакс", "Празицид"]
 
 
+def test_preparations_list_has_goods_only_not_services(vaccine) -> None:
+    vaccine.prevention_kind = "vaccination"
+    vaccine.save(update_fields=["prevention_kind"])
+    catalog.save_item(
+        Item(
+            kind=Kind.SERVICE,
+            name="Вакцинация Нобивак Rabies",
+            group=ItemGroup.objects.filter(kind=Kind.SERVICE).first(),
+            base_unit=Unit.objects.get(name="усл."),
+            prevention_kind="vaccination",
+        ),
+        [{"unit": Unit.objects.get(name="усл."), "price": D("300")}],
+    )
+
+    names = [i.name for i in services.preparations(ptype("vaccination"))]
+
+    assert names == ["Нобивак Rabies"]
+
+
 def test_sterilization_and_chipping_update_pet_card(pet, doctor) -> None:
     visit = services.start_visit(pet, doctor)
 
