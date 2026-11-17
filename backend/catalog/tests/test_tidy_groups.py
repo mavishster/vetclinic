@@ -55,7 +55,7 @@ def test_services_are_sorted_by_name() -> None:
     rows = {
         "Первичный приём": "Приём и консультации",
         "Вызов на дом": "Приём и консультации",
-        "УЗИ брюшной полости": "Диагностика",
+        "УЗИ брюшной полости": "Визуальная диагностика",
         "Кастрация кота": "Хирургия и анестезия",
         "Стационар сутки": "Стационар",
         "Стрижка когтей": "Груминг",
@@ -90,3 +90,36 @@ def test_dry_run_changes_nothing() -> None:
     shampoo.refresh_from_db()
     assert shampoo.group.name == was
     assert "Зоотовары" in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_lab_services_are_not_dumped_into_other() -> None:
+    """Лабораторные исследования — своя группа, а не «Прочее»."""
+    rows = {
+        "Akso FeLV/FIV Real-time PCR Kit Лейкоз кошек": "Лабораторные исследования",
+        "Общий анализ крови": "Лабораторные исследования",
+        "Бак посев с подтитровкой": "Лабораторные исследования",
+        "УЗИ брюшной полости": "Визуальная диагностика",
+        "Рентген в двух проекциях": "Визуальная диагностика",
+    }
+    items = {name: item(name, Kind.SERVICE) for name in rows}
+
+    call_command("tidy_groups", "--apply", stdout=StringIO())
+
+    for name, group in rows.items():
+        items[name].refresh_from_db()
+        assert items[name].group.name == group, name
+
+
+@pytest.mark.django_db
+def test_unknown_service_keeps_its_group() -> None:
+    """Непонятную услугу не перекладываем: лучше оставить, чем свалить в «Прочее»."""
+    own = ItemGroup.objects.create(name="Особые услуги", kind=Kind.SERVICE)
+    service = item("Литичка (кошка)", Kind.SERVICE)
+    service.group = own
+    service.save(update_fields=["group"])
+
+    call_command("tidy_groups", "--apply", stdout=StringIO())
+
+    service.refresh_from_db()
+    assert service.group.name == "Особые услуги"

@@ -39,6 +39,9 @@
     <div v-if="selected.length" class="row items-center q-mb-sm q-gutter-sm">
       <span class="text-weight-medium">Отмечено: {{ selected.length }}</span>
       <q-btn outline color="primary" icon="science" label="Вещество и группа" @click="drugBulkOpen = true" />
+      <!-- Переложить разом: пригодилось после разбора групп -->
+      <q-select v-model="moveTo" :options="moveOptions" option-value="id" option-label="name" emit-value map-options
+        dense outlined label="Переложить в группу" style="min-width: 220px" @update:model-value="moveGroup" />
       <q-btn flat label="Снять отметки" @click="selected = []" />
     </div>
 
@@ -76,7 +79,8 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { apiGet } from '@/api'
+import { useQuasar } from 'quasar'
+import { apiGet, apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
 import ComboEditDialog from './ComboEditDialog.vue'
 import ImportDialog from './ImportDialog.vue'
@@ -88,7 +92,9 @@ const rows = ref([])
 const loading = ref(false)
 const search = ref('')
 const kind = ref('')
+const $q = useQuasar()
 const group = ref(null)
+const moveTo = ref(null)
 const substance = ref(null)
 const drugGroup = ref(null)
 const prevention = ref(null)
@@ -100,6 +106,25 @@ const PREVENTION_KINDS = [
   { label: 'Дегельминтизация', value: 'deworming' },
   { label: 'Обработка от паразитов', value: 'parasites' },
 ]
+
+// В списке групп только те, что подходят отмеченным позициям: товарам — группы
+// товаров, услугам — услуг.
+const moveOptions = computed(() => {
+  const kinds = new Set(selected.value.map((row) => row.kind))
+  return kinds.size === 1 ? groups.value.filter((row) => row.kind === [...kinds][0]) : []
+})
+
+async function moveGroup(groupId) {
+  if (!groupId) return
+  const { ok, data } = await apiPost('catalog/items/set-group/', {
+    items: selected.value.map((row) => row.id), group: groupId,
+  })
+  moveTo.value = null
+  if (!ok) return $q.notify({ type: 'negative', message: Object.values(fieldErrors(data || {}))[0] || 'Не удалось переложить' })
+  $q.notify({ type: 'positive', message: `Переложено: ${data.updated}` })
+  selected.value = []
+  reload()
+}
 
 // Веществ много — показываем подходящие по мере набора.
 function filterSubstances(text, update) {

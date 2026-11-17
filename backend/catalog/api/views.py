@@ -249,6 +249,25 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             raise serializers.ValidationError({"non_field_errors": [str(error)]}) from error
         return Response({"updated": count})
 
+    @action(detail=False, methods=["post"], url_path="set-group")
+    def set_group(self, request: Request) -> Response:
+        """Переложить отмеченные позиции в другую группу: {"items": [...], "group": id}."""
+        if not request.user.has_perm("catalog.change_item"):
+            raise PermissionDenied("Нет права менять товары и услуги.")
+        group = ItemGroup.objects.filter(pk=request.data.get("group")).first()
+        if group is None:
+            raise serializers.ValidationError({"group": ["Выберите группу."]})
+        items = list(Item.objects.filter(pk__in=request.data.get("items") or []))
+        wrong = [item.name for item in items if item.kind != group.kind]
+        if wrong:
+            raise serializers.ValidationError(
+                {"group": [f"«{group.name}» — группа другого вида: {', '.join(wrong[:3])}."]}
+            )
+        for item in items:
+            item.group = group
+            item.save(update_fields=["group"])
+        return Response({"updated": len(items)})
+
     @action(detail=True, methods=["post"], url_path="reset-prices")
     def reset_prices(self, request: Request, pk: str | None = None) -> Response:
         """Комбинация: сбросить свои цены позиций — дальше они идут по прайсу."""
