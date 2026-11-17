@@ -100,7 +100,19 @@ const isVaccination = computed(() => selectedType.value?.kind === 'vaccination')
 const isChipping = computed(() => selectedType.value?.kind === 'chipping')
 const oneTime = computed(() => selectedType.value && !selectedType.value.repeat_days)
 const itemRequired = computed(() => Boolean(selectedType.value?.item_required))
-const itemLabel = computed(() => `${isVaccination.value ? 'Вакцина' : 'Препарат или услуга'}${itemRequired.value ? ' *' : ''}`)
+// Чем делают процедуру: прививают вакциной, глистогонят препаратом, а стерилизация
+// и чипирование — это сама услуга.
+const ITEM_LABELS = {
+  vaccination: 'Вакцина',
+  deworming: 'Препарат',
+  ectoparasites: 'Препарат',
+  sterilization: 'Услуга',
+  chipping: 'Услуга',
+}
+const itemLabel = computed(() => {
+  const label = ITEM_LABELS[selectedType.value?.kind] || 'Препарат или услуга'
+  return `${label}${itemRequired.value ? ' *' : ''}`
+})
 const canSubmit = computed(() => form.value.type && (!itemRequired.value || form.value.item))
 const editingId = ref(null)
 const editingDate = ref(null)
