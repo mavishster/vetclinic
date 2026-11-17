@@ -111,10 +111,23 @@ SERVICE_GROUPS: list[tuple[str, tuple[str, ...]]] = [
         "Визуальная диагностика",
         ("узи", "рентген", "кт ", "мрт", "эндоскоп", "экг", "эхо", "офтальмоскоп", "отоскоп"),
     ),
+    (
+        "Вакцинация и профилактика",
+        ("вакцин", "прививк", "ревакцин", "дегельминт", "глистоген"),
+    ),
+    ("Эвтаназия и кремация", ("эвтаназ", "усыплен", "кремац", "захоронен", "утилизац")),
     ("Приём и консультации", ("приём", "прием", "консультац", "вызов", "осмотр")),
     ("Диагностика", ("взятие", "исследован", "мазок", "проба")),
+    (
+        "Стоматология",
+        ("стоматолог", "зуб", "пародонт", "зубн", "ультразвуковая чистка", "полировк"),
+    ),
+    (
+        "Акушерство и гинекология",
+        ("принятие род", "родоразреш", "кесарев", "акушер", "гинеколог", "беремен", "вагинальн"),
+    ),
     ("Хирургия и анестезия", ("операц", "хирург", "наркоз", "анестез", "кастрац", "стерилизац")),
-    ("Стационар", ("стационар", "койко", "наблюден")),
+    ("Стационар", ("стационар", "койко", "наблюден", "передержк", "гостиниц")),
     ("Груминг", ("груминг", "стрижк", "когт", "купан", "мытьё", "мытье")),
     (
         "Процедуры",
@@ -144,10 +157,16 @@ class Command(BaseCommand):
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("--apply", action="store_true", help="применить (иначе показать)")
         parser.add_argument("--show", type=int, default=50, help="сколько строк показать")
+        parser.add_argument(
+            "--other",
+            action="store_true",
+            help="показать услуги из «Прочее», которые не удалось разложить по названию",
+        )
 
     @transaction.atomic
     def handle(self, *args: Any, **options: Any) -> None:
         moves: list[tuple[Item, str, str]] = []
+        leftovers: list[Item] = []
         for item in Item.objects.exclude(kind=Kind.COMBO).select_related("group"):
             rules, default = (
                 (GOODS_GROUPS, GOODS_DEFAULT)
@@ -156,6 +175,8 @@ class Command(BaseCommand):
             )
             wanted = _group_for(item.name, rules, default)
             if not wanted:
+                if item.group and _simple(item.group.name).startswith("проч"):
+                    leftovers.append(item)
                 continue  # не поняли, что это за услуга — оставляем её группу
             if item.group and _simple(item.group.name) == _simple(wanted):
                 continue
@@ -164,6 +185,10 @@ class Command(BaseCommand):
         for item, was, becomes in moves[: options["show"]]:
             self.stdout.write(f"{item.name}\n    {was} → {becomes}")
         self.stdout.write(self.style.SUCCESS(f"\nпереложить: {len(moves)}"))
+        self.stdout.write(f"услуг в «Прочее», которые не удалось разложить: {len(leftovers)}")
+        if options["other"]:
+            for item in sorted(leftovers, key=lambda i: i.name):
+                self.stdout.write(f"    {item.name}")
 
         if not options["apply"]:
             self.stdout.write("Это предварительный просмотр. Применить: --apply")

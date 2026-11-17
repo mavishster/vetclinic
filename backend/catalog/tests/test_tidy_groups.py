@@ -123,3 +123,29 @@ def test_unknown_service_keeps_its_group() -> None:
 
     service.refresh_from_db()
     assert service.group.name == "Особые услуги"
+
+
+@pytest.mark.django_db
+def test_common_service_groups_and_other_listing() -> None:
+    rows = {
+        "Вакцинация Нобивак Tricat": "Вакцинация и профилактика",
+        "Эвтаназия (кошка)": "Эвтаназия и кремация",
+        "Удаление зуба": "Стоматология",
+        "Кесарево сечение": "Акушерство и гинекология",
+        "Передержка в стационаре": "Стационар",
+        "Определение породы": "",  # «роды» внутри «породы» не должны попасть в акушерство
+    }
+    other = ItemGroup.objects.create(name="Прочее", kind=Kind.SERVICE)
+    items = {name: item(name, Kind.SERVICE) for name in rows}
+    for service in items.values():
+        service.group = other
+        service.save(update_fields=["group"])
+    out = StringIO()
+
+    call_command("tidy_groups", "--other", stdout=out)
+    call_command("tidy_groups", "--apply", stdout=StringIO())
+
+    assert "не удалось разложить: 1" in out.getvalue() and "Определение породы" in out.getvalue()
+    for name, group in rows.items():
+        items[name].refresh_from_db()
+        assert items[name].group.name == (group or "Прочее"), name
