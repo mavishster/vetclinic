@@ -103,6 +103,7 @@ class HospitalizationSerializer(serializers.ModelSerializer):  # type: ignore[ty
     last_observation = serializers.SerializerMethodField()
     tasks_today = serializers.SerializerMethodField()
     staff_names = serializers.SerializerMethodField()
+    cage = serializers.SerializerMethodField()
 
     class Meta:
         model = Hospitalization
@@ -132,6 +133,7 @@ class HospitalizationSerializer(serializers.ModelSerializer):  # type: ignore[ty
             "tasks_today",
             "staff",
             "staff_names",
+            "cage",
         ]
         read_only_fields = [
             "client",
@@ -141,6 +143,22 @@ class HospitalizationSerializer(serializers.ModelSerializer):  # type: ignore[ty
             "invoice_id",
             "outcome",
         ]
+
+    def get_cage(self, h: Hospitalization) -> dict[str, str] | None:
+        """Данные экрана «у клетки» — только при открытии карточки (в списке не нужны).
+        Телефон владельца — только тем, у кого есть право на просмотр клиентов."""
+        view = self.context.get("view")
+        if getattr(view, "action", None) != "retrieve":
+            return None
+        card = qr.cage_card(h)
+        request = self.context.get("request")
+        phone = (
+            h.client.phones.first()
+            if request and request.user.has_perm("clients.view_client")
+            else None
+        )
+        card["owner_phone"] = phone.number if phone else ""
+        return card
 
     def get_staff_names(self, h: Hospitalization) -> list[str]:
         return [u.short_name or u.username for u in h.staff.all()]
@@ -188,6 +206,9 @@ class HospitalizationViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         queryset = Hospitalization.objects.select_related(
             "pet__species", "client", "ward", "doctor"
         ).prefetch_related("staff")
+        # Карточка по ссылке (например, из QR) открывается и у выписанного пациента.
+        if self.kwargs.get("pk"):
+            return queryset
         params = self.request.query_params
         if pet := params.get("pet"):
             return queryset.filter(pet=pet)

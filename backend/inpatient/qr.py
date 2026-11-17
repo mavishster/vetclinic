@@ -30,11 +30,27 @@ class LabelField(TypedDict):
     label: str
 
 
-def _diagnosis(h: Hospitalization) -> str:
+def diagnosis_text(h: Hospitalization) -> str:
+    """Диагноз целиком: причина госпитализации, а если её нет — диагнозы приёма-основания."""
     text = " ".join((h.reason or "").split())
     if not text and h.visit_id:
         text = medical.visit_diagnoses(h.visit_id)
+    return text
+
+
+def _diagnosis(h: Hospitalization) -> str:
+    text = diagnosis_text(h)
     return text if len(text) <= DIAGNOSIS_LIMIT else text[: DIAGNOSIS_LIMIT - 1].rstrip() + "…"
+
+
+def cage_card(h: Hospitalization) -> dict[str, str]:
+    """Шапка экрана «у клетки»: то, что нужно увидеть, отсканировав QR."""
+    return {
+        "age": FIELDS["age"][1](h),
+        "weight": _weight(h),
+        "species_breed": FIELDS["species_breed"][1](h),
+        "diagnosis": diagnosis_text(h),
+    }
 
 
 def _weight(h: Hospitalization) -> str:

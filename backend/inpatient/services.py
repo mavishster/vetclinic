@@ -184,7 +184,9 @@ def stop_plan(plan: TreatmentPlan) -> None:
 def mark_task(
     task: TreatmentTask, status: str, user: Any, note: str = "", quantity: Decimal | None = None
 ) -> TreatmentTask:
-    """Отметить выполнение (или пропуск — с причиной); вернуть в «запланировано»."""
+    """Отметить выполнение (или пропуск — с причиной); вернуть в «запланировано».
+    У выписанного пациента лист закрыт."""
+    _active(task.hospitalization)
     if status not in T.values:
         raise InpatientError("Неизвестная отметка.")
     if status == T.SKIPPED and not note.strip():
@@ -244,6 +246,7 @@ def sheet(hospitalization: Hospitalization, day: date) -> QuerySet[TreatmentTask
 
 
 def add_observation(hospitalization: Hospitalization, user: Any, **values: Any) -> Observation:
+    _active(hospitalization)
     if not any(values.get(k) not in (None, "") for k in ("temperature", "weight", "pulse", "note")):
         raise InpatientError("Заполните хотя бы одно поле наблюдения.")
     t = values.get("temperature")
