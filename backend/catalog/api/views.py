@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -206,6 +206,12 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             queryset = queryset.filter(drug_groups=drug_group)
         if substance := params.get("substance"):
             queryset = queryset.filter(substances=substance)
+        if prevention := params.get("prevention_kind"):
+            # Своя отметка позиции или отметка её группы — как при подборе профилактики.
+            queryset = queryset.filter(
+                Q(prevention_kind=prevention)
+                | Q(prevention_kind="", group__prevention_kind=prevention)
+            )
         search = params.get("search", "").strip()
         if search and params.get("suggest") != "1":
             queryset = services.search_items(queryset, search)

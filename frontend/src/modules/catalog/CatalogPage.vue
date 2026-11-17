@@ -23,6 +23,14 @@
         dense outlined clearable label="Группа" class="col-6 col-md-3" @update:model-value="reload" />
       <q-select v-model="tracked" :options="TRACKED" emit-value map-options dense outlined clearable label="Складской учёт"
         class="col-6 col-md-2" @update:model-value="reload" />
+      <!-- Быстрый поиск по тому, что проставлено препаратам -->
+      <q-select v-model="substance" :options="substanceOptions" option-value="id" option-label="name" emit-value
+        map-options dense outlined clearable use-input input-debounce="200" label="Действующее вещество"
+        class="col-6 col-md-3" @filter="filterSubstances" @update:model-value="reload" />
+      <q-select v-model="drugGroup" :options="drugGroups" option-value="id" option-label="name" emit-value map-options
+        dense outlined clearable label="Группа препарата" class="col-6 col-md-2" @update:model-value="reload" />
+      <q-select v-model="prevention" :options="PREVENTION_KINDS" emit-value map-options dense outlined clearable
+        label="Профилактика" class="col-6 col-md-2" @update:model-value="reload" />
       <q-checkbox v-model="notForSale" label="Не для продажи" dense class="col-auto" @update:model-value="reload" />
       <q-checkbox v-model="showInactive" label="Показать неактивные" dense class="col-auto" @update:model-value="reload" />
     </div>
@@ -81,6 +89,27 @@ const loading = ref(false)
 const search = ref('')
 const kind = ref('')
 const group = ref(null)
+const substance = ref(null)
+const drugGroup = ref(null)
+const prevention = ref(null)
+const substances = ref([])
+const substanceOptions = ref([])
+const drugGroups = ref([])
+const PREVENTION_KINDS = [
+  { label: 'Вакцинация', value: 'vaccination' },
+  { label: 'Дегельминтизация', value: 'deworming' },
+  { label: 'Обработка от паразитов', value: 'parasites' },
+]
+
+// Веществ много — показываем подходящие по мере набора.
+function filterSubstances(text, update) {
+  const needle = text.toLowerCase()
+  update(() => {
+    substanceOptions.value = needle
+      ? substances.value.filter((row) => row.name.toLowerCase().includes(needle))
+      : substances.value.slice(0, 50)
+  })
+}
 const showInactive = ref(false)
 const tracked = ref(null)
 const notForSale = ref(false)
@@ -120,6 +149,9 @@ async function onRequest({ pagination: next }) {
   if (search.value) params.set('search', search.value)
   if (kind.value) params.set('kind', kind.value)
   if (group.value) params.set('group', group.value)
+  if (substance.value) params.set('substance', substance.value)
+  if (drugGroup.value) params.set('drug_group', drugGroup.value)
+  if (prevention.value) params.set('prevention_kind', prevention.value)
   if (!showInactive.value) params.set('active', 'true')
   if (tracked.value) params.set('tracked', tracked.value)
   if (notForSale.value) params.set('not_for_sale', 'true')
@@ -132,6 +164,9 @@ async function onRequest({ pagination: next }) {
 const reload = () => onRequest({ pagination: { ...pagination.value, page: 1 } })
 function onKind() {
   group.value = null
+  substance.value = null
+  drugGroup.value = null
+  prevention.value = null
   reload()
 }
 function create(itemKind) {
@@ -150,7 +185,15 @@ function edit(item) {
 }
 
 onMounted(async () => {
-  groups.value = (await apiGet('catalog/groups/?active=true')).data ?? []
+  const [groupList, substanceList, drugGroupList] = await Promise.all([
+    apiGet('catalog/groups/?active=true'),
+    apiGet('catalog/substances/?active=true&page_size=500'),
+    apiGet('catalog/drug-groups/?active=true&page_size=200'),
+  ])
+  groups.value = groupList.data ?? []
+  substances.value = substanceList.data?.results ?? substanceList.data ?? []
+  substanceOptions.value = substances.value.slice(0, 50)
+  drugGroups.value = drugGroupList.data?.results ?? drugGroupList.data ?? []
   reload()
 })
 </script>
