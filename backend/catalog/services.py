@@ -566,14 +566,22 @@ def reset_combination_prices(combination: Item) -> None:
     combination.lines.update(price_override=None)
 
 
-def preparations(prevention_kind: str) -> QuerySet[Item]:
-    """Препараты (товары) для вида профилактики: своя отметка позиции или отметка её группы.
+# Виды профилактики, где процедура — это работа врача, а не препарат: стерилизацию
+# и чипирование записывают услугой. Для остальных в записи выбирают препарат,
+# а услугу врач добавляет в счёт отдельно.
+PROCEDURE_PREVENTIONS = ("sterilization", "chipping")
 
-    Услуги сюда не попадают: в профилактике выбирают препарат, а саму услугу врач
-    добавляет в счёт отдельно, рядом с препаратом.
+
+def preparations(prevention_kind: str) -> QuerySet[Item]:
+    """Чем делают профилактику этого вида: своя отметка позиции или отметка её группы.
+
+    Вакцинация, дегельминтизация и обработка от эктопаразитов — это препараты
+    (Нобивак, Дронтал, Бравекто). Стерилизация и чипирование — услуги: препарата
+    там нет, и в записи указывают саму процедуру.
     """
+    kind = Kind.SERVICE if prevention_kind in PROCEDURE_PREVENTIONS else Kind.GOODS
     return (
-        Item.objects.filter(is_active=True, kind=Kind.GOODS)
+        Item.objects.filter(is_active=True, kind=kind)
         .filter(
             Q(prevention_kind=prevention_kind)
             | Q(prevention_kind="", group__prevention_kind=prevention_kind)

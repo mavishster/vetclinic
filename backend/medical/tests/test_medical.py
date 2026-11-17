@@ -68,10 +68,16 @@ def test_start_visit_takes_owner_last_weight_and_default_purpose(pet, doctor) ->
 
 def test_visit_from_appointment_marks_in_progress_and_reuses_visit(pet, doctor) -> None:
     appointment = scheduling.save_appointment(
-        Appointment(client=pet.owner, pet=pet, doctor=doctor, purpose=scheduling.purpose_of_kind("vaccination"),
-                    start=timezone.now(), end=timezone.now() + timedelta(minutes=20)),
+        Appointment(
+            client=pet.owner,
+            pet=pet,
+            doctor=doctor,
+            purpose=scheduling.purpose_of_kind("vaccination"),
+            start=timezone.now(),
+            end=timezone.now() + timedelta(minutes=20),
+        ),
         force=True,
-    )  # fmt: skip
+    )
 
     visit = services.visit_for_appointment(appointment, doctor)
     again = services.visit_for_appointment(appointment, doctor)
@@ -419,3 +425,82 @@ def test_batch_fills_series_and_expiry(pet, doctor, vaccine) -> None:
     )
     with pytest.raises(MedicalError, match="другому препарату"):
         services.add_prevention(visit, ptype("vaccination"), other, batch=batch)
+
+
+def test_sterilization_offers_services(db) -> None:
+    """Стерилизация и чипирование — услуги: препарата там нет."""
+    from catalog import services as catalog
+    from catalog.models import Item, ItemGroup, Kind, PreventionKind, Unit
+
+    service_unit = Unit.objects.get(name="усл.")
+    catalog.save_item(
+        Item(
+            kind=Kind.SERVICE,
+            name="Кастрация кота",
+            base_unit=service_unit,
+            group=ItemGroup.objects.filter(kind=Kind.SERVICE).first(),
+            prevention_kind=PreventionKind.STERILIZATION,
+        ),
+        [
+            {
+                "unit": service_unit.pk,
+                "ratio": D("1"),
+                "pricing": "fixed",
+                "price": D("3500"),
+                "for_sale": True,
+            }
+        ],
+    )
+
+    found = [item.name for item in catalog.preparations(PreventionKind.STERILIZATION)]
+
+    assert found == ["Кастрация кота"]
+
+
+def test_vaccination_offers_drugs_only(db) -> None:
+    """А для вакцинации — препараты: услугу врач добавляет в счёт отдельно."""
+    from catalog import services as catalog
+    from catalog.models import Item, ItemGroup, Kind, PreventionKind, Unit
+
+    unit = Unit.objects.get(name="мл")
+    service_unit = Unit.objects.get(name="усл.")
+    catalog.save_item(
+        Item(
+            kind=Kind.GOODS,
+            name="Нобивак DHPPI",
+            base_unit=unit,
+            group=ItemGroup.objects.filter(kind=Kind.GOODS).first(),
+            prevention_kind=PreventionKind.VACCINATION,
+        ),
+        [
+            {
+                "unit": unit.pk,
+                "ratio": D("1"),
+                "pricing": "fixed",
+                "price": D("1500"),
+                "for_sale": True,
+            }
+        ],
+    )
+    catalog.save_item(
+        Item(
+            kind=Kind.SERVICE,
+            name="Вакцинация (услуга)",
+            base_unit=service_unit,
+            group=ItemGroup.objects.filter(kind=Kind.SERVICE).first(),
+            prevention_kind=PreventionKind.VACCINATION,
+        ),
+        [
+            {
+                "unit": service_unit.pk,
+                "ratio": D("1"),
+                "pricing": "fixed",
+                "price": D("500"),
+                "for_sale": True,
+            }
+        ],
+    )
+
+    found = [item.name for item in catalog.preparations(PreventionKind.VACCINATION)]
+
+    assert found == ["Нобивак DHPPI"]
