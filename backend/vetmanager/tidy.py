@@ -20,6 +20,7 @@ from catalog import services as catalog
 from catalog.models import Item, ItemUnit, Kind, Unit
 from core import services as core
 from vetmanager import client
+from vetmanager.models import Imported
 
 # Хвост названия с фасовкой: «(уп 30 саше)», «уп. 8 табл.», «№30», «x10», «10 табл.»
 # «№5» и «x5» сюда не входят: у «Воротник №5» это размер, а не количество в упаковке.
@@ -319,6 +320,9 @@ def merge(name: str, parts: list[dict[str, Any]]) -> Item:
     main.base_unit = base_unit
     saved = catalog.save_item(main, units)
     for item, _, _ in chosen[1:]:
+        # Связь с VetManager переводим на оставшуюся позицию: иначе строки счетов
+        # по объединённой позиции не найдут, к чему привязаться.
+        Imported.objects.filter(kind="item", target_id=item.pk).update(target_id=saved.pk)
         catalog.delete_item(item)  # не использованы — проверено выше
     return saved
 
