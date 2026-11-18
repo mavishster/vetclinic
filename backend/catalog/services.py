@@ -175,8 +175,10 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
         raise CatalogError(f"Единица «{name}» указана в двух строках — оставьте одну.")
 
     existing = {str(u.pk): u for u in item.units.all()}
-    kept: set[str] = set()
-    for data in units:
+    # Сначала решаем, какие строки остаются, и убираем лишние: иначе смена единицы
+    # на ту, что стояла у убранной строки, упиралась бы в запрет на повтор.
+    matched: dict[int, ItemUnit] = {}
+    for position, data in enumerate(units):
         current = existing.get(str(data.get("id"))) if data.get("id") else None
         if current is None:  # та же единица могла быть сохранена раньше без id
             current = next(
@@ -184,10 +186,19 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
                     u
                     for u in existing.values()
                     if str(u.unit_id) == str(getattr(data.get("unit"), "pk", data.get("unit")))
+                    and u not in matched.values()
                 ),
                 None,
             )
-        unit = current or ItemUnit(item=item)
+        if current is not None:
+            matched[position] = current
+    kept: set[str] = {str(u.pk) for u in matched.values()}
+    for key, stored in existing.items():
+        if key not in kept:
+            stored.delete()
+
+    for position, data in enumerate(units):
+        unit = matched.get(position) or ItemUnit(item=item)
         for field, value in data.items():
             if field == "id":
                 continue
@@ -200,10 +211,6 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
             unit.pricing = ItemUnit.Pricing.FIXED
         _check_unit(item, unit)
         unit.save()
-        kept.add(str(unit.pk))
-    for key, unit in existing.items():
-        if key not in kept:
-            unit.delete()
     return item
 
 

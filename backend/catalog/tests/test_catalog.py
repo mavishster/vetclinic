@@ -52,10 +52,15 @@ def test_round_price(value, step, expected) -> None:
 def test_fixed_price_and_floating_range() -> None:
     item = make_goods(
         units=[
-            {"unit": unit("таб."), "ratio": D("1"), "price": D("600"),
-             "price_min": D("450"), "price_max": D("750")},
+            {
+                "unit": unit("таб."),
+                "ratio": D("1"),
+                "price": D("600"),
+                "price_min": D("450"),
+                "price_max": D("750"),
+            },
         ]
-    )  # fmt: skip
+    )
     pack = item.units.get()
 
     assert services.price_of(pack) == D("600")
@@ -84,9 +89,16 @@ def test_markup_own_or_from_group_and_zero_is_real_zero() -> None:
 @pytest.mark.django_db
 def test_markup_uses_manual_cost_and_rounding_or_unknown() -> None:
     item = make_goods(
-        units=[{"unit": unit("таб."), "ratio": D("1"), "pricing": "markup", "markup_percent": D("33"),
-                "rounding": D("10")}],
-    )  # fmt: skip
+        units=[
+            {
+                "unit": unit("таб."),
+                "ratio": D("1"),
+                "pricing": "markup",
+                "markup_percent": D("33"),
+                "rounding": D("10"),
+            }
+        ],
+    )
     pack = item.units.get()
 
     assert services.price_of(pack) is None  # ни партии, ни себестоимости
@@ -102,15 +114,33 @@ def test_markup_uses_manual_cost_and_rounding_or_unknown() -> None:
     [
         ([{"unit": "упак.", "ratio": D("0"), "price": D("1")}], "больше нуля"),
         ([{"unit": "таб.", "ratio": D("1")}], "укажите цену"),
-        ([{"unit": "таб.", "ratio": D("1"), "price": D("5"), "price_min": D("10")}], "вне диапазона"),
-        ([{"unit": "таб.", "ratio": D("1"), "price": D("5"), "price_min": D("9"), "price_max": D("8")}],
-         "минимальная цена больше"),
-        ([{"unit": "упак.", "ratio": D("3"), "price": D("1")}, {"unit": "упак.", "ratio": D("2"),
-          "price": D("2")}], "«упак.» указана в двух строках"),
+        (
+            [{"unit": "таб.", "ratio": D("1"), "price": D("5"), "price_min": D("10")}],
+            "вне диапазона",
+        ),
+        (
+            [
+                {
+                    "unit": "таб.",
+                    "ratio": D("1"),
+                    "price": D("5"),
+                    "price_min": D("9"),
+                    "price_max": D("8"),
+                }
+            ],
+            "минимальная цена больше",
+        ),
+        (
+            [
+                {"unit": "упак.", "ratio": D("3"), "price": D("1")},
+                {"unit": "упак.", "ratio": D("2"), "price": D("2")},
+            ],
+            "«упак.» указана в двух строках",
+        ),
         ([{"unit": "таб.", "ratio": D("5"), "price": D("1")}], "всегда равна 1 таб."),
         ([{"unit": "таб.", "ratio": D("1"), "price": D("1"), "for_sale": False}], "хотя бы одну"),
     ],
-)  # fmt: skip
+)
 def test_unit_rules(units, message) -> None:
     prepared = [{**u, "unit": unit(u["unit"])} for u in units]
 
@@ -128,8 +158,12 @@ def test_group_must_match_kind_and_name_required() -> None:
 
 @pytest.mark.django_db
 def test_service_price_is_always_fixed_per_one() -> None:
-    service = Item(kind=Kind.SERVICE, name="Первичный приём", group=group("Приём и консультации"),
-                   base_unit=unit("усл."))  # fmt: skip
+    service = Item(
+        kind=Kind.SERVICE,
+        name="Первичный приём",
+        group=group("Приём и консультации"),
+        base_unit=unit("усл."),
+    )
 
     services.save_item(
         service, [{"unit": unit("усл."), "ratio": D("5"), "pricing": "markup", "price": D("900")}]
@@ -195,15 +229,37 @@ def test_non_base_unit_equal_to_base_is_rejected(db) -> None:
 
     with pytest.raises(services.CatalogError, match="не может быть равна 1 упак."):
         services.save_item(
-            Item(kind=Kind.GOODS, name="Тразапентин", group=ItemGroup.objects.get(name="Препараты"), base_unit=Unit.objects.get(name="упак.")),
-            [{"unit": Unit.objects.get(name="упак."), "price": Decimal("600")},
-             {"unit": Unit.objects.get(name="таб."), "ratio": Decimal("1"), "price": Decimal("100")}],
-        )  # fmt: skip
+            Item(
+                kind=Kind.GOODS,
+                name="Тразапентин",
+                group=ItemGroup.objects.get(name="Препараты"),
+                base_unit=Unit.objects.get(name="упак."),
+            ),
+            [
+                {"unit": Unit.objects.get(name="упак."), "price": Decimal("600")},
+                {
+                    "unit": Unit.objects.get(name="таб."),
+                    "ratio": Decimal("1"),
+                    "price": Decimal("100"),
+                },
+            ],
+        )
     item = services.save_item(
-        Item(kind=Kind.GOODS, name="Тразапентин", group=ItemGroup.objects.get(name="Препараты"), base_unit=Unit.objects.get(name="упак.")),
-        [{"unit": Unit.objects.get(name="упак."), "price": Decimal("600")},
-         {"unit": Unit.objects.get(name="таб."), "ratio": Decimal("0.125"), "price": Decimal("100")}],
-    )  # fmt: skip
+        Item(
+            kind=Kind.GOODS,
+            name="Тразапентин",
+            group=ItemGroup.objects.get(name="Препараты"),
+            base_unit=Unit.objects.get(name="упак."),
+        ),
+        [
+            {"unit": Unit.objects.get(name="упак."), "price": Decimal("600")},
+            {
+                "unit": Unit.objects.get(name="таб."),
+                "ratio": Decimal("0.125"),
+                "price": Decimal("100"),
+            },
+        ],
+    )
     assert item.units.get(unit__name="таб.").ratio == Decimal("0.125")  # доля упаковки — можно
 
 
@@ -221,3 +277,57 @@ def test_qty_text_shows_stock_unit_then_packs(db) -> None:
     assert _qty_text(D("37"), "мл", units) == "37 мл"  # меньше флакона — разбивка не нужна
     assert _qty_text(D("-137"), "мл", units) == "-137 мл (-1 фл. 37 мл)"
     assert _qty_text(D("12"), "шт.", [(D("1"), "шт.")]) == "12 шт."  # одна единица — как есть
+
+
+def test_unit_can_take_place_of_removed_one(db) -> None:
+    """Убрали «мл» и поставили «мл» вместо «фл.» — сохранение не должно падать.
+
+    Раньше лишние строки удалялись в самом конце, и на полпути срабатывал запрет
+    на две одинаковые единицы у позиции.
+    """
+    unit = Unit.objects.get(name="мл")
+    pack = Unit.objects.get(name="фл.")
+    item = services.save_item(
+        Item(
+            kind=Kind.GOODS,
+            name="Отливной препарат",
+            base_unit=unit,
+            group=ItemGroup.objects.filter(kind=Kind.GOODS).first(),
+        ),
+        [
+            {
+                "unit": unit.pk,
+                "ratio": D("1"),
+                "pricing": "fixed",
+                "price": D("50"),
+                "for_sale": True,
+            },
+            {
+                "unit": pack.pk,
+                "ratio": D("10"),
+                "pricing": "fixed",
+                "price": D("400"),
+                "for_sale": True,
+            },
+        ],
+    )
+    pack_row = item.units.get(unit=pack)
+
+    # Строку «мл» убрали, а у бывшей «фл.» поставили единицу «мл».
+    saved = services.save_item(
+        item,
+        [
+            {
+                "id": str(pack_row.pk),
+                "unit": unit.pk,
+                "ratio": D("1"),
+                "pricing": "fixed",
+                "price": D("60"),
+                "for_sale": True,
+            },
+        ],
+    )
+
+    rows = list(saved.units.all())
+    assert len(rows) == 1
+    assert rows[0].unit == unit and rows[0].price == D("60.00")
