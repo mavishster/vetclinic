@@ -33,6 +33,9 @@ ping-worker:   ## Проверить фоновые задачи: результ
 test:          ## Тесты
 	docker compose exec backend pytest
 
+test-fast:     ## Тесты на существующей базе (быстрее: миграции не прогоняются заново)
+	docker compose exec backend pytest --reuse-db $(T)
+
 lint:          ## Стиль, типы, границы модулей
 	docker compose exec backend sh -c "ruff check . && ruff format --check . && mypy && lint-imports"
 
