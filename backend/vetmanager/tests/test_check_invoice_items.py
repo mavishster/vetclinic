@@ -133,3 +133,34 @@ def test_missing_items_show_names(monkeypatch) -> None:
     call_command("check_invoice_items", stdout=out)
 
     assert "Интубация" in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_repair_matches_despite_different_wording(monkeypatch) -> None:
+    """«Физраствор 100мл» и наш «Физраствор фл. 100мл» — одна позиция."""
+    ours = goods("Физраствор фл. 100мл")
+    gone = goods("Физраствор 100мл")
+    Imported.objects.create(kind="item", external_id="3", target_id=gone.pk)
+    catalog.delete_item(gone)
+    monkeypatch.setattr(client, "fetch", lambda *a, **kw: [{"id": 3, "title": "Физраствор 100мл"}])
+
+    call_command("repair_item_links", "--apply", stdout=StringIO())
+
+    assert str(Imported.objects.get(external_id="3").target_id) == str(ours.pk)
+
+
+@pytest.mark.django_db
+def test_repair_skips_when_several_fit(monkeypatch) -> None:
+    """Подходят две позиции — не выбираем наугад, оставляем человеку."""
+    goods("Веткокцин 5% 10 мл")
+    goods("Веткокцин 5% 100 мл")
+    gone = goods("Веткокцин 5% 1 мл")
+    Imported.objects.create(kind="item", external_id="4", target_id=gone.pk)
+    catalog.delete_item(gone)
+    monkeypatch.setattr(client, "fetch", lambda *a, **kw: [{"id": 4, "title": "Веткокцин 5% 1 мл"}])
+
+    out = StringIO()
+    call_command("repair_item_links", "--apply", stdout=out)
+
+    assert str(Imported.objects.get(external_id="4").target_id) == str(gone.pk)
+    assert "не нашли пару: 1" in out.getvalue()

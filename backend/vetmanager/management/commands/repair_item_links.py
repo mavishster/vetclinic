@@ -8,6 +8,7 @@
     python manage.py repair_item_links --apply    # починить
 """
 
+import re
 from typing import Any
 
 from django.core.management.base import BaseCommand
@@ -16,6 +17,25 @@ from django.db import transaction
 from catalog.models import Item
 from vetmanager import client, tidy
 from vetmanager.models import Imported
+
+# Слова фасовки и формы выпуска: в названиях они пишутся как придётся, и из-за
+# них «Физраствор 100мл» не совпадал с нашим «Физраствор фл. 100мл».
+_NOISE = re.compile(
+    r"\b(фл|флак\w*|уп|упак\w*|таб|табл\w*|капс\w*|амп\w*|мл|мг|мкг|г|кг|л|доз\w*|"
+    r"шт|саше|пипетк\w*|тюбик\w*|туба|пакет\w*|кан|р-р|раствор|инъекц\w*|pet)\b",
+    re.IGNORECASE,
+)
+
+
+def _loose_key(name: str) -> str:
+    """Название без чисел, процентов и слов фасовки: «Физраствор фл. 100мл» → «физраствор».
+
+    Второй заход поиска: в VetManager и у нас одна позиция подписана по-разному,
+    и строгое сравнение их не связывает.
+    """
+    text = _NOISE.sub(" ", _key(name))
+    text = re.sub(r"[\d.,%*№()/+-]+", " ", text)
+    return " ".join(text.split())
 
 
 def _key(name: str) -> str:
@@ -50,14 +70,24 @@ class Command(BaseCommand):
             return
 
         # Живые позиции по очищенному названию: «Ациломаг 100 мл (МАГ)» → «ациломаг».
-        ours: dict[str, Item] = {}
+        # Для обоих заходов храним все подходящие: если их несколько, выбирать
+        # наугад нельзя — «Веткокцин 5% 10 мл» и «100 мл» дают одно и то же название.
+        ours: dict[str, list[Item]] = {}
+        loose: dict[str, list[Item]] = {}
         for item in Item.objects.all():
-            ours.setdefault(_key(item.name), item)
+            ours.setdefault(_key(item.name), []).append(item)
+            loose.setdefault(_loose_key(item.name), []).append(item)
 
         fixed, unknown = [], []
         for link in broken:
             name = names.get(link.external_id, "")
-            found = ours.get(_key(name)) if name else None
+            found = None
+            for table in (ours, loose) if name else ():
+                key = _key(name) if table is ours else _loose_key(name)
+                candidates = table.get(key, [])
+                if len(candidates) == 1:
+                    found = candidates[0]
+                    break
             (fixed.append((link, name, found)) if found else unknown.append((link, name)))
 
         for link, name, found in fixed[: options["show"]]:
