@@ -80,3 +80,56 @@ def test_merge_keeps_link_to_surviving_item(monkeypatch) -> None:
     out = StringIO()
     call_command("check_invoice_items", stdout=out)
     assert "Всё на месте" in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_repair_relinks_merged_items(monkeypatch) -> None:
+    """Связь с удалённой позиции переводится на живую — по названию из VetManager."""
+    merged = goods("Ациломаг")
+    gone = goods("Ациломаг 100 мл (МАГ)")
+    Imported.objects.create(kind="item", external_id="12", target_id=gone.pk)
+    catalog.delete_item(gone)
+    monkeypatch.setattr(
+        client, "fetch", lambda *a, **kw: [{"id": 12, "title": "Ациломаг 100 мл (МАГ)"}]
+    )
+
+    call_command("repair_item_links", "--apply", stdout=StringIO())
+
+    link = Imported.objects.get(kind="item", external_id="12")
+    assert str(link.target_id) == str(merged.pk)
+
+
+@pytest.mark.django_db
+def test_repair_dry_run_changes_nothing(monkeypatch) -> None:
+    merged = goods("Ациломаг")
+    gone = goods("Ациломаг 100 мл (МАГ)")
+    Imported.objects.create(kind="item", external_id="12", target_id=gone.pk)
+    catalog.delete_item(gone)
+    monkeypatch.setattr(
+        client, "fetch", lambda *a, **kw: [{"id": 12, "title": "Ациломаг 100 мл (МАГ)"}]
+    )
+
+    out = StringIO()
+    call_command("repair_item_links", stdout=out)
+
+    assert str(Imported.objects.get(external_id="12").target_id) == str(gone.pk)
+    assert merged.name in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_missing_items_show_names(monkeypatch) -> None:
+    """У позиций, которых у нас нет, видно название — или что их нет и в VetManager."""
+    monkeypatch.setattr(
+        client,
+        "fetch",
+        lambda model, *a, **kw: (
+            [{"good_id": 999}] * 4
+            if model == "invoiceDocument"
+            else [{"id": 999, "title": "Интубация"}]
+        ),
+    )
+
+    out = StringIO()
+    call_command("check_invoice_items", stdout=out)
+
+    assert "Интубация" in out.getvalue()

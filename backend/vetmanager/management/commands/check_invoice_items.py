@@ -22,6 +22,13 @@ class Command(BaseCommand):
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("--show", type=int, default=30, help="сколько строк показать")
 
+    def _names_in_vetmanager(self) -> dict[str, str]:
+        """Названия из выгрузки: чего в ней нет — удалено в самом VetManager."""
+        try:
+            return {str(row.get("id")): str(row.get("title") or "") for row in client.fetch("Good")}
+        except client.VetManagerError:
+            return {}
+
     def handle(self, *args: Any, **options: Any) -> None:
         try:
             rows = client.fetch("invoiceDocument")
@@ -63,7 +70,9 @@ class Command(BaseCommand):
                     f"  не переносились: {len(missing)} — запустите шаг «Товары и услуги»"
                 )
             )
+            names = self._names_in_vetmanager()
             for external_id, count in sorted(missing, key=lambda pair: -pair[1])[: options["show"]]:
-                self.stdout.write(f"    {external_id} ({count} строк)")
+                name = names.get(external_id, "нет в выгрузке — позиция удалена в самом VetManager")
+                self.stdout.write(f"    {external_id} ({count} строк): {name}")
         if not gone and not missing:
             self.stdout.write(self.style.SUCCESS("Всё на месте — счета можно переносить."))
