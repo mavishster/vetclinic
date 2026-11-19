@@ -10,4 +10,5 @@ urlpatterns = [
     path("tidy/", views.TidyView.as_view(), name="vetmanager-tidy"),
     path("packaging/", views.PackagingView.as_view(), name="vetmanager-packaging"),
     path("run/", views.RunStepView.as_view(), name="vetmanager-run"),
+    path("reconcile/", views.ReconcileView.as_view(), name="vetmanager-reconcile"),
 ]

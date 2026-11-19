@@ -1,5 +1,11 @@
 <template>
   <q-page padding>
+    <q-tabs v-model="tab" dense align="left" class="q-mb-md" active-color="primary" indicator-color="primary">
+      <q-tab name="steps" label="Шаги переноса" />
+      <q-tab name="reconcile" label="Сверка" />
+    </q-tabs>
+    <ReconcilePanel v-if="tab === 'reconcile'" />
+    <template v-else>
     <h1 class="text-h5 q-mt-none">Перенос из VetManager</h1>
     <p class="text-grey-8">
       Данные забираются из VetManager по его API — только чтение, в VetManager ничего не меняется.
@@ -58,6 +64,7 @@
         <pre class="sample q-mt-sm">{{ JSON.stringify(probeResult.rows, null, 1) }}</pre>
       </div>
     </q-expansion-item>
+      </template>
   </q-page>
 </template>
 
@@ -66,6 +73,7 @@
 // медкарты, счета). «Что отдаёт VetManager» показывает поля реального аккаунта.
 import { onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
+import ReconcilePanel from './ReconcilePanel.vue'
 import { apiGet, apiPost, fieldErrors } from '@/api'
 
 // Разделы VetManager, которые чаще всего нужно сверить. Можно вписать и свой.
@@ -75,6 +83,7 @@ const MODELS = [
   'User', 'Admission', 'AdmissionType', 'AdmissionDiagnosis', 'DiagnosisType',
   'Invoice', 'InvoiceDocument', 'Payment',
 ]
+const tab = ref('steps')
 const $q = useQuasar()
 const status = ref(null)
 const steps = ref([])

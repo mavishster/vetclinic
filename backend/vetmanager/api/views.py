@@ -10,7 +10,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from vetmanager import client, services, tidy
+from vetmanager import client, reconcile, services, tidy
 from vetmanager.models import Imported
 
 
@@ -126,6 +126,13 @@ class PackagingView(_ImportView):
         except tidy.catalog.CatalogError as error:
             raise ValidationError({"non_field_errors": [str(error)]}) from error
         return Response({"id": str(item.pk), "name": item.name, "base_unit": item.base_unit.name})
+
+
+class ReconcileView(_ImportView):
+    """GET — сверка переноса: сколько записей в VetManager, сколько у нас, чего нет."""
+
+    def get(self, request: Request) -> Response:
+        return Response(reconcile.report())
 
 
 class RunStepView(_ImportView):
