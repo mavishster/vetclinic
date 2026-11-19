@@ -164,3 +164,39 @@ def test_repair_skips_when_several_fit(monkeypatch) -> None:
 
     assert str(Imported.objects.get(external_id="4").target_id) == str(gone.pk)
     assert "не нашли пару: 1" in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_repair_keeps_dosage_apart(monkeypatch) -> None:
+    """«Вазосан 2,5мг» и «Вазосан 5мг» — разные препараты, связывать их нельзя."""
+    goods("Вазосан 5мг уп. 30 табл.")
+    gone = goods("Вазосан 2,5мг 1 табл")
+    Imported.objects.create(kind="item", external_id="7", target_id=gone.pk)
+    catalog.delete_item(gone)
+    monkeypatch.setattr(
+        client, "fetch", lambda *a, **kw: [{"id": 7, "title": "Вазосан 2,5мг 1 табл"}]
+    )
+
+    out = StringIO()
+    call_command("repair_item_links", "--apply", stdout=out)
+
+    assert str(Imported.objects.get(external_id="7").target_id) == str(gone.pk)
+    assert "не нашли пару: 1" in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_repair_matches_same_dosage(monkeypatch) -> None:
+    """А та же дозировка в другой фасовке — одна позиция."""
+    ours = goods("Авекардит 1,25мг для мелких собак")
+    gone = goods("Авекардит 1,25мг для мелких собак уп. 28 табл.")
+    Imported.objects.create(kind="item", external_id="8", target_id=gone.pk)
+    catalog.delete_item(gone)
+    monkeypatch.setattr(
+        client,
+        "fetch",
+        lambda *a, **kw: [{"id": 8, "title": "Авекардит 1,25мг для мелких собак уп. 28 табл."}],
+    )
+
+    call_command("repair_item_links", "--apply", stdout=StringIO())
+
+    assert str(Imported.objects.get(external_id="8").target_id) == str(ours.pk)

@@ -27,6 +27,16 @@ _NOISE = re.compile(
 )
 
 
+# Дозировка: её выбрасывать нельзя — «Вазосан 2,5мг» и «Вазосан 5мг» разные препараты.
+_DOSE = re.compile(r"(\d+[.,]?\d*)\s*(мг|мкг|ме|ед|%)", re.IGNORECASE)
+
+
+def _doses(name: str) -> str:
+    """Дозировки из названия: «Вазосан 2,5мг уп. 30 табл.» → «2.5мг»."""
+    found = {f"{amount.replace(',', '.')}{unit.lower()}" for amount, unit in _DOSE.findall(name)}
+    return " ".join(sorted(found))
+
+
 def _loose_key(name: str) -> str:
     """Название без чисел, процентов и слов фасовки: «Физраствор фл. 100мл» → «физраствор».
 
@@ -35,7 +45,7 @@ def _loose_key(name: str) -> str:
     """
     text = _NOISE.sub(" ", _key(name))
     text = re.sub(r"[\d.,%*№()/+-]+", " ", text)
-    return " ".join(text.split())
+    return " ".join([*text.split(), _doses(name)]).strip()
 
 
 def _key(name: str) -> str:
