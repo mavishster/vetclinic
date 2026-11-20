@@ -37,7 +37,25 @@ class Command(BaseCommand):
             for link in Imported.objects.filter(kind="item")
             if str(link.target_id) in alive
         }
-        missing = [row for row in rows if str(row.get("id")) not in linked]
+        # Связь есть, но позиция у нас удалена — её объединили с другой. Такую
+        # переносить заново нельзя: вернутся дубли, которые клиника уже разобрала.
+        merged = {
+            link.external_id
+            for link in Imported.objects.filter(kind="item")
+            if str(link.target_id) not in alive
+        }
+        missing = [
+            row
+            for row in rows
+            if str(row.get("id")) not in linked and str(row.get("id")) not in merged
+        ]
+        if merged:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"объединено у нас: {len(merged)} — их переносить заново нельзя, "
+                    "сначала выполните repair_item_links --apply"
+                )
+            )
         self.stdout.write(f"в VetManager: {len(rows)}, нет у нас: {len(missing)}")
         if not missing:
             self.stdout.write(self.style.SUCCESS("Все позиции на месте."))
@@ -56,15 +74,6 @@ class Command(BaseCommand):
                 self.stdout.write(f"  {row.get('id')}: {row.get('title')} · группа «{group}»")
             self.stdout.write("\nЭто предварительный просмотр. Перенести: --apply")
             return
-
-        # Связи на удалённые у нас позиции мешают переносу: шаг считает их перенесёнными.
-        stale = [
-            link
-            for link in Imported.objects.filter(kind="item")
-            if str(link.target_id) not in alive
-        ]
-        for link in stale:
-            link.delete()
 
         result = services.import_items(missing)
         self.stdout.write(
