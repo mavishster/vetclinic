@@ -158,6 +158,8 @@ class RunStepView(_ImportView):
                 "updated": result.updated,
                 "skipped": result.skipped,
                 "errors": result.errors[:20],
+                "kept": result.kept[:50],
+                "kept_total": len(result.kept),
                 "text": result.text,
             }
         )

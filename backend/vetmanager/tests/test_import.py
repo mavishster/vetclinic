@@ -451,7 +451,7 @@ def test_people_second_run_changes_nothing(people) -> None:
 
     again = services.import_pets(PETS)
 
-    assert again.created == 0 and again.updated == 4
+    assert (again.created, again.updated, again.skipped) == (0, 0, 4)  # ничего не менялось
     assert Client.objects.filter(last_name="Пушкин").count() == 1 and Pet.objects.count() == 4
 
 
@@ -1190,3 +1190,131 @@ def test_new_visits_do_not_take_imported_numbers(visits, django_user_model) -> N
     fresh = medical.start_visit(Pet.objects.get(name="Барсик"), doctor)
 
     assert fresh.lab_code >= 8000
+
+
+# --- Повторный перенос: обновить изменённое, не затирая правки у нас -------------------
+
+
+def _vm_price(rows, title, price):
+    """Те же позиции VetManager, у одной поменялась цена."""
+    changed = []
+    for row in rows:
+        if row.get("title") == title:
+            params = [{**p, "price": price} for p in row["goodSaleParams"]]
+            row = {**row, "goodSaleParams": params}
+        changed.append(row)
+    return changed
+
+
+def test_rerun_updates_price_changed_in_vetmanager(imported) -> None:
+    again = services.import_items(_vm_price(GOODS, "Вакцина Нобивак DHPPI", "1700.0000000000"))
+
+    assert (again.created, again.updated, again.kept) == (0, 1, [])
+    vaccine = Item.objects.get(name="Вакцина Нобивак DHPPI")
+    assert vaccine.units.get().price == D("1700.00")
+
+
+def test_rerun_keeps_item_edited_here(imported) -> None:
+    """Позицию поправили у нас — цена из VetManager её не перезаписывает, а попадает в отчёт."""
+    vaccine = Item.objects.get(name="Вакцина Нобивак DHPPI")
+    vaccine.name = "Нобивак DHPPI"
+    vaccine.save()
+
+    again = services.import_items(_vm_price(GOODS, "Вакцина Нобивак DHPPI", "1700.0000000000"))
+
+    assert again.updated == 0 and again.kept == ["Нобивак DHPPI"]
+    vaccine.refresh_from_db()
+    assert vaccine.name == "Нобивак DHPPI" and vaccine.units.get().price == D("1500.00")
+    # О расхождении сообщаем при каждом переносе, пока его не решат.
+    assert services.import_items(
+        _vm_price(GOODS, "Вакцина Нобивак DHPPI", "1700.0000000000")
+    ).kept == ["Нобивак DHPPI"]
+
+
+def test_rerun_keeps_merged_item(imported) -> None:
+    """На позицию ведут две записи VetManager (объединили) — ни одна её не перезаписывает."""
+    vaccine = Item.objects.get(name="Вакцина Нобивак DHPPI")
+    Imported.objects.create(kind="item", external_id="999", target_id=vaccine.pk)
+
+    again = services.import_items(_vm_price(GOODS, "Вакцина Нобивак DHPPI", "1700.0000000000"))
+
+    assert again.updated == 0 and len(again.kept) == 1
+    assert Item.objects.get(pk=vaccine.pk).units.get().price == D("1500.00")
+
+
+def test_rerun_adds_new_items(imported) -> None:
+    new = {**GOODS[0], "id": 801, "title": "Вакцина Нобивак Rabies"}
+
+    again = services.import_items([*GOODS, new])
+
+    assert (again.created, again.skipped) == (1, 4)
+    assert Item.objects.filter(name="Вакцина Нобивак Rabies").exists()
+
+
+def test_legacy_link_untouched_is_updated_edited_is_kept(imported) -> None:
+    """Связи, перенесённые до учёта версий: правленное у нас определяется по времени."""
+    from datetime import timedelta
+
+    vaccine = Item.objects.get(name="Вакцина Нобивак DHPPI")
+    drug = Item.objects.get(name="Энрофлоксацин")
+    long_ago = timezone.now() - timedelta(days=1)
+    Imported.objects.filter(kind="item").update(
+        fingerprint="", target_version=None, imported_at=long_ago
+    )
+    Item.objects.filter(pk=drug.pk).update(updated_at=long_ago)  # не трогали
+    Item.objects.filter(pk=vaccine.pk).update(updated_at=timezone.now())  # правили у нас
+
+    first = services.import_items(GOODS)
+
+    assert Item.objects.get(pk=vaccine.pk).units.get().price == D("1500.00")
+    assert first.kept == []  # исходное состояние запомнили молча
+    second = services.import_items(_vm_price(GOODS, "Вакцина Нобивак DHPPI", "1700.0000000000"))
+    assert second.kept == ["Вакцина Нобивак DHPPI"]  # дальше сообщаем о новых изменениях
+
+
+def test_rerun_keeps_client_edited_here(people) -> None:
+    from clients.models import Client
+
+    pushkin = Client.objects.get(journal_number="А-12")
+    pushkin.description = "уточнили у нас"
+    pushkin.save()
+    changed = [{**CLIENTS[0], "note": "изменили в VetManager"}]
+
+    result = services.import_clients(changed)
+
+    assert result.updated == 0 and len(result.kept) == 1
+    assert Client.objects.get(pk=pushkin.pk).description == "уточнили у нас"
+
+
+def test_rerun_updates_visit_changed_in_vetmanager(visits) -> None:
+    from medical.models import Visit
+
+    changed = [
+        {**row, "description": "Осмотр. Дописано позже"} if row.get("id") == 700 else row
+        for row in MEDICAL_CARDS
+    ]
+
+    again = services.import_visits(changed, COMBO_ITEMS)
+
+    assert (again.created, again.updated) == (0, 1)
+    assert Visit.objects.filter(treatment_html__contains="Дописано позже").count() == 1
+    assert Visit.objects.count() == 2  # не задвоилось
+
+
+def test_rerun_keeps_visit_edited_here(visits) -> None:
+    from medical.models import Visit
+
+    first = Visit.objects.get(treatment_html__contains="Осмотр")
+    first.recommendations_html = "<p>дописали у нас</p>"
+    first.save()
+    changed = [
+        {**row, "description": "Осмотр. Дописано позже"} if row.get("id") == 700 else row
+        for row in MEDICAL_CARDS
+    ]
+
+    again = services.import_visits(changed, COMBO_ITEMS)
+
+    assert again.updated == 0 and len(again.kept) == 1
+    first.refresh_from_db()
+    assert "Дописано позже" not in first.treatment_html
+    assert first.recommendations_html == "<p>дописали у нас</p>"

@@ -9,7 +9,9 @@
     <h1 class="text-h5 q-mt-none">Перенос из VetManager</h1>
     <p class="text-grey-8">
       Данные забираются из VetManager по его API — только чтение, в VetManager ничего не меняется.
-      Шаги выполняются по порядку; повторный запуск ничего не задваивает — переносится только новое.
+      Шаги выполняются по порядку. Запускать их можно сколько угодно раз до дня перехода: новое
+      добавляется, изменённое в VetManager обновляется, а записи, которые у нас уже правили
+      (объединили, переименовали, дописали), не перезаписываются — о них шаг сообщит отдельно.
     </p>
 
     <q-banner v-if="status && !status.configured" class="banner-warning q-mb-md">
@@ -33,6 +35,12 @@
           </q-item-label>
           <q-item-label v-if="results[step.step]?.errors?.length" caption class="text-negative">
             {{ results[step.step].errors.join('; ') }}
+          </q-item-label>
+          <q-item-label v-if="results[step.step]?.kept?.length" caption class="text-warning">
+            Изменилось в VetManager, но у нас эти записи правили — не перезаписаны, проверьте сами:
+            {{ results[step.step].kept.join('; ') }}<template
+              v-if="results[step.step].kept_total > results[step.step].kept.length"> и ещё
+              {{ results[step.step].kept_total - results[step.step].kept.length }}</template>
           </q-item-label>
         </q-item-section>
         <q-item-section side class="row items-center no-wrap q-gutter-sm">

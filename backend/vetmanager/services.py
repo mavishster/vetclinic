@@ -3,15 +3,22 @@
 Отвечает за: перенос справочников, товаров и услуг, клиентов, питомцев, медкарт и счетов.
 Переносим по шагам и повторяемо: уже перенесённое не задваивается (таблица Imported).
 
+Повторный перенос (до дня перехода клиника работает в VetManager): новое добавляется;
+изменённое в VetManager обновляется, если запись не правили у нас; правленное у нас
+не перезаписывается и попадает в отчёт шага (StepResult.kept). Справочники (единицы,
+группы, виды и породы, диагнозы, врачи) сведены с нашими по названию — у них
+повторный перенос только добавляет новое.
+
 Бизнес-правила живут здесь, а не в моделях и не в API (ENGINEERING.md).
 """
 
 import contextlib
+import hashlib
 import html
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -57,8 +64,10 @@ class StepResult:
     total: int = 0  # записей в VetManager
     created: int = 0
     updated: int = 0
-    skipped: int = 0  # уже переносили
+    skipped: int = 0  # уже переносили, в VetManager не менялось
     errors: list[str] = field(default_factory=list)
+    # Изменилось в VetManager, но запись правили у нас — не перезаписываем, сообщаем.
+    kept: list[str] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -66,7 +75,9 @@ class StepResult:
         if self.updated:
             parts.append(f"обновлено {self.updated}")
         if self.skipped:
-            parts.append(f"уже было {self.skipped}")
+            parts.append(f"без изменений {self.skipped}")
+        if self.kept:
+            parts.append(f"изменено у нас — не тронуто {len(self.kept)}")
         if self.errors:
             parts.append(f"с ошибками {len(self.errors)}")
         return ", ".join(parts)
@@ -115,10 +126,68 @@ def _link(kind: str, external_id: str) -> Imported | None:
     return Imported.objects.filter(kind=kind, external_id=str(external_id)).first()
 
 
-def _remember(kind: str, external_id: str, target_id: Any) -> None:
-    Imported.objects.update_or_create(
-        kind=kind, external_id=str(external_id), defaults={"target_id": target_id}
-    )
+def _remember(
+    kind: str, external_id: str, target_id: Any, record: Any = None, mark: str = ""
+) -> None:
+    """Запомнить связь. С record и mark — ещё и состояние для повторного переноса:
+    отпечаток взятого из VetManager и версию нашей записи сразу после переноса."""
+    defaults: dict[str, Any] = {"target_id": target_id}
+    if record is not None:
+        defaults["fingerprint"] = mark
+        versions = type(record)._base_manager.filter(pk=record.pk)
+        defaults["target_version"] = versions.values_list("version", flat=True).first()
+    Imported.objects.update_or_create(kind=kind, external_id=str(external_id), defaults=defaults)
+
+
+def fingerprint(*parts: Any) -> str:
+    """Отпечаток того, что переносим из записи VetManager (не самой записи: в ней есть
+    поля, которые меняются сами, — баланс, дата последнего визита)."""
+    text = json.dumps(parts, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+# Связи, заведённые до учёта версий: запись считается правленной у нас, если она
+# менялась позже переноса (с запасом — при переносе запись сохраняется в несколько шагов).
+_LEGACY_GRACE = timedelta(seconds=30)
+
+
+def _edited_here(link: Imported, record: Any) -> bool:
+    if link.target_version is not None:
+        return int(getattr(record, "version", 0)) > link.target_version
+    changed = getattr(record, "updated_at", None)
+    return changed is not None and changed > link.imported_at + _LEGACY_GRACE
+
+
+def _sync_action(link: Imported, record: Any, mark: str) -> str:
+    """Что делать с уже перенесённой записью при повторном переносе.
+
+    «same» — в VetManager не менялось; «kept» — правили у нас, не трогаем;
+    «update» — обновить из VetManager.
+    """
+    if link.fingerprint and link.fingerprint == mark:
+        return "same"
+    if _edited_here(link, record):
+        return "kept"
+    if Imported.objects.filter(kind=link.kind, target_id=link.target_id).count() > 1:
+        # На запись ведут несколько записей VetManager (позиции объединили) — одна из них
+        # не может перезаписать общую запись.
+        return "kept"
+    return "update"
+
+
+def _keep(result: "StepResult", link: Imported, title: str, mark: str) -> None:
+    """Запись правили у нас — не перезаписываем.
+
+    Перенесённая до учёта отпечатков: запоминаем нынешнее состояние VetManager как
+    исходное, чтобы дальше сообщать только о новых изменениях. Известный отпечаток
+    не меняем: о расхождении сообщаем при каждом переносе, пока его не решат.
+    """
+    if not link.fingerprint:
+        link.fingerprint = mark
+        link.save(update_fields=["fingerprint"])
+        result.skipped += 1
+        return
+    result.kept.append(title)
 
 
 def imported_count(kind: str) -> int:
@@ -302,36 +371,52 @@ def import_items(goods: list[dict[str, Any]] | None = None) -> StepResult:
         if not name:
             result.errors.append(f"Позиция {external_id}: нет названия.")
             continue
-        if _link("item", external_id):
-            result.skipped += 1
+        link = _link("item", external_id)
+        existing = Item.objects.filter(pk=link.target_id).first() if link else None
+        if link is not None and existing is None:
+            result.skipped += 1  # позицию удалили у нас — заново не заводим
             continue
         nested = row.get("group")
         group_row: dict[str, Any] = nested if isinstance(nested, dict) else {}
         kind = Kind.SERVICE if _flag(group_row, "is_service") else Kind.GOODS
         group = _group_for(row, group_row, kind)
         base_unit = _unit_for(row.get("unitStorage"), row.get("unit_storage_id"), kind)
-        item = Item(
-            kind=kind,
-            name=name[:200],
-            group=group,
-            base_unit=base_unit,
-            article=_text(row, "code", "article")[:50],
-            barcode=_text(row, "barcode")[:50],
-            description=_text(row, "description"),
-            manual_cost=_positive(row.get("prime_cost")),
-            stock_tracked=_flag(row, "is_warehouse_account", default=True) and kind == Kind.GOODS,
-            for_sale=_flag(row, "is_for_sale", default=True),
-            combo_only=_flag(row, "for_combination"),
-            is_call=_flag(row, "is_call"),
-            is_active=_flag(row, "is_active", default=True),
-        )
+        values = {
+            "kind": kind,
+            "name": name[:200],
+            "group": group,
+            "base_unit": base_unit,
+            "article": _text(row, "code", "article")[:50],
+            "barcode": _text(row, "barcode")[:50],
+            "description": _text(row, "description"),
+            "manual_cost": _positive(row.get("prime_cost")),
+            "stock_tracked": _flag(row, "is_warehouse_account", default=True)
+            and kind == Kind.GOODS,
+            "for_sale": _flag(row, "is_for_sale", default=True),
+            "combo_only": _flag(row, "for_combination"),
+            "is_call": _flag(row, "is_call"),
+            "is_active": _flag(row, "is_active", default=True),
+        }
+        units = _units_for(_sale_params(row), base_unit)
+        mark = fingerprint({**values, "group": group.pk, "base_unit": base_unit.pk}, units)
+        if link is not None and existing is not None:
+            action = _sync_action(link, existing, mark)
+            if action == "same":
+                result.skipped += 1
+                continue
+            if action == "kept":
+                _keep(result, link, existing.name, mark)
+                continue
         try:
-            saved = catalog.save_item(item, _units_for(_sale_params(row), base_unit))
+            saved = catalog.save_item(_fill(existing or Item(), **values), units)
         except catalog.CatalogError as error:
             result.errors.append(f"«{name}»: {error}")
             continue
-        _remember("item", external_id, saved.pk)
-        result.created += 1
+        _remember("item", external_id, saved.pk, saved, mark)
+        if existing is None:
+            result.created += 1
+        else:
+            result.updated += 1  # повторный перенос: подтянули изменения из VetManager
     return result
 
 
@@ -585,34 +670,48 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
         status = Client.Status.ACTIVE
         if str(row.get("status", "")).upper() in ("DELETED", "INACTIVE", "ARCHIVE"):
             status = Client.Status.INACTIVE
-        record = existing or Client()
-        _fill(
-            record,
-            last_name=last_name[:100],
-            first_name=_text(row, "first_name")[:100],
-            middle_name=_text(row, "middle_name")[:100],
-            passport=_text(row, "passport_series")[:50],
-            city=city,
-            street=street,
-            house=house[:100],
-            zip_code=_text(row, "zip")[:10],
-            email=_text(row, "email")[:254] if "@" in _text(row, "email") else "",
-            discount_percent=_positive(row.get("discount")) or Decimal("0"),
-            journal_number=_text(row, "number_of_journal")[:50],
-            no_mailing=_flag(row, "unsubscribe"),
-            in_blacklist=_flag(row, "in_blacklist"),
-            description=_text(row, "note"),
-            status=status,
+        values = {
+            "last_name": last_name[:100],
+            "first_name": _text(row, "first_name")[:100],
+            "middle_name": _text(row, "middle_name")[:100],
+            "passport": _text(row, "passport_series")[:50],
+            "city": city,
+            "street": street,
+            "house": house[:100],
+            "zip_code": _text(row, "zip")[:10],
+            "email": _text(row, "email")[:254] if "@" in _text(row, "email") else "",
+            "discount_percent": _positive(row.get("discount")) or Decimal("0"),
+            "journal_number": _text(row, "number_of_journal")[:50],
+            "no_mailing": _flag(row, "unsubscribe"),
+            "in_blacklist": _flag(row, "in_blacklist"),
+            "description": _text(row, "note"),
+            "status": status,
+        }
+        phones = _phones(row)
+        mark = fingerprint(
+            {**values, "city": getattr(city, "pk", None), "street": getattr(street, "pk", None)},
+            phones,
+            _flag(row, "has_contract"),
         )
+        if existing is not None and link is not None:
+            action = _sync_action(link, existing, mark)
+            if action == "same":
+                result.skipped += 1
+                continue
+            if action == "kept":
+                _keep(result, link, str(existing), mark)
+                continue
         try:
             saved = clients_services.save_client(
-                record, _phones(row), number=int(external_id) if external_id.isdigit() else None
+                _fill(existing or Client(), **values),
+                phones,
+                number=int(external_id) if external_id.isdigit() else None,
             )
         except clients_services.ClientError as error:
             result.errors.append(f"«{last_name}»: {error}")
             continue
-        _remember("client", external_id, saved.pk)
         _contract_mark(saved, row)
+        _remember("client", external_id, saved.pk, saved, mark)
         if existing is None:
             result.created += 1
         else:
@@ -760,32 +859,44 @@ def import_pets(rows: list[dict[str, Any]] | None = None) -> StepResult:
             status = Pet.Status.DEAD
         elif str(row.get("status", "ACTIVE")).upper() in ("DELETED", "INACTIVE", "ARCHIVE", "0"):
             status = Pet.Status.INACTIVE  # в VetManager питомец не активен
-        pet = _fill(
-            existing or Pet(),
-            owner=owner,
-            name=name,
-            species=species,
-            breed=breed,
-            sex=sex,
-            sterilized=sterilized,
-            birth_date=_date(row.get("birthday")),
-            chip_number=_text(row, "chip_number")[:50],
-            lab_number=_text(row, "lab_number")[:50],
-            notes=" ".join(part for part in (_text(row, "note"), _text(row, "deathnote")) if part),
-            status=status,
-            death_date=death,
+        values = {
+            "owner": owner,
+            "name": name,
+            "species": species,
+            "breed": breed,
+            "sex": sex,
+            "sterilized": sterilized,
+            "birth_date": _date(row.get("birthday")),
+            "chip_number": _text(row, "chip_number")[:50],
+            "lab_number": _text(row, "lab_number")[:50],
+            "notes": " ".join(
+                part for part in (_text(row, "note"), _text(row, "deathnote")) if part
+            ),
+            "status": status,
+            "death_date": death,
+        }
+        weight = _positive(row.get("weight"))
+        mark = fingerprint(
+            {**values, "owner": owner.pk, "species": species.pk, "breed": breed.pk}, weight
         )
+        if existing is not None and link is not None:
+            action = _sync_action(link, existing, mark)
+            if action == "same":
+                result.skipped += 1
+                continue
+            if action == "kept":
+                _keep(result, link, f"{name} ({owner})", mark)
+                continue
         try:
-            saved = clients_services.save_pet(pet)
+            saved = clients_services.save_pet(_fill(existing or Pet(), **values))
         except clients_services.ClientError as error:
             result.errors.append(f"«{name}»: {error}")
             continue
-        weight = _positive(row.get("weight"))
         if weight is not None:
             # Вес из карточки VetManager — первой записью истории веса (дата регистрации).
             with contextlib.suppress(clients_services.ClientError):
                 clients_services.add_weight(saved, weight, _date(row.get("date_register")))
-        _remember("pet", external_id, saved.pk)
+        _remember("pet", external_id, saved.pk, saved, mark)
         if existing is None:
             result.created += 1
         else:
@@ -1248,8 +1359,10 @@ def _import_visits_batch(
 
     for row in rows:
         external_id = str(row.get("id") or "")
-        if _link("visit", external_id):
-            result.skipped += 1
+        link = _link("visit", external_id)
+        existing = Visit.objects.filter(pk=link.target_id).first() if link else None
+        if link is not None and existing is None:
+            result.skipped += 1  # запись удалили у нас — заново не заводим
             continue
         if str(row.get("status", "active")).lower() in ("deleted", "delete"):
             result.skipped += 1  # медкарту удалили в VetManager
@@ -1280,23 +1393,44 @@ def _import_visits_batch(
         if doctor is None:
             fallback_doctor = fallback_doctor or _transfer_doctor()
             doctor = fallback_doctor
-        visit = Visit.objects.create(
-            lab_code=_free_lab_code(external_id),
-            pet=pet,
-            client=pet.owner,
-            doctor=doctor,
-            date=when,
-            purpose=_purpose_for(row, purposes, default_purpose),
-            result=_result_for(row, results),
-            weight=_positive(row.get("weight")),
-            temperature=_positive(row.get("temperature")),
-            treatment_html=clean(_text(row, "description")),
-            recommendations_html=clean(_text(row, "recomendation", "recommendation")),
+        values = {
+            "pet": pet,
+            "client": pet.owner,
+            "doctor": doctor,
+            "date": when,
+            "purpose": _purpose_for(row, purposes, default_purpose),
+            "result": _result_for(row, results),
+            "weight": _positive(row.get("weight")),
+            "temperature": _positive(row.get("temperature")),
+            "treatment_html": clean(_text(row, "description")),
+            "recommendations_html": clean(_text(row, "recomendation", "recommendation")),
+        }
+        diagnoses = _diagnoses_of(row)
+        mark = fingerprint(
+            {key: getattr(value, "pk", value) for key, value in values.items()},
+            [(diagnosis.pk, kind) for diagnosis, kind in diagnoses],
         )
-        for diagnosis, kind in _diagnoses_of(row):
+        if existing is not None and link is not None:
+            action = _sync_action(link, existing, mark)
+            if action == "same":
+                result.skipped += 1
+                continue
+            if action == "kept":
+                _keep(result, link, f"медкарта {external_id} ({pet.name})", mark)
+                continue
+        if existing is None:
+            visit = Visit.objects.create(lab_code=_free_lab_code(external_id), **values)
+        else:
+            visit = _fill(existing, **values)
+            visit.save()
+            VisitDiagnosis.objects.filter(visit=visit).delete()
+        for diagnosis, kind in diagnoses:
             VisitDiagnosis.objects.create(visit=visit, diagnosis=diagnosis, kind=kind)
-        _remember("visit", external_id, visit.pk)
-        result.created += 1
+        _remember("visit", external_id, visit.pk, visit, mark)
+        if existing is None:
+            result.created += 1
+        else:
+            result.updated += 1  # дописали в VetManager — подтянули
     return fallback_doctor
 
 

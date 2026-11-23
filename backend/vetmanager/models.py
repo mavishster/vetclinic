@@ -1,7 +1,8 @@
 """Перенос из VetManager: что уже перенесено.
 
 Связь «запись VetManager → запись нашей системы» нужна, чтобы повторный перенос
-не задваивал данные и чтобы медкарты и счета находили своих клиентов и питомцев.
+не задваивал данные, подтягивал изменения из VetManager, не затирая правки,
+сделанные у нас, и чтобы медкарты и счета находили своих клиентов и питомцев.
 """
 
 import uuid
@@ -14,6 +15,12 @@ class Imported(models.Model):
     external_id = models.CharField("номер в VetManager", max_length=50)
     target_id = models.UUIDField("номер у нас", default=uuid.uuid4)
     imported_at = models.DateTimeField("когда перенесли", auto_now=True)
+    # Повторный перенос (до дня перехода клиника работает в VetManager):
+    # fingerprint — отпечаток того, что мы взяли из VetManager в прошлый раз; совпал —
+    # там ничего не менялось. target_version — версия нашей записи сразу после переноса;
+    # выросла — запись правили у нас, и VetManager её не перезаписывает.
+    fingerprint = models.CharField("отпечаток записи VetManager", max_length=64, blank=True)
+    target_version = models.PositiveIntegerField("версия нашей записи", null=True, blank=True)
 
     class Meta:
         verbose_name = "перенесённая запись"
