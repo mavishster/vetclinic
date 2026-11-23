@@ -57,6 +57,7 @@ STEPS = [
     ("diagnoses", "Диагнозы"),
     ("visits", "Медкарты"),
     ("invoices", "Счета"),
+    ("balances", "Остатки авансов и долгов"),
 ]
 
 
@@ -1734,6 +1735,40 @@ def _import_invoice(
         result.updated += 1  # изменили в VetManager (доплатили, поправили) — подтянули
 
 
+# --- Остатки авансов и долгов --------------------------------------------------------
+
+
+@transaction.atomic
+def import_balances(rows: list[dict[str, Any]] | None = None) -> StepResult:
+    """Балансы клиентов — как в VetManager: последний шаг, в день перехода.
+
+    Счета и оплаты по ним перенесены шагом «Счета», но в VetManager бывают деньги мимо
+    счетов: депозит перед операцией, предоплата. Разница записывается документом
+    «Остаток расчётов на начало» (без кассы). Повторный запуск дописывает только новую
+    разницу, поэтому шаг можно запускать сколько угодно раз.
+    """
+    rows = client.fetch("Client") if rows is None else rows
+    result = StepResult("balances", "Остатки авансов и долгов", total=len(rows))
+    moment = timezone.now()
+    for row in rows:
+        external_id = str(row.get("id") or "")
+        link = _link("client", external_id)
+        owner = Client.objects.filter(pk=link.target_id).first() if link else None
+        if owner is None:
+            result.gone += 1  # клиента не переносили или удалили у нас
+            continue
+        target = _decimal(row.get("balance")) or Decimal("0")
+        written = clients_services.set_opening_balance(
+            owner, target, moment, "Остаток расчётов из VetManager на день переноса"
+        )
+        _remember("balance", external_id, owner.pk)
+        if written:
+            result.updated += 1
+        else:
+            result.skipped += 1
+    return result
+
+
 def run_step(step: str, replace: bool = False) -> StepResult:
     """Выполнить шаг переноса: данные берутся из VetManager по его API."""
     if step == "units":
@@ -1758,6 +1793,8 @@ def run_step(step: str, replace: bool = False) -> StepResult:
         return import_visits()
     if step == "invoices":
         return import_invoices()
+    if step == "balances":
+        return import_balances()
     raise VetManagerError(f"Неизвестный шаг переноса: {step}.")
 
 
@@ -1778,6 +1815,7 @@ def status() -> list[dict[str, Any]]:
         "diagnoses": [("diagnosis", "диагнозов")],
         "visits": [("visit", "приёмов")],
         "invoices": [("invoice", "счетов")],
+        "balances": [("balance", "клиентов сверено")],
     }
     rows = []
     for step, title in STEPS:

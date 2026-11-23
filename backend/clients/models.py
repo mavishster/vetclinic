@@ -13,7 +13,14 @@ from django.db import models
 from django.db.models.functions import Lower
 
 from core.fields import MoneyField
-from core.models import Attachment, BaseModel, ClinicScopedModel, Directory, LedgerEntry
+from core.models import (
+    Attachment,
+    BaseModel,
+    ClinicScopedModel,
+    Directory,
+    Document,
+    LedgerEntry,
+)
 
 # --- Справочники -------------------------------------------------------------------
 
@@ -363,6 +370,35 @@ class ClientLedger(LedgerEntry):
 
     def __str__(self) -> str:
         return f"{self.client}: {self.amount:+}"
+
+
+class OpeningBalance(Document):
+    """Остаток расчётов с клиентом на день перехода: аванс или долг из прежней программы,
+    не прошедший через наши счета и кассу (депозит перед операцией, предоплата).
+
+    Выполненный — пишет остаток в журнал расчётов; денег в кассе не двигает.
+    """
+
+    doc_type = "opening_balance"
+
+    client = models.ForeignKey(
+        Client, verbose_name="клиент", on_delete=models.PROTECT, related_name="+"
+    )
+    amount = MoneyField("сумма (+ аванс клиента, − долг)")
+
+    class Meta(Document.Meta):
+        verbose_name = "остаток расчётов на начало"
+        verbose_name_plural = "остатки расчётов на начало"
+
+    def on_execute(self) -> None:
+        from clients import services
+
+        services.pay(self.client_id, self.amount, self)  # аванс уменьшает журнал, долг — растит
+
+    def on_rollback(self) -> None:
+        from clients import services
+
+        services.reverse_charges(self)
 
 
 # --- Подпись на планшете -----------------------------------------------------------

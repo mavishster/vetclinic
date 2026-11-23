@@ -232,3 +232,33 @@ def test_invoices_go_in_date_order_and_status_counts(base) -> None:
     assert dates[0] < dates[1] and dates[1] - dates[0] == timedelta(days=10)
     status = {row["step"]: row["imported"] for row in services.status()}
     assert status["invoices"] == 2
+
+
+# --- Остатки авансов и долгов ---------------------------------------------------------
+
+
+def test_balances_bring_advance_from_vetmanager(base) -> None:
+    """Депозит, внесённый в VetManager без счёта, — авансом у нас; повтор ничего не задваивает."""
+    services.import_invoices([head(20, amount="1500", paid="500")], {"20": [line(1, "1", "1500")]})
+    assert clients.balance(pushkin()) == D("-1000.00")
+    rows = [{**CLIENTS[0], "balance": "14000.0000000000"}]
+
+    first = services.import_balances(rows)
+    again = services.import_balances(rows)
+
+    assert (first.updated, again.updated, again.skipped) == (1, 0, 1)
+    assert clients.balance(pushkin()) == D("14000.00")
+    from clients.models import OpeningBalance
+
+    opening = OpeningBalance.objects.get()
+    assert opening.is_executed and opening.amount == D("15000.00")
+    # Остаток не трогает статусы перенесённых счетов: они сверяются с VetManager дальше.
+    assert Invoice.objects.get().paid_amount == D("500.00")
+
+
+def test_balances_add_only_new_difference(base) -> None:
+    services.import_balances([{**CLIENTS[0], "balance": "5000"}])
+
+    result = services.import_balances([{**CLIENTS[0], "balance": "3000"}])
+
+    assert result.updated == 1 and clients.balance(pushkin()) == D("3000.00")

@@ -469,6 +469,25 @@ def backdate_entries(source: Any, moment: Any) -> None:
     core_services.entries_of(ClientLedger, source).update(posted_at=moment)
 
 
+def set_opening_balance(client: Any, target: Decimal, moment: Any, comment: str) -> Decimal:
+    """Довести баланс клиента до target (остаток из прежней программы на день перехода).
+
+    Разница записывается документом «Остаток расчётов на начало»; повторный вызов
+    добавляет только новую разницу. Возвращает записанную разницу (0 — уже сходится).
+    """
+    from clients.models import OpeningBalance
+
+    difference = target - balance(client)
+    if abs(difference) < Decimal("0.01"):
+        return Decimal("0")
+    document = OpeningBalance.objects.create(
+        client=client, amount=difference, date=moment, comment=comment
+    )
+    core_services.execute_document(document)
+    backdate_entries(document, moment)
+    return difference
+
+
 def balance(client: Any) -> Decimal:
     """Баланс клиента: > 0 — аванс, < 0 — долг."""
     from django.db.models import Sum

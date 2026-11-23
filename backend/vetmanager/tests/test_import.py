@@ -236,6 +236,7 @@ def test_status_counts(imported) -> None:
         "diagnoses": 0,
         "visits": 0,
         "invoices": 0,
+        "balances": 0,
     }
 
 
@@ -273,6 +274,7 @@ def test_api_needs_right_and_reports_settings(db, django_user_model, settings) -
         "diagnoses",
         "visits",
         "invoices",
+        "balances",
     ]
     assert refused.status_code == 403
     assert "Неизвестный шаг" in unknown.json()["non_field_errors"][0]
