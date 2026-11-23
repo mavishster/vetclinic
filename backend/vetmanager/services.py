@@ -25,13 +25,15 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
+from billing import services as billing
+from billing.models import Invoice
 from catalog import services as catalog
 from catalog.models import Item, ItemGroup, ItemUnit, Kind, Unit
 from clients import services as clients_services
 from clients.models import Breed, City, Client, ClientContract, Pet, Species, Street
 from core import services as core
 from core.html import clean
-from core.models import User
+from core.models import DocumentError, User
 from medical.models import Visit
 from scheduling.models import VisitPurpose
 from staff.models import Employee, Position
@@ -54,6 +56,7 @@ STEPS = [
     ("doctors", "Врачи"),
     ("diagnoses", "Диагнозы"),
     ("visits", "Медкарты"),
+    ("invoices", "Счета"),
 ]
 
 
@@ -65,6 +68,7 @@ class StepResult:
     created: int = 0
     updated: int = 0
     skipped: int = 0  # уже переносили, в VetManager не менялось
+    gone: int = 0  # удалено в VetManager или у нас — не переносим
     errors: list[str] = field(default_factory=list)
     # Изменилось в VetManager, но запись правили у нас — не перезаписываем, сообщаем.
     kept: list[str] = field(default_factory=list)
@@ -76,6 +80,8 @@ class StepResult:
             parts.append(f"обновлено {self.updated}")
         if self.skipped:
             parts.append(f"без изменений {self.skipped}")
+        if self.gone:
+            parts.append(f"удалено (не переносим) {self.gone}")
         if self.kept:
             parts.append(f"изменено у нас — не тронуто {len(self.kept)}")
         if self.errors:
@@ -374,7 +380,7 @@ def import_items(goods: list[dict[str, Any]] | None = None) -> StepResult:
         link = _link("item", external_id)
         existing = Item.objects.filter(pk=link.target_id).first() if link else None
         if link is not None and existing is None:
-            result.skipped += 1  # позицию удалили у нас — заново не заводим
+            result.gone += 1  # позицию удалили у нас — заново не заводим
             continue
         nested = row.get("group")
         group_row: dict[str, Any] = nested if isinstance(nested, dict) else {}
@@ -662,7 +668,7 @@ def import_clients(rows: list[dict[str, Any]] | None = None) -> StepResult:
         link = _link("client", external_id)
         existing = Client.objects.filter(pk=link.target_id).first() if link else None
         if link is not None and existing is None:
-            result.skipped += 1  # карточку удалили у нас — заново не заводим
+            result.gone += 1  # карточку удалили у нас — заново не заводим
             continue
         city = _city_for(row, streets)
         street = _street_for(row, city, streets)
@@ -841,7 +847,7 @@ def import_pets(rows: list[dict[str, Any]] | None = None) -> StepResult:
         link = _link("pet", external_id)
         existing = Pet.objects.filter(pk=link.target_id).first() if link else None
         if link is not None and existing is None:
-            result.skipped += 1  # карточку удалили у нас — заново не заводим
+            result.gone += 1  # карточку удалили у нас — заново не заводим
             continue
         species_link = _link("species", str(row.get("type_id") or ""))
         species = (
@@ -1362,10 +1368,10 @@ def _import_visits_batch(
         link = _link("visit", external_id)
         existing = Visit.objects.filter(pk=link.target_id).first() if link else None
         if link is not None and existing is None:
-            result.skipped += 1  # запись удалили у нас — заново не заводим
+            result.gone += 1  # запись удалили у нас — заново не заводим
             continue
         if str(row.get("status", "active")).lower() in ("deleted", "delete"):
-            result.skipped += 1  # медкарту удалили в VetManager
+            result.gone += 1  # медкарту удалили в VetManager
             continue
         pet_link = _link("pet", str(row.get("patient_id") or ""))
         pet = (
@@ -1518,6 +1524,216 @@ def reset_visits() -> int:
     return removed
 
 
+# --- Счета ---------------------------------------------------------------------------
+
+INVOICES_BATCH = 100  # по столько счетов за раз: обрыв связи не отменит перенесённое
+
+
+def _invoice_rows() -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """Счета VetManager и их строки (строки — отдельная выгрузка, по номеру счёта)."""
+    heads = client.fetch("invoice")
+    lines: dict[str, list[dict[str, Any]]] = {}
+    for row in client.fetch("invoiceDocument"):
+        lines.setdefault(str(row.get("document_id") or ""), []).append(row)
+    return heads, lines
+
+
+def _sale_units(item: Item, cache: dict[Any, list[ItemUnit]]) -> list[ItemUnit]:
+    if item.pk not in cache:
+        cache[item.pk] = list(item.units.select_related("unit", "item"))
+    return cache[item.pk]
+
+
+def unit_by_price(
+    item: Item, unit_price: Decimal, cache: dict[Any, list[ItemUnit]]
+) -> ItemUnit | None:
+    """Единица нашей позиции для строки VetManager — по ближайшей цене.
+
+    После объединения позиций на одну нашу ведут записи VetManager в разных единицах:
+    «Физраствор» по 10 сом — это мл, «Физраствор 100мл» по 100 — флакон. Количество
+    в строке VetManager записано в той единице, цена которой ближе.
+    """
+    import math
+
+    units = _sale_units(item, cache)
+    base = next((u for u in units if u.unit_id == item.base_unit_id and u.ratio == 1), None)
+    priced = [u for u in units if u.price and u.price > 0]
+    if unit_price <= 0 or not priced:
+        return base or (units[0] if units else None)
+    return min(priced, key=lambda u: abs(math.log(float(u.price) / float(unit_price))))
+
+
+def _invoice_lines(
+    rows: list[dict[str, Any]],
+    amount: Decimal,
+    invoice_doctor: Any,
+    cache: dict[Any, list[ItemUnit]],
+) -> tuple[list[billing.ImportedLine], list[str]]:
+    """Строки счёта. price в строке VetManager — сумма строки до скидки или наценки на
+    весь счёт; сумма счёта (amount) — уже с ними. Разницу делим по строкам пропорционально,
+    копейки остатка — на последнюю: итог совпадает с VetManager до копейки."""
+    problems: list[str] = []
+    prepared: list[tuple[ItemUnit, Decimal, Decimal, Any]] = []
+    for row in rows:
+        good = str(row.get("good_id") or "")
+        title = _text(row.get("good") or {}, "title") or f"позиция {good}"
+        link = _link("item", good)
+        item = Item.objects.filter(pk=link.target_id).first() if link else None
+        quantity = _decimal(row.get("quantity")) or Decimal("0")
+        gross = _decimal(row.get("price")) or Decimal("0")
+        if item is None:
+            problems.append(f"«{title}» нет в прайсе")
+            continue
+        if quantity <= 0:
+            problems.append(f"«{title}»: количество {quantity}")
+            continue
+        unit = unit_by_price(item, gross / quantity, cache)
+        if unit is None:
+            problems.append(f"«{item.name}»: у позиции нет единиц продажи")
+            continue
+        performer_link = _link("doctor", str(row.get("responsible_user_id") or ""))
+        performer = (
+            User.objects.filter(pk=performer_link.target_id).first() if performer_link else None
+        )
+        prepared.append((unit, quantity, gross, performer or invoice_doctor))
+    gross_total = sum((gross for _, _, gross, _ in prepared), Decimal("0"))
+    if prepared and gross_total <= 0 and amount > 0:
+        problems.append("сумма строк 0, а сумма счёта нет")
+    lines: list[billing.ImportedLine] = []
+    rest = amount
+    for index, (unit, quantity, gross, performer) in enumerate(prepared):
+        if index == len(prepared) - 1:
+            line_amount = rest
+        else:
+            share = gross * amount / gross_total if gross_total else Decimal("0")
+            line_amount = share.quantize(Decimal("0.01"))
+        rest -= line_amount
+        lines.append(
+            {
+                "item_unit": unit,
+                "quantity": quantity,
+                "gross": gross,
+                "amount": line_amount,
+                "performer": performer,
+            }
+        )
+    return lines, problems
+
+
+def _visit_of(pet: Any, when: Any) -> Any:
+    """Запись медкарты для счёта: в счёте VetManager ссылки на приём нет — берём приём
+    того же питомца в тот же день, если он один."""
+    if pet is None or when is None:
+        return None
+    day = timezone.localtime(when).date()
+    found = list(Visit.objects.filter(pet=pet, date__date=day)[:2])
+    return found[0] if len(found) == 1 else None
+
+
+def import_invoices(
+    heads: list[dict[str, Any]] | None = None,
+    lines: dict[str, list[dict[str, Any]]] | None = None,
+) -> StepResult:
+    """Счета VetManager → история продаж: строки, скидки и наценки, оплаты.
+
+    Выполненные переносятся выполненными: сумма начисляется клиенту, оплаченное в
+    VetManager гасится (без кассы), склад не трогается — остатки заводятся при переходе.
+    Открытые — черновиками, удалённые не переносятся. Сумма счёта — как в VetManager.
+    Повторный перенос — по общему правилу (см. начало модуля); счёт, по которому уже
+    принимали деньги нашей кассой, не трогается.
+    """
+    if heads is None or lines is None:
+        heads, lines = _invoice_rows()
+    result = StepResult("invoices", "Счета", total=len(heads))
+    ordered = sorted(heads, key=lambda row: str(row.get("invoice_date") or ""))
+    cache: dict[Any, list[ItemUnit]] = {}
+    for start in range(0, len(ordered), INVOICES_BATCH):
+        with transaction.atomic():
+            for row in ordered[start : start + INVOICES_BATCH]:
+                _import_invoice(row, lines.get(str(row.get("id") or ""), []), result, cache)
+    return result
+
+
+def _import_invoice(
+    row: dict[str, Any],
+    rows: list[dict[str, Any]],
+    result: StepResult,
+    cache: dict[Any, list[ItemUnit]],
+) -> None:
+    external_id = str(row.get("id") or "")
+    link = _link("invoice", external_id)
+    existing = Invoice.objects.filter(pk=link.target_id).first() if link else None
+    if link is not None and existing is None:
+        result.gone += 1  # счёт удалили у нас — заново не заводим
+        return
+    status = str(row.get("status") or "").lower()
+    if status in ("deleted", "delete"):
+        result.gone += 1  # счёт удалили в VetManager
+        return
+    client_link = _link("client", str(row.get("client_id") or ""))
+    owner = Client.objects.filter(pk=client_link.target_id).first() if client_link else None
+    if owner is None:
+        result.errors.append(f"Счёт {external_id}: клиент не перенесён — сначала клиенты.")
+        return
+    pet_link = _link("pet", str(row.get("pet_id") or ""))
+    pet = Pet.objects.filter(pk=pet_link.target_id).first() if pet_link else None
+    doctor_link = _link("doctor", str(row.get("doctor_id") or ""))
+    doctor = User.objects.filter(pk=doctor_link.target_id).first() if doctor_link else None
+    when = _moment(row.get("invoice_date")) or _moment(row.get("create_date"))
+    if when is None:
+        result.errors.append(f"Счёт {external_id}: не разобрали дату.")
+        return
+    amount = _decimal(row.get("amount")) or Decimal("0")
+    invoice_lines, problems = _invoice_lines(rows, amount, doctor, cache)
+    if problems or not invoice_lines:
+        reason = "; ".join(problems) or "нет строк"
+        result.errors.append(f"Счёт {external_id} от {when:%d.%m.%Y}: {reason}.")
+        return
+    execute = status == "exec"
+    paid = (_decimal(row.get("paid_amount")) or Decimal("0")) if execute else Decimal("0")
+    comment = " ".join(
+        part for part in (_text(row, "description"), f"(VetManager, счёт № {external_id})") if part
+    )
+    values = {
+        "client": owner,
+        "pet": pet,
+        "doctor": doctor,
+        "date": when,
+        "visit": _visit_of(pet, when),
+        "comment": comment,
+    }
+    mark = fingerprint(
+        {key: getattr(value, "pk", value) for key, value in values.items()},
+        [
+            (str(line["item_unit"].pk), line["quantity"], line["gross"], line["amount"])
+            for line in invoice_lines
+        ],
+        execute,
+        paid,
+    )
+    if existing is not None and link is not None:
+        action = _sync_action(link, existing, mark)
+        if action == "same":
+            result.skipped += 1
+            return
+        if action == "kept" or billing.paid_here(existing):
+            result.kept.append(f"счёт {external_id} ({owner})")
+            return
+    try:
+        with transaction.atomic():
+            saved = billing.record_imported(
+                _fill(existing or Invoice(), **values), invoice_lines, execute, paid
+            )
+    except (billing.InvoiceError, DocumentError, catalog.CatalogError) as error:
+        result.errors.append(f"Счёт {external_id}: {error}")
+        return
+    _remember("invoice", external_id, saved.pk, saved, mark)
+    if existing is None:
+        result.created += 1
+    else:
+        result.updated += 1  # изменили в VetManager (доплатили, поправили) — подтянули
+
+
 def run_step(step: str, replace: bool = False) -> StepResult:
     """Выполнить шаг переноса: данные берутся из VetManager по его API."""
     if step == "units":
@@ -1540,6 +1756,8 @@ def run_step(step: str, replace: bool = False) -> StepResult:
         if replace:
             reset_visits()
         return import_visits()
+    if step == "invoices":
+        return import_invoices()
     raise VetManagerError(f"Неизвестный шаг переноса: {step}.")
 
 
@@ -1559,6 +1777,7 @@ def status() -> list[dict[str, Any]]:
         "doctors": [("doctor", "врачей")],
         "diagnoses": [("diagnosis", "диагнозов")],
         "visits": [("visit", "приёмов")],
+        "invoices": [("invoice", "счетов")],
     }
     rows = []
     for step, title in STEPS:

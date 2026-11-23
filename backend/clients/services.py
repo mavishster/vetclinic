@@ -461,6 +461,14 @@ def reverse_charges(source: Any) -> None:
     core_services.reverse_entries(ClientLedger, source)
 
 
+def backdate_entries(source: Any, moment: Any) -> None:
+    """Движения документа — на дату самого документа (перенос истории из VetManager):
+    баланс клиента «на дату» в прошлом совпадает с тем, что было в VetManager."""
+    from clients.models import ClientLedger
+
+    core_services.entries_of(ClientLedger, source).update(posted_at=moment)
+
+
 def balance(client: Any) -> Decimal:
     """Баланс клиента: > 0 — аванс, < 0 — долг."""
     from django.db.models import Sum

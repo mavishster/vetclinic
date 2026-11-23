@@ -235,6 +235,7 @@ def test_status_counts(imported) -> None:
         "doctors": 0,
         "diagnoses": 0,
         "visits": 0,
+        "invoices": 0,
     }
 
 
@@ -271,6 +272,7 @@ def test_api_needs_right_and_reports_settings(db, django_user_model, settings) -
         "doctors",
         "diagnoses",
         "visits",
+        "invoices",
     ]
     assert refused.status_code == 403
     assert "Неизвестный шаг" in unknown.json()["non_field_errors"][0]
@@ -746,7 +748,7 @@ def test_visits_imported_with_doctor_purpose_and_text(visits) -> None:
     first = Visit.objects.get(treatment_html__contains="Осмотр")
 
     assert visits.created == 2 and len(visits.errors) == 2  # нет питомца, нет даты
-    assert visits.skipped == 1  # удалённую медкарту не переносим
+    assert visits.gone == 1  # удалённую в VetManager медкарту не переносим
     assert first.doctor.last_name == "Петрова" and first.purpose.name == "Взятие анализа"
     assert first.pet.name == "Барсик" and first.client.last_name == "Пушкин"
     assert str(timezone.localtime(first.date))[:16] == "2026-03-14 10:30"
@@ -767,7 +769,8 @@ def test_visits_second_run_changes_nothing(visits) -> None:
 
     again = services.import_visits(MEDICAL_CARDS, COMBO_ITEMS)
 
-    assert again.created == 0 and again.skipped == 3 and Visit.objects.count() == 2
+    assert (again.created, again.skipped, again.gone) == (0, 2, 1)
+    assert Visit.objects.count() == 2
 
 
 # --- Повторный перенос и устойчивость к обрывам ---------------------------------------

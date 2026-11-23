@@ -71,6 +71,9 @@ class Invoice(Document):
     discount_total = MoneyField("скидка итого", default=Decimal("0"))
     total = MoneyField("к оплате", default=Decimal("0"))
     is_quick = models.BooleanField("быстрый счёт", default=False)
+    # История продаж из VetManager: товар продан давно, остатки заводятся при переходе,
+    # поэтому при выполнении такой счёт склад не трогает.
+    imported = models.BooleanField("перенесён из VetManager", default=False, editable=False)
     # Сколько оплачено (сумма распределений оплат) — для статуса «оплачен / частично / долг».
     paid_amount = MoneyField("оплачено", default=Decimal("0"))
 

@@ -397,7 +397,7 @@ def execute_invoice(invoice: Invoice) -> None:
     leaves = [line for line in lines if line.item_unit_id is not None]
     for line in leaves:
         item = line.item
-        if item.kind == Kind.GOODS and item.stock_tracked:
+        if item.kind == Kind.GOODS and item.stock_tracked and not invoice.imported:
             try:
                 written = inventory.write_off(
                     [{"item": item, "qty_base": line.qty_base, "warehouse": invoice.warehouse_id}],
@@ -422,6 +422,87 @@ def execute_invoice(invoice: Invoice) -> None:
     invoice.paid_amount = ZERO
     # Аванс клиента идёт в оплату нового счёта — по событию «выполнен» (см. apps.py),
     # когда счёт уже в статусе «выполнен».
+
+
+class ImportedLine(TypedDict):
+    """Строка перенесённого счёта: суммы — как в той программе, без пересчёта у нас."""
+
+    item_unit: Any
+    quantity: Decimal
+    gross: Decimal  # сумма строки до скидки или наценки на счёт
+    amount: Decimal  # сумма строки к оплате
+    performer: Any
+
+
+def paid_here(invoice: Invoice) -> bool:
+    """По счёту уже принимали деньги нашей кассой — перенос его больше не трогает."""
+    return InvoicePayment.objects.filter(invoice=invoice, payment_id__isnull=False).exists()
+
+
+@transaction.atomic
+def record_imported(
+    invoice: Invoice, lines: list[ImportedLine], execute: bool, paid: Decimal
+) -> Invoice:
+    """Счёт из истории продаж VetManager — новый или обновлённый повторным переносом.
+
+    Суммы берутся как есть: цены и скидки той программы не проверяются нашими
+    лимитами (продажа уже состоялась). Выполненный счёт начисляет сумму клиенту
+    и сразу гасит оплаченную там часть — без кассы: деньги давно в кассе той
+    программы. Склад не трогается (Invoice.imported). Все движения — на дату счёта.
+    """
+    if not lines:
+        raise InvoiceError("В счёте нет позиций.")
+    if (
+        invoice.pk is not None
+        and Invoice.objects.filter(pk=invoice.pk, status=Invoice.Status.EXECUTED).exists()
+    ):
+        core.rollback_document(Invoice.objects.get(pk=invoice.pk))
+        invoice.status = Invoice.Status.DRAFT
+        invoice._stored_status = Invoice.Status.DRAFT
+        invoice.executed_at = None
+        invoice.executed_by = None
+    invoice.imported = True
+    if invoice.warehouse_id is None:
+        invoice.warehouse = inventory.default_sale_warehouse()
+    invoice.paid_amount = ZERO
+    invoice.save()
+    invoice.lines.all().delete()
+    subtotal = total = ZERO
+    for position, data in enumerate(lines):
+        unit = data["item_unit"]
+        quantity = D(str(data["quantity"]))
+        gross, amount = _money(D(str(data["gross"]))), _money(D(str(data["amount"])))
+        if quantity <= 0:
+            raise InvoiceError(f"«{unit.item}»: количество должно быть больше нуля.")
+        surcharge = amount > gross  # наценка на счёт (ночь, выезд) — цена строки выше прайсовой
+        InvoiceLine.objects.create(
+            invoice=invoice,
+            item=unit.item,
+            item_unit=unit,
+            quantity=quantity,
+            qty_base=quantity * unit.ratio,
+            list_price=_money(gross / quantity),
+            price=_money((amount if surcharge else gross) / quantity),
+            manual_price=surcharge,
+            discount=ZERO if surcharge else gross - amount,
+            amount=amount,
+            performer_id=getattr(data["performer"], "pk", data["performer"]) or invoice.doctor_id,
+            position=position,
+        )
+        subtotal += max(gross, amount)
+        total += amount
+    invoice.subtotal, invoice.total = subtotal, total
+    invoice.discount_total = subtotal - total
+    invoice.save(update_fields=["subtotal", "total", "discount_total"])
+    if execute:
+        core.execute_document(invoice)
+        if paid > 0:
+            clients.pay(invoice.client_id, paid, invoice)
+            allocate_credit(invoice.client_id, [invoice.pk])
+        Invoice.objects.filter(pk=invoice.pk).update(executed_at=invoice.date)
+    clients.backdate_entries(invoice, invoice.date)
+    invoice.refresh_from_db()
+    return invoice
 
 
 def rollback_invoice(invoice: Invoice) -> None:
