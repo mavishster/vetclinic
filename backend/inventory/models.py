@@ -173,6 +173,11 @@ class StockDocument(Document):
         related_name="+",
     )
 
+    # Ввод остатков по списку из старого файла склада (inventory.checklist): строки файла,
+    # сопоставленные с прайсом. Хранится с черновиком — пересчёт идёт не один день.
+    checklist = models.JSONField("список из файла", default=list, blank=True)
+    checklist_name = models.CharField("файл списка", max_length=200, blank=True)
+
     class Meta(Document.Meta):
         permissions = [
             ("rollback_stockdocument", "Откатывать выполненные складские документы"),
@@ -238,6 +243,8 @@ class StockLine(models.Model):
         related_name="+",
     )
     position = models.PositiveSmallIntegerField(default=0)
+    # Строка списка из файла, из которой появилась эта строка (номер строки в файле).
+    checklist_row = models.PositiveIntegerField("строка файла", null=True, blank=True)
 
     class Meta:
         verbose_name = "строка складского документа"

@@ -212,6 +212,7 @@ class LineData(TypedDict, total=False):
     expiry_date: Any
     manufacturer: Any
     batch: Any
+    checklist_row: int | None
 
 
 def _is_department(warehouse_id: Any) -> bool:
@@ -284,6 +285,7 @@ def save_document(
                 if document.kind != K.RECEIPT
                 else None,
                 qty_expected=data.get("qty_expected") if document.kind == K.INVENTORY else None,
+                checklist_row=data.get("checklist_row") if document.kind == K.INVENTORY else None,
                 position=position,
             )
         )

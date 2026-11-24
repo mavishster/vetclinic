@@ -52,6 +52,20 @@
         </div>
       </div>
 
+      <div v-if="form.kind === 'inventory' && !executed && !form.checklist?.length" class="row q-col-gutter-sm items-center q-mb-sm">
+        <q-file v-model="checklistFile" outlined dense accept=".xlsx,.csv" label="Список из файла склада (Excel)" class="col-12 col-sm-4"
+          :loading="busy === 'checklist'" @update:model-value="loadChecklist"><template #prepend><q-icon name="checklist" /></template></q-file>
+        <div class="col text-caption text-grey-7">
+          Старый файл склада (штрихкод, наименование, срок, единица, количество) — откроется списком «что искать на полке»:
+          отмечайте найденное, строки попадут в документ, неотмеченное будет подсвечено.
+        </div>
+      </div>
+
+      <ChecklistPanel v-if="form.kind === 'inventory' && form.checklist?.length" ref="panel" :rows="form.checklist"
+        :lines="form.lines" :name="form.checklist_name" :executed="executed" :can-barcodes="can('catalog.change_item')"
+        :busy="busy === 'barcodes'" @tick="tickRow" @untick="untickRow" @pick="pickRow" @barcodes="saveBarcodes"
+        @clear="clearChecklist" />
+
       <div v-if="!executed" class="row q-col-gutter-sm items-center q-mb-sm">
         <q-input ref="scanner" v-model="barcode" outlined dense class="col-12 col-sm-4" placeholder="Сканер: штрихкод + Enter"
           @keydown.enter.prevent="scan"><template #prepend><q-icon name="qr_code_scanner" /></template></q-input>
@@ -68,7 +82,7 @@
             <th>{{ form.kind === 'inventory' ? 'Насчитано' : 'Кол-во' }}</th>
             <th v-if="form.kind === 'inventory'">Разница</th>
             <template v-if="form.kind === 'receipt'"><th>Цена за ед.</th><th>Сумма</th><th>Серия</th><th>Годен до</th></template>
-            <template v-else-if="form.kind === 'inventory'"><th class="text-left">Партия</th><th>Цена за ед.</th></template>
+            <template v-else-if="form.kind === 'inventory'"><th class="text-left">Партия</th><th>Годен до</th><th>Цена за ед.</th></template>
             <th v-else class="text-left">Партия</th>
             <th />
           </tr>
@@ -93,6 +107,9 @@
             </template>
             <template v-else-if="form.kind === 'inventory'">
               <td>{{ line.batch_label || (line.batch ? 'партия' : 'новая партия') }}</td>
+              <td style="width: 150px">
+                <q-input v-if="!line.batch" v-model="line.expiry_date" type="date" dense borderless :readonly="executed" />
+              </td>
               <td style="width: 110px">
                 <q-input v-if="!line.batch" v-model="line.price" type="number" step="0.01" min="0" dense borderless input-class="text-right"
                   :readonly="executed" placeholder="как прошлая" />
@@ -105,7 +122,7 @@
             </td>
             <td class="text-right"><q-btn v-if="!executed" flat round dense size="sm" icon="close" @click="form.lines.splice(i, 1)" /></td>
           </tr>
-          <tr v-if="!form.lines.length"><td colspan="8" class="text-grey-7">Отсканируйте штрихкод или найдите товар по названию</td></tr>
+          <tr v-if="!form.lines.length"><td colspan="9" class="text-grey-7">Отсканируйте штрихкод или найдите товар по названию</td></tr>
         </tbody>
       </q-markup-table>
       <div class="row q-mt-sm">
@@ -127,10 +144,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
-import { apiDelete, apiGet, apiPatch, apiPost, existingByName, fieldErrors, openPostedFile } from '@/api'
+import { apiDelete, apiGet, apiPatch, apiPost, apiUpload, existingByName, fieldErrors, openPostedFile } from '@/api'
 import { can } from '@/session'
 import { money } from '@/modules/catalog/money'
 import { docKind } from './routes'
+import ChecklistPanel from './ChecklistPanel.vue'
 
 const props = defineProps({ id: { type: String, required: true } })
 const route = useRoute()
@@ -146,6 +164,8 @@ const counterparties = ref([])
 const barcode = ref('')
 const groups = ref([])
 const fillGroup = ref(null)
+const checklistFile = ref(null)
+const panel = ref(null)
 
 // Разница инвентаризации — в единицах учёта: насчитано − по учёту.
 function diffOf(line) {
@@ -203,8 +223,92 @@ async function scan() {
   barcode.value = ''
   if (!code) return
   const { data } = await apiGet(`inventory/stock/lookup/?barcode=${encodeURIComponent(code)}`)
+  // Список из файла: строка с этим штрихкодом (или с этой позицией прайса) — отметить, +1 упаковка.
+  const plain = data?.[0]?.scanned_code || code.replace(/\D/g, '')
+  const rows = form.value.checklist || []
+  const same = data?.length ? rows.filter((r) => r.item_unit === data[0].item_unit) : []
+  const row = rows.find((r) => r.barcode && r.barcode === plain)
+    || same.find((r) => lineByRow(r)) || same[0]
+  if (row && row.item_unit) {
+    const line = lineByRow(row)
+    if (line) line.quantity = String((Number(line.quantity) || 0) + 1)
+    else await tickRow(row, '1')
+    const ticked = lineByRow(row)
+    if (data?.[0]?.scanned_expiry && ticked) ticked.expiry_date = data[0].scanned_expiry
+    if (data?.[0]?.scanned_series && ticked) ticked.series = data[0].scanned_series
+    panel.value?.reveal(row)
+    return
+  }
   if (!data?.length) return $q.notify({ type: 'warning', message: `Товар со штрихкодом ${code} не найден` })
   addLine(data[0])
+}
+
+// --- Список из файла склада ------------------------------------------------------
+const lineByRow = (row) => form.value.lines.find((l) => l.checklist_row === row.row)
+
+async function loadChecklist(file) {
+  if (!file) return
+  busy.value = 'checklist'
+  if (!form.value.id && !(await save(true, false))) return (busy.value = '')
+  const payload = new FormData()
+  payload.append('file', file)
+  const { ok, data } = await apiUpload(`inventory/documents/${form.value.id}/checklist/`, payload)
+  busy.value = ''
+  checklistFile.value = null
+  if (!ok) return (error.value = Object.values(fieldErrors(data))[0] || 'Не удалось прочитать файл')
+  form.value.checklist = data.checklist
+  form.value.checklist_name = data.checklist_name
+  const s = data.checklist_summary
+  $q.notify({ type: 'positive', timeout: 6000,
+    message: `Позиций: ${s.total}. По штрихкоду: ${s.barcode}, по названию: ${s.name}, похожие: ${s.similar}, нет в прайсе: ${s.missing}` })
+  if (props.id === 'new') router.replace(`/inventory/documents/${form.value.id}`)
+}
+
+async function tickRow(row, quantity) {
+  if (!row.item_unit || lineByRow(row)) return
+  const units = await unitsOf(row.item, row.item_name)
+  form.value.lines.push({
+    item: row.item, item_name: row.item_name, base_unit: row.base_unit, item_unit: row.item_unit,
+    units: units.length ? units : [{ item_unit: row.item_unit, unit_name: row.unit_name, ratio: row.ratio }],
+    quantity: quantity ?? row.qty_file ?? '1', price: null, series: '', expiry_date: row.expiry || null, batch: null,
+    batches: [], qty_expected: null, checklist_row: row.row,
+  })
+}
+
+function untickRow(row) {
+  form.value.lines = form.value.lines.filter((l) => l.checklist_row !== row.row)
+}
+
+function pickRow(row, unit) {
+  Object.assign(row, {
+    match: 'manual', item: unit.item, item_unit: unit.item_unit, item_name: unit.item_name, unit_name: unit.unit_name,
+    base_unit: unit.base_unit || row.base_unit, ratio: unit.ratio || row.ratio,
+  })
+  const line = lineByRow(row)
+  if (line) untickRow(row)
+}
+
+async function saveBarcodes() {
+  busy.value = 'barcodes'
+  if (!(await save(true, false))) return (busy.value = '')
+  const { ok, data } = await apiPost(`inventory/documents/${form.value.id}/checklist_barcodes/`)
+  busy.value = ''
+  if (!ok) return (error.value = Object.values(fieldErrors(data))[0] || 'Не удалось записать штрихкоды')
+  form.value.checklist = data.checklist
+  $q.notify({ type: data.skipped.length ? 'warning' : 'positive', timeout: 8000,
+    message: `Записано штрихкодов: ${data.saved}`
+      + (data.skipped.length ? `. Пропущено ${data.skipped.length}: ${data.skipped.slice(0, 3).join('; ')}` : '') })
+}
+
+function clearChecklist() {
+  $q.dialog({
+    title: 'Убрать список из файла?', message: 'Строки, которые уже попали в документ, останутся.',
+    cancel: { label: 'Отмена', flat: true }, ok: { label: 'Убрать', color: 'primary', unelevated: true },
+  }).onOk(async () => {
+    if (!(await save(true, false))) return
+    const { ok, data } = await apiPost(`inventory/documents/${form.value.id}/checklist_clear/`)
+    if (ok) Object.assign(form.value, { checklist: data.checklist, checklist_name: data.checklist_name })
+  })
 }
 
 async function searchItems(text, update, abort) {
@@ -243,6 +347,7 @@ function body() {
     lines: lines.map((l) => ({
       item_unit: l.item_unit, quantity: l.quantity, price: l.price === '' ? null : l.price, series: l.series,
       expiry_date: l.expiry_date || null, batch: l.batch || null, qty_expected: l.qty_expected ?? null,
+      checklist_row: l.checklist_row ?? null,
     })),
   }
 }
@@ -326,7 +431,7 @@ onMounted(async () => {
   groups.value = g.data ?? []
   if (props.id === 'new') {
     form.value = { kind: route.query.kind || 'receipt', date: new Date().toISOString(), warehouse: warehouses.value[0]?.id ?? null,
-      target_warehouse: null, counterparty: null, supplier_number: '', supplier_date: null, reason: '', department: null, comment: '', lines: [] }
+      target_warehouse: null, counterparty: null, supplier_number: '', supplier_date: null, reason: '', department: null, comment: '', lines: [], checklist: [] }
   } else {
     const { ok, data } = await apiGet(`inventory/documents/${props.id}/`)
     if (ok) applyDocument(data)

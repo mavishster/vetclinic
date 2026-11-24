@@ -7,8 +7,9 @@ from django.db.models import Q, QuerySet
 from django.http import HttpResponse
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,6 +22,7 @@ from core.api.directories import DirectoryViewSet
 from core.api.permissions import ModelPermissions, can_view_cost, require_special, requires
 from core.excel import xlsx_response
 from core.models import DocumentError, PrintTemplate
+from inventory import checklist as stock_checklist
 from inventory import importing, labels, services
 from inventory.models import (
     Department,
@@ -89,9 +91,10 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "manufacturer_name",
             "batch",
             "batch_label",
+            "checklist_row",
         ]
         read_only_fields = ["item", "qty_base"]
-        extra_kwargs = {"batch": {"required": False}}
+        extra_kwargs = {"batch": {"required": False}, "checklist_row": {"required": False}}
 
     def get_batch_label(self, line: StockLine) -> str:
         return str(line.batch) if line.batch else ""
@@ -135,10 +138,20 @@ class DocumentSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "comment",
             "lines",
             "total",
+            "checklist",
+            "checklist_name",
             "executed_at",
             "created_at",
         ]
-        read_only_fields = ["number", "status", "executed_at"]
+        read_only_fields = ["number", "status", "executed_at", "checklist_name"]
+
+    def validate_checklist(self, value: Any) -> list[dict[str, Any]]:
+        """Список из файла правится на экране (выбор позиции вручную) — только список строк."""
+        if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+            raise ValidationError("Список из файла — это список строк.")
+        if len(value) > stock_checklist.MAX_ROWS:
+            raise ValidationError("Слишком много строк в списке.")
+        return value
 
     def to_representation(self, document: StockDocument) -> dict[str, Any]:
         data = super().to_representation(document)
@@ -239,6 +252,36 @@ class DocumentViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
         return self._run(
             lambda doc: services.fill_inventory(doc, request.data.get("group") or None)
         )
+
+    @action(detail=True, methods=["post"], parser_classes=[MultiPartParser, JSONParser])
+    def checklist(self, request: Request, pk: str | None = None) -> Response:
+        """Загрузить в черновик инвентаризации список из старого файла склада."""
+        document = self.get_object()
+        content, filename = _upload(request)
+        try:
+            stock_checklist.load(document, content, filename)
+        except stock_checklist.ChecklistError as error:
+            raise ValidationError({"file": [str(error)]}) from error
+        data = self.get_serializer(document).data
+        data["checklist_summary"] = stock_checklist.summary(document.checklist)
+        return Response(data)
+
+    @action(detail=True, methods=["post"])
+    def checklist_clear(self, request: Request, pk: str | None = None) -> Response:
+        """Убрать список из файла (строки документа остаются)."""
+        document = self.get_object()
+        document.checklist, document.checklist_name = [], ""
+        document.save(update_fields=["checklist", "checklist_name"])
+        return Response(self.get_serializer(document).data)
+
+    @action(detail=True, methods=["post"])
+    def checklist_barcodes(self, request: Request, pk: str | None = None) -> Response:
+        """Записать штрихкоды из списка в прайс — подтверждённым позициям без штрихкода."""
+        if not request.user.has_perm("catalog.change_item"):
+            raise PermissionDenied("Нет права менять прайс.")
+        document = self.get_object()
+        result = stock_checklist.save_barcodes(document)
+        return Response({**result, "checklist": document.checklist})
 
     @action(detail=True, methods=["post"])
     def execute(self, request: Request, pk: str | None = None) -> Response:
@@ -349,7 +392,10 @@ class StockViewSet(viewsets.ViewSet):
         if item_id := params.get("item", "").strip():  # все единицы товара — выбор единицы
             units = list(catalog.item_units_of([item_id]))
         elif code := params.get("barcode", "").strip():
-            unit = catalog.find_by_barcode(code)
+            gs1 = services.parse_gs1(code)  # DataMatrix с упаковки лекарства: GTIN, срок, серия
+            unit = catalog.find_by_barcode(gs1["ean"] if gs1 else code)
+            if unit is None and gs1:
+                unit = catalog.find_by_barcode(gs1["gtin"])
             if unit is None or unit.item.kind != Kind.GOODS:
                 return Response([])
             units = [unit]
@@ -366,6 +412,13 @@ class StockViewSet(viewsets.ViewSet):
                 for u in item.units.select_related("item__base_unit", "unit").all()
             ]
         text = catalog.qty_formatter(u.item_id for u in units)
+        scanned = {}
+        if (code := params.get("barcode", "").strip()) and (gs1 := services.parse_gs1(code)):
+            scanned = {
+                "scanned_expiry": gs1["expiry"].isoformat() if gs1["expiry"] else None,
+                "scanned_series": gs1["batch"],
+                "scanned_code": gs1["ean"],
+            }
         result = []
         for u in units:
             stock = services.available(u.item)
@@ -380,6 +433,7 @@ class StockViewSet(viewsets.ViewSet):
                     "for_purchase": u.for_purchase,
                     "stock": _text(stock),
                     "stock_text": text(u.item_id, stock),
+                    **scanned,
                 }
             )
         return Response(result)
