@@ -1158,10 +1158,12 @@ def _purpose_for(
 def import_visit_purposes(rows: list[dict[str, Any]] | None = None) -> StepResult:
     """Типы приёмов VetManager → цели обращения.
 
-    Они лежат в общем справочнике ComboManualItem (раздел «Тип приёма»).
+    Они лежат в общем справочнике ComboManualItem (раздел «Тип приёма»). Берутся только
+    элементы этого раздела: элемент без раздела может быть чем угодно — типом кассовой
+    операции, источником клиента, производителем.
     """
     rows = _combo_items() if rows is None else rows
-    rows = [row for row in rows if _manual_name(row) in PURPOSE_MANUAL or not _manual_name(row)]
+    rows = [row for row in rows if _manual_name(row) in PURPOSE_MANUAL]
     result = StepResult("visit_purposes", "Цели обращения", total=len(rows))
     for row in rows:
         name = _plain(_text(row, "title"))[:100]

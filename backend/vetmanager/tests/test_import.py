@@ -757,6 +757,56 @@ def test_visits_imported_with_doctor_purpose_and_text(visits) -> None:
     assert "<script>" not in first.treatment_html  # текст очищается
 
 
+# Элементы общего справочника VetManager из чужих разделов или вовсе без раздела.
+FOREIGN_COMBO = [
+    {"id": 501, "combo_manual_id": 9, "value": "1", "title": "Инкассация"},
+    {"id": 502, "combo_manual_id": 7, "value": "2", "title": "\"Желтые страницы\"",
+     "comboManualName": {"id": 7, "title": "Откуда узнали", "name": "client_source"}},
+]  # fmt: skip
+
+
+def test_purposes_take_only_admission_type_section(db) -> None:
+    """Типы кассовых операций, источники клиентов и прочее в цели обращения не попадают."""
+    from scheduling.models import VisitPurpose
+
+    result = services.import_visit_purposes([*COMBO_ITEMS, *FOREIGN_COMBO])
+
+    names = set(VisitPurpose.objects.values_list("name", flat=True))
+    assert {"Вакцинация", "Хирургия", "Взятие анализа"} <= names
+    assert not names & {"Инкассация", '"Желтые страницы"', "Полное выздоровление"}
+    assert result.total == 3
+
+
+def test_tidy_migration_removes_only_unused_foreign_purposes(visits) -> None:
+    """Уборка после старого переноса: мусор — мягко удаляется, нужное остаётся."""
+    import importlib
+
+    from django.apps import apps
+
+    from medical.models import Visit
+    from scheduling.models import VisitPurpose
+
+    tidy = importlib.import_module("vetmanager.migrations.0003_tidy_visit_purposes")
+
+    def imported(name: str, external: str) -> VisitPurpose:
+        purpose = VisitPurpose.objects.get_or_create(name=name)[0]
+        Imported.objects.create(kind="visit_purpose", external_id=external, target_id=purpose.pk)
+        return purpose
+
+    junk = imported("Инкассация", "501")
+    call = imported("Звонок", "502")  # из начального списка — остаётся
+    own = VisitPurpose.objects.create(name="Чипирование")  # завела клиника — не трогаем
+    used = set(Visit.all_objects.values_list("purpose__name", flat=True))
+
+    tidy.tidy(apps, None)
+
+    remaining = set(VisitPurpose.objects.values_list("name", flat=True))
+    assert junk.name not in remaining
+    assert VisitPurpose.all_objects.get(pk=junk.pk).is_deleted  # мягко: можно вернуть
+    assert {call.name, own.name} <= remaining
+    assert used <= remaining  # цели медкарт не тронуты
+
+
 def test_unknown_doctor_goes_to_transfer_account(visits) -> None:
     from medical.models import Visit
 
