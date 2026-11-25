@@ -63,8 +63,14 @@ services:
     restart: unless-stopped
     ports:
       - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      # Для какого адреса выписать сертификат: по нему система и открывается.
+      SERVER_NAME: "${SERVER_NAME:-192.168.1.91}"
     volumes:
       - static:/static:ro
+      # Сертификат переживает обновления: иначе браузеры ругались бы заново.
+      - certs:/certs
     depends_on:
       - backend
 
@@ -89,6 +95,7 @@ services:
         condition: service_healthy
 
 volumes:
+  certs:
   pgdata:
   media:
   static:

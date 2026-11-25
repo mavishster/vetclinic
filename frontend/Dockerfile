@@ -8,6 +8,10 @@ COPY . .
 RUN npm run build
 
 FROM nginx:1.27-alpine
+# openssl — для самоподписанного сертификата при первом запуске.
+RUN apk add --no-cache openssl
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
+COPY entrypoint.sh /entrypoint.sh
+EXPOSE 80 443
+ENTRYPOINT ["/entrypoint.sh"]
