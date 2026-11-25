@@ -2,12 +2,17 @@ from django.contrib import admin
 from simple_history.admin import SimpleHistoryAdmin
 
 from core.admin import DirectoryAdmin
-from scheduling.models import Appointment, VisitPurpose
+from scheduling.models import Appointment, Room, VisitPurpose
 
 
 @admin.register(VisitPurpose)
 class VisitPurposeAdmin(DirectoryAdmin):
     list_display = ("name", "kind", "duration_minutes", "show_in_portal", "is_active")
+
+
+@admin.register(Room)
+class RoomAdmin(DirectoryAdmin):
+    list_display = ("name", "is_active")
 
 
 @admin.register(Appointment)

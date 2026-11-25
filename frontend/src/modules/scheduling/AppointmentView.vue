@@ -6,6 +6,8 @@
           <div class="text-h6">{{ timeOf(appointment.start) }}–{{ timeOf(appointment.end) }}
             <q-badge :color="STATUS[appointment.status].color" :label="appointment.status_label" class="q-ml-xs" />
             <q-badge v-if="appointment.is_overdue" color="negative" label="просрочен" class="q-ml-xs" />
+            <q-badge v-if="appointment.queue_number && ['waiting', 'in_progress'].includes(appointment.status)" color="primary"
+              outline :label="`№ ${appointment.queue_number} в очереди`" class="q-ml-xs" />
           </div>
           <div class="text-caption text-grey-7">{{ new Date(appointment.start).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }) }}</div>
         </div>
@@ -37,12 +39,22 @@
           <q-item-section avatar><q-icon name="notes" color="primary" /></q-item-section>
           <q-item-section style="white-space: pre-line">{{ appointment.note }}</q-item-section>
         </q-item>
+        <q-item v-if="appointment.status === 'waiting' && appointment.called_at">
+          <q-item-section avatar><q-icon name="campaign" color="positive" /></q-item-section>
+          <q-item-section>Приглашён в {{ timeOf(appointment.called_at) }} · {{ appointment.room_name }}</q-item-section>
+        </q-item>
         <q-item v-if="appointment.cancel_reason">
           <q-item-section avatar><q-icon name="info" color="grey-7" /></q-item-section>
           <q-item-section>Причина отмены: {{ appointment.cancel_reason }}</q-item-section>
         </q-item>
       </q-list>
       <q-card-actions v-if="can('scheduling.change_appointment')" class="q-px-md q-pb-md column items-stretch q-gutter-y-xs">
+        <template v-if="appointment.status === 'waiting'">
+          <q-btn color="positive" unelevated icon="campaign" no-caps align="left" :loading="inviting"
+            :label="appointment.called_at ? 'Пригласить ещё раз' : 'Пригласить в кабинет'" @click="invite(false)" />
+          <q-btn color="positive" outline icon="meeting_room" no-caps align="left" label="Пригласить в другой кабинет"
+            @click="invite(true)" />
+        </template>
         <q-btn v-for="action in ACTIONS[appointment.status]" :key="action.to" :icon="action.icon" :label="action.label"
           :color="action.to === 'cancelled' ? 'negative' : 'primary'" :outline="action.to !== primaryAction" unelevated
           no-caps align="left" @click="go(action.to)" />
@@ -60,7 +72,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { apiPost, fieldErrors } from '@/api'
 import { can } from '@/session'
-import { ACTIONS, changeStatus, STATUS, timeOf } from './appointments'
+import { ACTIONS, changeStatus, inviteToRoom, STATUS, timeOf } from './appointments'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -83,6 +95,17 @@ async function openMedcard() {
   if (!ok) return $q.notify({ type: 'negative', message: Object.values(fieldErrors(data))[0] || 'Не удалось открыть медкарту' })
   emit('update:modelValue', false)
   router.push(`/visits/${data.id}`)
+}
+
+const inviting = ref(false)
+async function invite(chooseRoom) {
+  inviting.value = true
+  const updated = await inviteToRoom($q, props.appointment, chooseRoom)
+  inviting.value = false
+  if (updated) {
+    emit('changed', updated)
+    emit('update:modelValue', false)
+  }
 }
 
 async function go(to) {

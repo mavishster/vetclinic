@@ -34,6 +34,14 @@ class VisitPurpose(Directory):
         verbose_name_plural = "цели обращения"
 
 
+class Room(Directory):
+    """Кабинет приёма: куда приглашают пациента с экрана очереди в холле."""
+
+    class Meta(Directory.Meta):
+        verbose_name = "кабинет"
+        verbose_name_plural = "кабинеты"
+
+
 class Appointment(ClinicScopedModel):
     """Запись на приём.
 
@@ -95,6 +103,30 @@ class Appointment(ClinicScopedModel):
     started_at = models.DateTimeField("начат", null=True, blank=True)
     completed_at = models.DateTimeField("завершён", null=True, blank=True)
     cancel_reason = models.CharField("причина отмены", max_length=255, blank=True)
+    # Электронная очередь: номер выдаётся при отметке «пришёл», заново каждый день.
+    queue_date = models.DateField("день очереди", null=True, blank=True, editable=False)
+    queue_number = models.PositiveSmallIntegerField(
+        "номер в очереди", null=True, blank=True, editable=False
+    )
+    called_at = models.DateTimeField("приглашён", null=True, blank=True, editable=False)
+    called_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="кто пригласил",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+    )
+    room = models.ForeignKey(
+        Room,
+        verbose_name="кабинет",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+    )
     parent = models.ForeignKey(
         "self",
         verbose_name="на основе записи",
@@ -108,6 +140,13 @@ class Appointment(ClinicScopedModel):
         verbose_name = "запись на приём"
         verbose_name_plural = "записи на приём"
         ordering = ["start"]
+        permissions = [("queue_screen", "Экран очереди в холле (учётная запись экрана)")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["clinic", "queue_date", "queue_number"],
+                name="scheduling_appointment_unique_queue_number",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"{timezone.localtime(self.start):%d.%m %H:%M} — {self.client}"

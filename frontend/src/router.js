@@ -31,6 +31,8 @@ const router = createRouter({
     },
     // Экран подписи для планшета у стойки — на весь экран, без меню.
     { path: '/signing', component: () => import('./modules/signing/SigningScreen.vue'), meta: { perm: 'clients.sign_on_station' } },
+    // Экран очереди для телевизора в холле — тоже на весь экран, без меню.
+    { path: '/queue', component: () => import('./modules/scheduling/QueueScreen.vue'), meta: { perm: ['scheduling.queue_screen', 'scheduling.view_appointment'] } },
     { path: '/', component: MainLayout, children: moduleRoutes },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
@@ -41,16 +43,21 @@ router.beforeEach(async (to) => {
   if (!session.loaded) await loadMe()
   if (to.meta.public) return true
   if (!session.user) return { path: '/login', query: { next: to.fullPath } }
-  // Учётная запись планшета подписи видит только экран подписи.
-  if (isSigningStation() && to.path !== '/signing') return '/signing'
+  // Учётная запись устройства (планшет подписи, экран очереди) видит только свой экран.
+  const device = deviceScreen()
+  if (device && to.path !== device) return device
   if (to.meta.perm && !can(to.meta.perm)) return '/'
   return true
 })
 
-function isSigningStation() {
+// Право устройства → его единственный экран.
+const DEVICE_SCREENS = { 'clients.sign_on_station': '/signing', 'scheduling.queue_screen': '/queue' }
+
+function deviceScreen() {
   const perms = session.user?.permissions || []
-  // Только право планшета и ничего больше — это планшет, а не сотрудник.
-  return perms.includes('clients.sign_on_station') && !session.user.is_superuser && perms.every((p) => p === 'clients.sign_on_station')
+  // Только право устройства и ничего больше — это устройство, а не сотрудник.
+  if (session.user?.is_superuser || perms.length !== 1) return null
+  return DEVICE_SCREENS[perms[0]] ?? null
 }
 
 export default router

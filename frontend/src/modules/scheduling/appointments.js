@@ -1,5 +1,5 @@
 // Общее для записей: статусы, действия, время (DRY — календарь, «сегодня», карточка клиента).
-import { apiPost, fieldErrors } from '@/api'
+import { apiGet, apiPost, fieldErrors } from '@/api'
 
 export const STATUS = {
   planned: { label: 'запланирован', color: 'primary' },
@@ -63,4 +63,56 @@ export async function changeStatus($q, appointment, to) {
     return null
   }
   return data
+}
+
+// --- Электронная очередь ---
+
+// Порядок ожидания — как на экране в холле: по времени записи, а пришедшие позже
+// своего времени и без записи — по времени прихода.
+const queueKey = (a) => Math.max(+new Date(a.start), a.arrived_at ? +new Date(a.arrived_at) : 0)
+export const byQueue = (a, b) => queueKey(a) - queueKey(b) || (a.queue_number ?? 0) - (b.queue_number ?? 0)
+
+async function pickRoom($q, appointment) {
+  const { ok, data } = await apiGet(`scheduling/appointments/${appointment.id}/invite/`)
+  if (!ok) {
+    $q.notify({ type: 'negative', message: 'Не удалось загрузить кабинеты' })
+    return null
+  }
+  if (!data.rooms.length) {
+    $q.notify({ type: 'warning', message: 'Нет ни одного кабинета — добавьте их в «Справочники → Кабинеты».' })
+    return null
+  }
+  return new Promise((resolve) =>
+    $q
+      .dialog({
+        title: 'В какой кабинет?',
+        options: { type: 'radio', model: data.suggested ?? data.rooms[0].id, items: data.rooms.map((r) => ({ label: r.name, value: r.id })) },
+        cancel: { label: 'Назад', flat: true },
+        ok: { label: 'Пригласить', color: 'primary', unelevated: true },
+      })
+      .onOk((room) => resolve(room))
+      .onCancel(() => resolve(null)),
+  )
+}
+
+// Пригласить ожидающего в кабинет — он появится на экране очереди в холле.
+// Кабинет спрашивается, только если сервер его не знает (первое приглашение врача за день)
+// или если выбрать его просят явно (chooseRoom). Возвращает обновлённую запись или null.
+export async function inviteToRoom($q, appointment, chooseRoom = false) {
+  let room = chooseRoom ? await pickRoom($q, appointment) : null
+  if (chooseRoom && !room) return null
+  const url = `scheduling/appointments/${appointment.id}/invite/`
+  let result = await apiPost(url, room ? { room } : {})
+  if (!result.ok && result.data?.room && !room) {
+    room = await pickRoom($q, appointment)
+    if (!room) return null
+    result = await apiPost(url, { room })
+  }
+  if (!result.ok) {
+    const errors = fieldErrors(result.data)
+    $q.notify({ type: 'negative', message: errors.non_field_errors || errors.room || 'Не удалось пригласить' })
+    return null
+  }
+  $q.notify({ type: 'positive', message: `№ ${result.data.queue_number} — приглашён: ${result.data.room_name}` })
+  return result.data
 }

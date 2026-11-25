@@ -9,6 +9,12 @@ const KINDS = [
 ]
 
 export default [
+  {
+    path: 'directories/rooms',
+    component: DirectoryPage,
+    props: { title: 'Кабинеты', endpoint: 'scheduling/rooms/', permission: 'scheduling.room', fields: [] },
+    meta: { perm: 'scheduling.view_room' },
+  },
   { path: 'calendar', component: () => import('./CalendarPage.vue'), meta: { perm: 'scheduling.view_appointment' } },
   { path: 'appointments/today', component: () => import('./TodayPage.vue'), meta: { perm: 'scheduling.view_appointment' } },
   {

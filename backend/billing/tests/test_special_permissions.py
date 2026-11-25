@@ -106,6 +106,7 @@ def test_role_api_special_and_templates(db) -> None:
         "Кассир",
         "Кладовщик",
         "Планшет подписи",
+        "Экран очереди",
         "Руководитель",
     ]
     assert created.status_code == 201
@@ -115,4 +116,5 @@ def test_role_api_special_and_templates(db) -> None:
         "cash.close_shift",
     }
     manager = next(t for t in templates if t["code"] == "manager")
-    assert len(manager["special"]) == len(services.special_permissions()) - 1  # без права планшета
+    # без прав устройств: планшета подписи и экрана очереди
+    assert len(manager["special"]) == len(services.special_permissions()) - 2

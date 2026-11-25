@@ -218,6 +218,7 @@ PERMISSION_HINTS = {
     "staff.intervaltemplate": "Шаблоны времени для графика.",
     "scheduling.appointment": "Календарь: записи на приём и их статусы.",
     "scheduling.visitpurpose": "Список целей обращения.",
+    "scheduling.room": "Список кабинетов — куда приглашают пациента с экрана очереди.",
     "medical.visit": "Записи медкарты: приёмы, диагнозы, лечение.",
     "medical.prevention": "Вакцинации, дегельминтизация и другая профилактика.",
     "medical.diagnosis": "Список диагнозов.",
@@ -355,6 +356,7 @@ _DIRECTORIES_VIEW = [
     "catalog.druggroup",
     "catalog.substance",
     "scheduling.visitpurpose",
+    "scheduling.room",
     "medical.diagnosis",
     "medical.visitresult",
     "medical.preventiontype",
@@ -364,6 +366,8 @@ _DIRECTORIES_VIEW = [
     "core.filecategory",
     "cash.cashregister",
 ]
+# Права учётных записей устройств (планшет подписи, экран в холле), а не сотрудников.
+DEVICE_PERMISSIONS = {"clients.sign_on_station", "scheduling.queue_screen"}
 ROLE_TEMPLATES: list[dict[str, Any]] = [
     {
         "code": "doctor",
@@ -472,6 +476,13 @@ ROLE_TEMPLATES: list[dict[str, Any]] = [
         "special": ["clients.sign_on_station"],
     },
     {
+        "code": "queue_screen",
+        "name": "Экран очереди",
+        "description": "Только экран очереди в холле: номер, кличка, врач и кабинет.",
+        "access": {},
+        "special": ["scheduling.queue_screen"],
+    },
+    {
         "code": "manager",
         "name": "Руководитель",
         "description": "Всё: все разделы и справочники, особые права, настройка ролей.",
@@ -491,9 +502,10 @@ def role_templates() -> list[dict[str, Any]]:
             access = {code: [_V, _E, _D] for code in entities}
         else:
             access = {c: a for c, a in template["access"].items() if c in entities}
-        # «Всё» для руководителя — кроме права планшета: это отдельная учётная запись.
+        # «Всё» для руководителя — кроме прав устройств: у планшета подписи и экрана
+        # очереди — свои учётные записи.
         special = (
-            sorted(specials - {"clients.sign_on_station"})
+            sorted(specials - DEVICE_PERMISSIONS)
             if template["special"] == "all"
             else [c for c in template["special"] if c in specials]
         )

@@ -9,6 +9,7 @@ from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -16,13 +17,17 @@ from rest_framework.views import APIView
 from clients.models import Client
 from core.api.directories import DirectoryViewSet
 from scheduling import services
-from scheduling.models import Appointment, VisitPurpose
+from scheduling.models import Appointment, Room, VisitPurpose
 from staff import services as staff
 
 
 class PurposeViewSet(DirectoryViewSet):
     model = VisitPurpose
     extra_fields = ("kind", "duration_minutes", "color", "show_in_portal")
+
+
+class RoomViewSet(DirectoryViewSet):
+    model = Room
 
 
 class QuickClientSerializer(serializers.Serializer):  # type: ignore[type-arg]
@@ -44,6 +49,7 @@ class AppointmentSerializer(serializers.ModelSerializer):  # type: ignore[type-a
     purpose_color = serializers.CharField(source="purpose.color", read_only=True, default="")
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     is_overdue = serializers.SerializerMethodField()
+    room_name = serializers.CharField(source="room.name", read_only=True, default="")
 
     class Meta:
         model = Appointment
@@ -52,9 +58,11 @@ class AppointmentSerializer(serializers.ModelSerializer):  # type: ignore[type-a
             "pet", "pet_note", "pet_name", "doctor", "doctor_name", "purpose", "purpose_name",
             "purpose_color", "start", "end", "status", "status_label", "source", "note",
             "arrived_at", "started_at", "completed_at", "cancel_reason", "is_overdue",
+            "queue_number", "called_at", "room", "room_name",
         ]  # fmt: skip
         read_only_fields = [
             "status", "arrived_at", "started_at", "completed_at", "cancel_reason",
+            "queue_number", "called_at", "room",
         ]  # fmt: skip
 
     def get_client_phone(self, appointment: Appointment) -> str:
@@ -108,7 +116,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
 
     def get_queryset(self) -> QuerySet[Appointment]:
         queryset = Appointment.objects.select_related(
-            "client", "pet", "doctor", "purpose"
+            "client", "pet", "doctor", "purpose", "room"
         ).prefetch_related("client__phones")
         params = self.request.query_params
         if params.get("from") and params.get("to"):
@@ -138,6 +146,32 @@ class AppointmentViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
                 appointment, request.data.get("status", ""), request.data.get("reason", "")
             )
         except (services.AppointmentError, ValueError) as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+        return Response(self.get_serializer(appointment).data)
+
+    @action(detail=True, methods=["get", "post"], url_path="invite")
+    def invite(self, request: Request, pk: str | None = None) -> Response:
+        """Пригласить в кабинет (экран очереди в холле).
+
+        GET — кабинеты для выбора и предлагаемый: {"rooms": [...], "suggested": id|null}.
+        POST {"room": id} — пригласить; без room — в кабинет, куда врач приглашал сегодня.
+        Если кабинет не известен — 400 с полем room: интерфейс спросит кабинет.
+        """
+        appointment = self.get_object()
+        if request.method == "GET":
+            suggested = services.suggested_room(appointment, request.user)
+            rooms = [{"id": str(r.pk), "name": r.name} for r in services.active_rooms()]
+            return Response({"rooms": rooms, "suggested": str(suggested.pk) if suggested else None})
+        room = None
+        if room_id := request.data.get("room"):
+            room = services.active_rooms().filter(pk=room_id).first()
+            if room is None:
+                raise ValidationError({"room": ["Такого кабинета нет или он выключен."]})
+        try:
+            services.invite(appointment, request.user, room)
+        except services.RoomRequired as error:
+            raise ValidationError({"room": [str(error)]}) from error
+        except services.AppointmentError as error:
             raise ValidationError({"non_field_errors": [str(error)]}) from error
         return Response(self.get_serializer(appointment).data)
 
@@ -204,5 +238,51 @@ class CalendarView(APIView):
                 "appointments": AppointmentSerializer(
                     appointments, many=True, context=context
                 ).data,
+            }
+        )
+
+
+class CanSeeQueue(BasePermission):
+    """Экран очереди: учётная запись экрана в холле или сотрудник с доступом к записям."""
+
+    message = "Нет доступа к экрану очереди."
+
+    def has_permission(self, request: Request, view: Any) -> bool:
+        user = request.user
+        return bool(
+            user
+            and (
+                user.has_perm("scheduling.queue_screen")
+                or user.has_perm("scheduling.view_appointment")
+            )
+        )
+
+
+class QueueBoardView(APIView):
+    """Экран очереди в холле: только номер, кличка, врач и кабинет — без ФИО и телефонов.
+
+    Экран спрашивает раз в несколько секунд; новое приглашение он узнаёт по called_at.
+    """
+
+    permission_classes = [CanSeeQueue]
+
+    def get(self, request: Request) -> Response:
+        board = services.queue_board()
+
+        def row(appointment: Appointment) -> dict[str, Any]:
+            return {
+                "id": str(appointment.pk),
+                "number": appointment.queue_number,
+                "pet": appointment.pet.name if appointment.pet else appointment.pet_note,
+                "doctor": appointment.doctor.short_name if appointment.doctor else "",
+                "room": appointment.room.name if appointment.room else "",
+                "called_at": appointment.called_at,
+            }
+
+        return Response(
+            {
+                "now": timezone.now(),
+                "called": [row(a) for a in board["called"]],
+                "waiting": [row(a) for a in board["waiting"]],
             }
         )

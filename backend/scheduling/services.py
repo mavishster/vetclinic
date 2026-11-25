@@ -9,12 +9,14 @@
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from django.db.models import Q, QuerySet
+from django.db import connection, transaction
+from django.db.models import Max, Q, QuerySet
+from django.db.models.functions import Greatest
 from django.utils import timezone
 
 from clients import services as clients
 from clients.models import Client
-from scheduling.models import Appointment, VisitPurpose
+from scheduling.models import Appointment, Room, VisitPurpose
 from staff import services as staff
 
 S = Appointment.Status
@@ -36,6 +38,10 @@ TRANSITIONS: dict[str, set[str]] = {
 
 class AppointmentError(Exception):
     """Запись невозможна. Текст — для пользователя."""
+
+
+class RoomRequired(AppointmentError):
+    """Пригласить можно, но кабинет неизвестен — его нужно выбрать."""
 
 
 class AppointmentWarning(Exception):
@@ -104,8 +110,13 @@ def quick_client(last_name: str, first_name: str, phone: str) -> Client:
 # --- Статусы -----------------------------------------------------------------------
 
 
+@transaction.atomic
 def change_status(appointment: Appointment, status: str, reason: str = "") -> Appointment:
-    """Перевести запись в другой статус по правилам TRANSITIONS, с отметками времени."""
+    """Перевести запись в другой статус по правилам TRANSITIONS, с отметками времени.
+
+    «Ожидает» выдаёт номер в очереди; возврат из «ожидает» или «у врача» снимает
+    приглашение — пациент уходит с экрана в холле.
+    """
     if status not in TRANSITIONS.get(appointment.status, set()):
         raise AppointmentError(
             f"Нельзя перевести запись из «{appointment.get_status_display()}» "
@@ -114,6 +125,8 @@ def change_status(appointment: Appointment, status: str, reason: str = "") -> Ap
     now = timezone.now()
     if status == S.WAITING:
         appointment.arrived_at = appointment.arrived_at or now
+        _assign_queue_number(appointment)
+        _clear_call(appointment)
     elif status == S.IN_PROGRESS:
         appointment.arrived_at = appointment.arrived_at or now
         appointment.started_at = appointment.started_at or now
@@ -126,20 +139,126 @@ def change_status(appointment: Appointment, status: str, reason: str = "") -> Ap
     if status == S.PLANNED:
         appointment.arrived_at = appointment.started_at = None
         appointment.cancel_reason = ""
+        _clear_call(appointment)
     appointment.status = status
     appointment.save()
     return appointment
 
 
+@transaction.atomic
 def walk_in(appointment: Appointment) -> Appointment:
-    """Клиент пришёл без записи: запись создаётся сразу в статусе «ожидает»."""
+    """Клиент пришёл без записи: запись создаётся сразу в статусе «ожидает» с номером."""
     now = timezone.now()
     appointment.start = now
     appointment.end = default_end(now, appointment.purpose)
     appointment.status = S.WAITING
     appointment.arrived_at = now
     appointment.source = Appointment.Source.WALK_IN
+    _assign_queue_number(appointment)
     return save_appointment(appointment, force=True)
+
+
+# --- Электронная очередь -------------------------------------------------------------
+
+# Сколько минут приглашённый виден в «Проходите», пока не вошёл (потом — пригласить ещё раз).
+CALLED_SHOW_MINUTES = 10
+# Сколько минут он остаётся там после того, как врач открыл приём, — чтобы строка
+# не пропадала раньше, чем пациент дошёл до кабинета.
+STARTED_SHOW_MINUTES = 2
+# Ключ блокировки нумерации: два регистратора одновременно не получат один номер.
+_QUEUE_LOCK = 7301001
+
+
+def _assign_queue_number(appointment: Appointment) -> None:
+    """Номер в очереди на сегодня: следующий по порядку; выданный сегодня не меняется."""
+    today = timezone.localdate()
+    if appointment.queue_number and appointment.queue_date == today:
+        return
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [_QUEUE_LOCK])
+    last = Appointment.all_objects.filter(queue_date=today).aggregate(m=Max("queue_number"))["m"]
+    appointment.queue_date = today
+    appointment.queue_number = (last or 0) + 1
+
+
+def _clear_call(appointment: Appointment) -> None:
+    appointment.called_at = None
+    appointment.called_by = None
+    appointment.room = None
+
+
+def active_rooms() -> QuerySet[Room]:
+    return Room.objects.filter(is_active=True)
+
+
+def suggested_room(appointment: Appointment, user: Any) -> Room | None:
+    """Кабинет по умолчанию — куда сегодня последним приглашал этот врач.
+
+    Врач — из записи; у записи «любой врач» — тот, кто приглашает.
+    """
+    if appointment.room is not None and appointment.room.is_active:
+        return appointment.room
+    person = appointment.doctor_id or getattr(user, "pk", None)
+    if person is None:
+        return None
+    last = (
+        Appointment.objects.filter(
+            Q(doctor_id=person) | Q(doctor=None, called_by_id=person),
+            queue_date=timezone.localdate(),
+            called_at__isnull=False,
+            room__is_active=True,
+        )
+        .select_related("room")
+        .order_by("-called_at")
+        .first()
+    )
+    return last.room if last else None
+
+
+def invite(appointment: Appointment, user: Any, room: Room | None = None) -> Appointment:
+    """Пригласить ожидающего в кабинет: он появится в «Проходите» на экране в холле.
+
+    Без кабинета берётся тот, куда этот врач приглашал сегодня; если такого нет —
+    RoomRequired. Повторное приглашение снова объявляет пациента.
+    """
+    if appointment.status != S.WAITING:
+        raise AppointmentError("Пригласить можно только того, кто ожидает.")
+    room = room or suggested_room(appointment, user)
+    if room is None:
+        if not active_rooms().exists():
+            raise AppointmentError(
+                "Нет ни одного кабинета — добавьте их в «Справочники → Кабинеты»."
+            )
+        raise RoomRequired("Выберите кабинет.")
+    if not room.is_active:
+        raise AppointmentError(f"Кабинет «{room}» выключен в справочнике.")
+    appointment.room = room
+    appointment.called_at = timezone.now()
+    appointment.called_by = user if getattr(user, "pk", None) else None
+    appointment.save(update_fields=["room", "called_at", "called_by", "updated_at"])
+    return appointment
+
+
+def queue_board(now: datetime | None = None) -> dict[str, list[Appointment]]:
+    """Экран очереди: кого пригласили (новые сверху) и кто ждёт (по порядку очереди).
+
+    Порядок ожидания — по времени записи, а пришедшие позже своего времени и без
+    записи — по времени прихода: Greatest(начало, пришёл).
+    """
+    now = now or timezone.now()
+    today = timezone.localdate(now)
+    base = Appointment.objects.filter(queue_date=today).select_related("pet", "doctor", "room")
+    called = base.filter(
+        Q(status=S.WAITING, called_at__gte=now - timedelta(minutes=CALLED_SHOW_MINUTES))
+        | Q(status=S.IN_PROGRESS, started_at__gte=now - timedelta(minutes=STARTED_SHOW_MINUTES)),
+        called_at__isnull=False,
+    ).order_by("-called_at")
+    waiting = (
+        base.filter(status=S.WAITING, called_at__isnull=True)
+        .annotate(queue_order=Greatest("start", "arrived_at"))
+        .order_by("queue_order", "queue_number")
+    )
+    return {"called": list(called), "waiting": list(waiting)}
 
 
 # --- Выборки -----------------------------------------------------------------------
@@ -153,7 +272,7 @@ def is_overdue(appointment: Appointment, now: datetime | None = None) -> bool:
 
 def between(start: datetime, end: datetime) -> QuerySet[Appointment]:
     return Appointment.objects.filter(start__lt=end, end__gt=start).select_related(
-        "client", "pet", "doctor", "purpose"
+        "client", "pet", "doctor", "purpose", "room"
     )
 
 

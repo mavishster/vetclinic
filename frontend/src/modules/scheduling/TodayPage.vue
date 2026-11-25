@@ -19,18 +19,29 @@
               :class="{ 'row-highlight-negative': item.is_overdue }">
               <q-item-section side class="text-weight-medium">{{ timeOf(item.start) }}</q-item-section>
               <q-item-section>
-                <q-item-label>{{ item.client_name }}
+                <q-item-label>
+                  <q-badge v-if="item.queue_number && ['waiting', 'in_progress'].includes(item.status)" color="primary" outline
+                    :label="`№ ${item.queue_number}`" class="q-mr-xs" />
+                  {{ item.client_name }}
                   <q-badge v-if="item.client_status === 'temporary'" color="warning" label="временный" />
                 </q-item-label>
                 <q-item-label caption>
                   {{ [item.pet_name, item.purpose_name, item.doctor_name || 'любой врач'].filter(Boolean).join(' · ') }}
                 </q-item-label>
                 <q-item-label v-if="item.is_overdue" caption class="text-negative">время прошло — отметьте «пришёл» или «не пришёл»</q-item-label>
+                <q-item-label v-if="item.status === 'waiting' && item.called_at" caption class="text-positive">
+                  приглашён в {{ timeOf(item.called_at) }} · {{ item.room_name }}
+                </q-item-label>
               </q-item-section>
               <q-item-section v-if="canChange && ACTIONS[item.status][0]" side>
-                <q-btn dense unelevated color="primary" :icon="ACTIONS[item.status][0].icon" @click.stop="quick(item)">
-                  <q-tooltip>{{ ACTIONS[item.status][0].label }}</q-tooltip>
-                </q-btn>
+                <div class="row no-wrap q-gutter-xs">
+                  <q-btn v-if="item.status === 'waiting'" dense unelevated color="positive" icon="campaign" @click.stop="invite(item)">
+                    <q-tooltip>{{ item.called_at ? 'Пригласить ещё раз' : 'Пригласить в кабинет' }}</q-tooltip>
+                  </q-btn>
+                  <q-btn dense unelevated color="primary" :icon="ACTIONS[item.status][0].icon" @click.stop="quick(item)">
+                    <q-tooltip>{{ ACTIONS[item.status][0].label }}</q-tooltip>
+                  </q-btn>
+                </div>
               </q-item-section>
             </q-item>
             <q-item v-if="!group.items.length"><q-item-section class="text-grey-6">Нет</q-item-section></q-item>
@@ -53,7 +64,7 @@ import { apiGet } from '@/api'
 import { can } from '@/session'
 import AppointmentDialog from './AppointmentDialog.vue'
 import AppointmentView from './AppointmentView.vue'
-import { ACTIONS, changeStatus, isoDate, timeOf } from './appointments'
+import { ACTIONS, byQueue, changeStatus, inviteToRoom, isoDate, timeOf } from './appointments'
 
 const $q = useQuasar()
 const canAdd = can('scheduling.add_appointment')
@@ -69,7 +80,7 @@ const viewing = ref(null)
 
 const byStatus = (...statuses) => items.value.filter((i) => statuses.includes(i.status))
 const groups = computed(() => [
-  { key: 'waiting', title: 'Ожидают', color: 'warning', items: byStatus('waiting') },
+  { key: 'waiting', title: 'Ожидают', color: 'warning', items: byStatus('waiting').sort(byQueue) },
   { key: 'in_progress', title: 'У врача', color: 'info', items: byStatus('in_progress') },
   { key: 'planned', title: 'Записаны', color: 'primary', items: byStatus('planned') },
   { key: 'completed', title: 'Приняты', color: 'positive', items: byStatus('completed') },
@@ -86,6 +97,9 @@ async function load() {
 async function quick(item) {
   if (await changeStatus($q, item, ACTIONS[item.status][0].to)) load()
 }
+async function invite(item) {
+  if (await inviteToRoom($q, item)) load()
+}
 function openView(item) {
   viewing.value = item
   viewOpen.value = true
@@ -99,7 +113,7 @@ function edit(item) {
 let timer = null
 onMounted(() => {
   load()
-  timer = setInterval(load, 60000) // очередь обновляется сама раз в минуту
+  timer = setInterval(load, 30000) // очередь обновляется сама раз в полминуты
 })
 onUnmounted(() => clearInterval(timer))
 </script>
