@@ -13,7 +13,7 @@
         <div v-for="item in called.slice(0, 4)" :key="item.id + item.called_at" class="call" :class="{ fresh: isFresh(item) }">
           <div class="call-number">{{ item.number }}</div>
           <div class="call-pet">{{ item.pet || '—' }}</div>
-          <div class="call-room">{{ item.room }}</div>
+          <div class="call-room">{{ roomLabel(item.room) }}</div>
         </div>
       </section>
 
@@ -76,6 +76,10 @@ let failures = 0
 let pollTimer = null
 let clockTimer = null
 let wakeLock = null
+
+// Кабинет, названный одним номером («2», «3А»), — «Кабинет 2»; название словами
+// («Процедурная», «Кабинет 2») показывается и читается как есть.
+const roomLabel = (room) => (/^\s*\d+\s*[а-яa-z]?\s*$/i.test(room || '') ? `Кабинет ${room.trim()}` : room)
 
 const isFresh = (item) => now.value - new Date(item.called_at).getTime() < FRESH_MS
 
@@ -147,7 +151,7 @@ function announceNext() {
     setTimeout(announceNext, 500)
   }
   if (!voice) return setTimeout(done, 1500)
-  const phrase = new SpeechSynthesisUtterance(`Номер ${item.number}. ${item.pet || ''}. ${item.room}.`)
+  const phrase = new SpeechSynthesisUtterance(`Номер ${item.number}. ${item.pet || ''}. ${roomLabel(item.room)}.`)
   phrase.voice = voice
   phrase.lang = voice.lang
   phrase.rate = 0.9
