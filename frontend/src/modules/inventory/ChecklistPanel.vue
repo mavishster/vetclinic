@@ -34,7 +34,7 @@
       </div>
     </q-card-section>
 
-    <q-table :rows="shown" :columns="columns" row-key="row" flat dense virtual-scroll :rows-per-page-options="[0]"
+    <q-table ref="table" :rows="shown" :columns="columns" row-key="row" flat dense virtual-scroll :rows-per-page-options="[0]"
       hide-pagination style="max-height: 460px" class="checklist-table" no-data-label="Ничего не найдено">
       <template #body="props">
         <q-tr :props="props" :id="`checklist-row-${props.row.row}`"
@@ -101,6 +101,12 @@ const filter = ref('todo')
 const picking = ref(null)
 const found = ref([])
 const flash = ref(null)
+const table = ref(null)
+// Отмеченные и отсканированные — в начале списка, последнее — первым.
+const pinned = ref([])
+function pin(row) {
+  pinned.value = [row.row, ...pinned.value.filter((n) => n !== row.row)]
+}
 // Отмеченные только что не исчезают из «Не отмечены» — чтобы поправить количество.
 const recent = ref(new Set())
 watch([search, filter], () => (recent.value = new Set()))
@@ -128,6 +134,8 @@ const barcodeCount = computed(() => props.rows.filter((r) => r.barcode && r.item
 
 const shown = computed(() => {
   const text = (search.value || '').trim().toLowerCase()
+  const order = new Map(pinned.value.map((n, i) => [n, i]))
+  const rank = (r) => (order.has(r.row) ? order.get(r.row) : Infinity)
   return props.rows.filter((r) => {
     if (text && !`${r.name} ${r.barcode} ${r.item_name}`.toLowerCase().includes(text)) return false
     const done = byRow.value.has(r.row)
@@ -136,7 +144,7 @@ const shown = computed(() => {
     if (filter.value === 'missing') return !r.item_unit
     if (filter.value === 'similar') return r.match === 'similar'
     return true
-  })
+  }).sort((a, b) => rank(a) - rank(b))
 })
 
 const BADGES = {
@@ -154,6 +162,7 @@ function unitOfLine(row) {
 
 function tick(row) {
   recent.value.add(row.row)
+  pin(row)
   emit('tick', row)
 }
 
@@ -180,9 +189,10 @@ function pick(row, id) {
 // Строку, найденную сканером, показать и подсветить.
 async function reveal(row) {
   recent.value.add(row.row)
+  pin(row)
   flash.value = row.row
   await nextTick()
-  document.getElementById(`checklist-row-${row.row}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  table.value?.scrollTo(0)  // строка теперь первая — показать начало списка
   setTimeout(() => { if (flash.value === row.row) flash.value = null }, 2500)
 }
 defineExpose({ reveal })

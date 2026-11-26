@@ -205,14 +205,21 @@ async function unitsOf(itemId, name) {
   return (data ?? []).filter((u) => u.item === itemId)
 }
 
+// Отсканированное или только что добавленное — первой строкой: не листать вниз.
+function toTop(line) {
+  const index = form.value.lines.indexOf(line)
+  if (index > 0) form.value.lines.unshift(...form.value.lines.splice(index, 1))
+}
+
 async function addLine(unit) {
   const existing = form.value.lines.find((l) => l.item_unit === unit.item_unit)
   if (existing) {
     existing.quantity = String((Number(existing.quantity) || 0) + 1)
+    toTop(existing)
     return
   }
   const units = await unitsOf(unit.item, unit.item_name)
-  form.value.lines.push({
+  form.value.lines.unshift({
     item: unit.item, item_name: unit.item_name, base_unit: unit.base_unit, item_unit: unit.item_unit,
     units: units.length ? units : [unit], quantity: '1', price: null, series: '', expiry_date: null, batch: null, batches: [],
   })
@@ -234,6 +241,7 @@ async function scan() {
     if (line) line.quantity = String((Number(line.quantity) || 0) + 1)
     else await tickRow(row, '1')
     const ticked = lineByRow(row)
+    if (ticked) toTop(ticked)
     if (data?.[0]?.scanned_expiry && ticked) ticked.expiry_date = data[0].scanned_expiry
     if (data?.[0]?.scanned_series && ticked) ticked.series = data[0].scanned_series
     panel.value?.reveal(row)
@@ -267,7 +275,7 @@ async function loadChecklist(file) {
 async function tickRow(row, quantity) {
   if (!row.item_unit || lineByRow(row)) return
   const units = await unitsOf(row.item, row.item_name)
-  form.value.lines.push({
+  form.value.lines.unshift({
     item: row.item, item_name: row.item_name, base_unit: row.base_unit, item_unit: row.item_unit,
     units: units.length ? units : [{ item_unit: row.item_unit, unit_name: row.unit_name, ratio: row.ratio }],
     quantity: quantity ?? row.qty_file ?? '1', price: null, series: '', expiry_date: row.expiry || null, batch: null,
