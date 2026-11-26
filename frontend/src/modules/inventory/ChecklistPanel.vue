@@ -29,8 +29,8 @@
       <div class="text-caption text-grey-7 q-mt-xs">
         Нашли на полке — отметьте строку: количество подставится из файла, исправьте, если на полке иначе.
         Сканер сам находит и отмечает строку, каждое сканирование — плюс одна упаковка.
-        <span class="checklist-legend bg-orange-1">не отмечено</span>
-        <span class="checklist-legend bg-green-1">отмечено</span>
+        <span class="checklist-legend checklist-todo">не отмечено</span>
+        <span class="checklist-legend checklist-done">отмечено</span>
       </div>
     </q-card-section>
 
@@ -38,7 +38,7 @@
       hide-pagination style="max-height: 460px" class="checklist-table" no-data-label="Ничего не найдено">
       <template #body="props">
         <q-tr :props="props" :id="`checklist-row-${props.row.row}`"
-          :class="[lineOf(props.row) ? 'bg-green-1' : 'bg-orange-1', props.row.row === flash ? 'checklist-flash' : '']">
+          :class="[lineOf(props.row) ? 'checklist-done' : 'checklist-todo', props.row.row === flash ? 'checklist-flash' : '']">
           <q-td key="tick" :props="props" style="width: 40px">
             <q-checkbox :model-value="!!lineOf(props.row)" dense :disable="executed || !props.row.item_unit"
               @update:model-value="(v) => (v ? tick(props.row) : emit('untick', props.row))" />
@@ -189,6 +189,9 @@ defineExpose({ reveal })
 </script>
 
 <style scoped>
+/* Полупрозрачная подсветка: текст остаётся цвета темы — читается и в тёмной, и в светлой. */
+.checklist-todo { background: rgba(255, 152, 0, 0.16); }
+.checklist-done { background: rgba(76, 175, 80, 0.2); }
 .checklist-legend { display: inline-block; padding: 0 6px; margin-left: 6px; border-radius: 4px; }
 .checklist-flash { outline: 2px solid var(--q-primary); }
 </style>
