@@ -517,12 +517,35 @@ def permission_entities() -> set[str]:
     return {entity["code"] for module in permission_modules() for entity in module["entities"]}
 
 
+def permissions_index() -> dict[tuple[str, str], int]:
+    """Все права системы: (раздел, кодовое имя) → номер. Читается одним запросом.
+
+    Страница ролей спрашивает права по каждой клетке таблицы — роли × полторы сотни
+    сущностей × три действия. Поодиночке это сотни запросов к базе.
+    """
+    return {
+        (app_label, codename): pk
+        for pk, app_label, codename in Permission.objects.values_list(
+            "pk", "content_type__app_label", "codename"
+        )
+    }
+
+
 def _entity_permissions(entity: str, action: str) -> list[Permission]:
     app_label, model = entity.split(".")
     codenames = [f"{prefix}_{model}" for prefix in MODULE_ACTIONS[action]]
     return list(
         Permission.objects.filter(content_type__app_label=app_label, codename__in=codenames)
     )
+
+
+def _entity_permission_ids(
+    entity: str, action: str, index: dict[tuple[str, str], int]
+) -> list[int] | None:
+    """Номера прав для действия над сущностью по готовому перечню. None — такого нет."""
+    app_label, model = entity.split(".")
+    found = [index.get((app_label, f"{prefix}_{model}")) for prefix in MODULE_ACTIONS[action]]
+    return None if any(pk is None for pk in found) else [pk for pk in found if pk is not None]
 
 
 def _check(entity: str | None, actions: set[str]) -> None:
@@ -547,15 +570,50 @@ def set_entity_permissions(role: Group, entity: str, actions: set[str]) -> None:
             role.permissions.remove(*perms)
 
 
-def entity_actions(role: Group, entity: str) -> set[str]:
-    """Какие действия над сущностью есть у роли (действие есть, если есть все его права)."""
-    granted = set(role.permissions.values_list("pk", flat=True))
+def entity_actions(role: Group, entity: str, granted: set[int] | None = None) -> set[str]:
+    """Какие действия над сущностью есть у роли (действие есть, если есть все его права).
+
+    granted — номера прав роли, если они уже прочитаны. Без него страница ролей
+    читала права заново на каждую клетку таблицы: роли × полторы сотни сущностей.
+    """
+    if granted is None:
+        granted = role_permission_ids(role)
     return {
         action
         for action in MODULE_ACTIONS
         if (perms := _entity_permissions(entity, action))
         and all(perm.pk in granted for perm in perms)
     }
+
+
+def role_permission_ids(role: Group) -> set[int]:
+    """Номера прав роли — одним запросом, чтобы считать по ним всю таблицу."""
+    return set(role.permissions.values_list("pk", flat=True))
+
+
+def role_access(
+    role: Group,
+    granted: set[int] | None = None,
+    index: dict[tuple[str, str], int] | None = None,
+) -> dict[str, list[str]]:
+    """Вся таблица прав роли: сущность → действия.
+
+    И права роли, и перечень прав системы читаются по одному разу на роль,
+    а не на каждую клетку таблицы.
+    """
+    if granted is None:
+        granted = role_permission_ids(role)
+    if index is None:
+        index = permissions_index()
+    found = {}
+    for entity in sorted(permission_entities()):
+        actions = set()
+        for action in MODULE_ACTIONS:
+            needed = _entity_permission_ids(entity, action, index)
+            if needed and all(pk in granted for pk in needed):
+                actions.add(action)
+        found[entity] = sorted(actions)
+    return found
 
 
 def _module_entities(module: str) -> list[str]:

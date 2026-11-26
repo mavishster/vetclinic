@@ -83,3 +83,52 @@ def test_every_permission_row_is_explained_and_directories_marked() -> None:
     assert missing == [], f"нет пояснения для строк таблицы прав: {missing}"
     flags = {e["code"]: e["is_directory"] for e in entities}
     assert flags["clients.species"] is True and flags["clients.client"] is False
+
+
+@pytest.mark.django_db
+def test_roles_page_does_not_query_per_cell(django_user_model) -> None:
+    """Страница ролей читает права разом, а не по запросу на каждую клетку таблицы.
+
+    Раньше для каждой роли перебирались все сущности, и на каждую шёл запрос:
+    пять ролей давали около 900 запросов и секунду ожидания.
+    """
+    from django.contrib.auth.models import Group
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from rest_framework.test import APIClient
+
+    for name in ("Врач", "Регистратор", "Кассир", "Кладовщик", "Руководитель"):
+        Group.objects.get_or_create(name=name)
+    api = APIClient()
+    api.force_authenticate(
+        django_user_model.objects.create_superuser(username="perf", password="x")
+    )
+
+    with CaptureQueriesContext(connection) as queries:
+        answer = api.get("/api/core/roles/")
+
+    assert answer.status_code == 200
+    assert len(answer.json()) >= 5
+    assert len(queries) < 40, f"запросов {len(queries)} — права читаются по клеткам"
+
+
+@pytest.mark.django_db
+def test_role_access_matches_entity_actions() -> None:
+    """Быстрый расчёт даёт то же, что и поштучный: ошибиться в правах нельзя."""
+    from django.contrib.auth.models import Group
+
+    from core import services
+
+    role = Group.objects.create(name="Проверка прав")
+    services.set_entity_permissions(role, "clients.client", {"view", "edit"})
+    services.set_entity_permissions(role, "clients.pet", {"view"})
+
+    fast = services.role_access(role)
+    slow = {
+        entity: sorted(services.entity_actions(role, entity))
+        for entity in sorted(services.permission_entities())
+    }
+
+    assert fast == slow
+    assert fast["clients.client"] == ["edit", "view"]
+    assert fast["clients.pet"] == ["view"]

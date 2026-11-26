@@ -37,10 +37,9 @@ class RoleSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     def to_representation(self, role: Group) -> dict[str, Any]:
         data = super().to_representation(role)
         data["special"] = sorted(services.special_of(role))
-        data["access"] = {
-            entity: sorted(services.entity_actions(role, entity))
-            for entity in sorted(services.permission_entities())
-        }
+        # Перечень прав системы один на весь список ролей, а не на каждую роль.
+        index = self.context.setdefault("permissions_index", services.permissions_index())
+        data["access"] = services.role_access(role, index=index)
         return data
 
     def validate_access(self, value: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -67,7 +66,10 @@ class RoleSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
 
 
 class RoleViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
-    queryset = Group.objects.order_by("name")
+    # Права и состав подтягиваются сразу: иначе страница ролей делает сотни запросов.
+    queryset = Group.objects.prefetch_related("permissions__content_type", "user_set").order_by(
+        "name"
+    )
     serializer_class = RoleSerializer
 
     @action(detail=False, methods=["get"])

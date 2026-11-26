@@ -57,14 +57,14 @@ def test_preview_counts_services_and_goods(monkeypatch) -> None:
 
 
 @pytest.mark.django_db
-def test_stale_link_does_not_block_import(monkeypatch) -> None:
-    """Связь на удалённую у нас позицию не должна мешать перенести её заново."""
+def test_deleted_item_is_not_brought_back(monkeypatch) -> None:
+    """Позицию, удалённую у нас, заново не заводим: её могли объединить с другой,
+    и дубль сломал бы разобранный прайс. Для таких связей есть repair_item_links."""
     monkeypatch.setattr(client, "fetch", lambda *a, **kw: VM_GOODS)
     call_command("import_missing_items", "--apply", stdout=StringIO())
-    item = Item.objects.get(name="Вакдерм")
-    catalog.delete_item(item)
+    catalog.delete_item(Item.objects.get(name="Вакдерм"))
 
     call_command("import_missing_items", "--apply", stdout=StringIO())
 
-    assert Item.objects.filter(name="Вакдерм").exists()
+    assert not Item.objects.filter(name="Вакдерм").exists()
     assert Imported.objects.filter(kind="item", external_id="38").count() == 1
