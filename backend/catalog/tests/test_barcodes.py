@@ -99,3 +99,26 @@ def test_item_api_shows_and_saves_extra_barcodes(sinulox) -> None:
 
     assert saved.status_code == 200, saved.json()
     assert catalog.find_by_barcode("4600000000024") == sinulox.units.get(unit__name="упак.")
+
+
+def test_assign_internal_barcodes_and_filter(sinulox) -> None:
+    api = APIClient()
+    api.force_authenticate(get_user_model().objects.create_superuser(username="b", password="x"))
+    bare = goods("Без кода")
+    pack, tablet = bare.units.get(unit__name="упак."), bare.units.get(unit__name="таб.")
+
+    listed = api.get("/api/catalog/items/", {"no_barcode": "true"}).json()["results"]
+    assert [row["name"] for row in listed] == ["Без кода"]  # у Синулокса коды есть
+
+    own = sinulox.units.get(unit__name="упак.")
+    result = api.post(
+        "/api/catalog/items/assign-barcodes/", {"units": [str(pack.pk), str(own.pk)]}, format="json"
+    ).json()
+
+    pack.refresh_from_db()
+    assert result["assigned"] == 1
+    assert pack.barcode.startswith("20") and len(pack.barcode) == 13
+    assert catalog.find_by_barcode(pack.barcode) == pack
+    assert own.barcode == "5414736043517"  # свой код не меняется
+    assert tablet.barcode == ""  # таблетке не отмечали — без кода
+    assert api.get("/api/catalog/items/", {"no_barcode": "true"}).json()["results"] == []

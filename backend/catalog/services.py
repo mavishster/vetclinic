@@ -308,6 +308,25 @@ def _save_extra_barcodes(unit: ItemUnit, codes: list[str]) -> None:
             ItemUnitBarcode.objects.create(item_unit=unit, code=code)
 
 
+def without_barcode(queryset: QuerySet[Item]) -> QuerySet[Item]:
+    """Товары без единого штрихкода: ни у позиции, ни у её единиц (основного и дополнительных)."""
+    coded = ItemUnit.objects.exclude(barcode="").values("item_id")
+    extra = ItemUnitBarcode.objects.filter(item_unit__is_deleted=False).values("item_unit__item_id")
+    return queryset.filter(kind=Kind.GOODS, barcode="").exclude(pk__in=coded).exclude(pk__in=extra)
+
+
+@transaction.atomic
+def assign_barcodes(unit_ids: Iterable[Any]) -> list[dict[str, str]]:
+    """Присвоить внутренние штрихкоды («20…», ensure_barcode) единицам товаров, у которых
+    своего нет. Единицы со штрихкодом не меняются. Возвращает [{item_unit, barcode, new}]."""
+    result = []
+    units = ItemUnit.objects.filter(pk__in=list(unit_ids), item__kind=Kind.GOODS)
+    for unit in units.select_related("item").order_by("item__name", "-ratio"):
+        new = not unit.barcode
+        result.append({"item_unit": str(unit.pk), "barcode": ensure_barcode(unit), "new": new})
+    return result
+
+
 @transaction.atomic
 def add_barcode(item_unit: ItemUnit, code: str) -> ItemUnit:
     """Привязать отсканированный код к единице товара: «это ещё один код этой упаковки».

@@ -32,6 +32,7 @@
       <q-select v-model="prevention" :options="PREVENTION_KINDS" emit-value map-options dense outlined clearable
         label="Профилактика" class="col-6 col-md-2" @update:model-value="reload" />
       <q-checkbox v-model="notForSale" label="Не для продажи" dense class="col-auto" @update:model-value="reload" />
+      <q-checkbox v-model="noBarcode" label="Без штрихкода" dense class="col-auto" @update:model-value="reload" />
       <q-checkbox v-model="showInactive" label="Показать неактивные" dense class="col-auto" @update:model-value="reload" />
     </div>
 
@@ -42,6 +43,8 @@
       <!-- Переложить разом: пригодилось после разбора групп -->
       <q-select v-model="moveTo" :options="moveOptions" option-value="id" option-label="name" emit-value map-options
         dense outlined label="Переложить в группу" style="min-width: 220px" @update:model-value="moveGroup" />
+      <q-btn v-if="selected.some((r) => r.kind === 'goods')" outline color="primary" icon="qr_code_2"
+        label="Штрихкоды и этикетки" @click="labelsOpen = true" />
       <q-btn v-if="canMerge" outline color="primary" icon="merge" label="Объединить" @click="mergeOpen = true" />
       <q-btn flat label="Снять отметки" @click="selected = []" />
     </div>
@@ -73,6 +76,7 @@
 
     <DrugBulkDialog v-model="drugBulkOpen" :items="selected" @saved="selected = []; reload()" />
     <MergeItemsDialog v-model="mergeOpen" :items="selected" @merged="selected = []; reload()" />
+    <BarcodeLabelsDialog v-model="labelsOpen" :items="selected" @changed="selected = []; reload()" />
     <ItemEditDialog v-model="editorOpen" :item="editing" :kind="newKind" @saved="reload" />
     <ComboEditDialog v-model="comboOpen" :item="editing" @saved="reload" />
     <ImportDialog v-model="importOpen" @imported="reload" />
@@ -88,6 +92,7 @@ import ComboEditDialog from './ComboEditDialog.vue'
 import ImportDialog from './ImportDialog.vue'
 import DrugBulkDialog from './DrugBulkDialog.vue'
 import MergeItemsDialog from './MergeItemsDialog.vue'
+import BarcodeLabelsDialog from './BarcodeLabelsDialog.vue'
 import ItemEditDialog from './ItemEditDialog.vue'
 import { money } from './money'
 
@@ -158,6 +163,8 @@ const groupOptions = computed(() => {
 })
 const selected = ref([])
 const mergeOpen = ref(false)
+const labelsOpen = ref(false)
+const noBarcode = ref(false)
 // Объединить — две и больше позиции одного вида (товары или услуги), не комбинации.
 const canMerge = computed(() => can('catalog.change_item') && can('catalog.delete_item')
   && selected.value.length > 1 && new Set(selected.value.map((r) => r.kind)).size === 1
@@ -188,6 +195,7 @@ async function onRequest({ pagination: next }) {
   if (!showInactive.value) params.set('active', 'true')
   if (tracked.value) params.set('tracked', tracked.value)
   if (notForSale.value) params.set('not_for_sale', 'true')
+  if (noBarcode.value) params.set('no_barcode', 'true')
   const { ok, data } = await apiGet(`catalog/items/?${params}`)
   rows.value = ok ? data.results : []
   pagination.value = { ...next, rowsNumber: ok ? data.count : 0 }

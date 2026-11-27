@@ -212,6 +212,8 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             queryset = queryset.filter(kind=Kind.GOODS, stock_tracked=tracked == "yes")
         if params.get("not_for_sale", "").lower() in {"1", "true"}:
             queryset = queryset.filter(for_sale=False)
+        if params.get("no_barcode", "").lower() in {"1", "true"}:
+            queryset = services.without_barcode(queryset)
         if drug_group := params.get("drug_group"):
             queryset = queryset.filter(drug_groups=drug_group)
         if substance := params.get("substance"):
@@ -277,6 +279,17 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             item.group = group
             item.save(update_fields=["group"])
         return Response({"updated": len(items)})
+
+    @action(detail=False, methods=["post"], url_path="assign-barcodes")
+    def assign_barcodes(self, request: Request) -> Response:
+        """Внутренние штрихкоды единицам без своего: {"units": [id единицы, ...]}."""
+        if not request.user.has_perm("catalog.change_item"):
+            raise PermissionDenied("Нет права менять товары и услуги.")
+        units = request.data.get("units") or []
+        if not units:
+            raise ValidationError({"units": ["Отметьте единицы."]})
+        result = services.assign_barcodes(units)
+        return Response({"units": result, "assigned": sum(1 for row in result if row["new"])})
 
     @action(detail=False, methods=["post"])
     def merge(self, request: Request) -> Response:
