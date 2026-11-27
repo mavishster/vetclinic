@@ -1177,11 +1177,22 @@ def merge_items(
             unit.barcode = ""
             unit.save(update_fields=["barcode"])
         unit.delete()
-    for keeper in ItemUnit.objects.filter(pk__in=keepers):
+    # Единицы могут меняться местами: «коробка» основной становится «блоком», а «коробкой»
+    # становится единица дубля. Сохраняя по одной, база на миг увидела бы две одинаковые
+    # единицы у позиции (уникальность — среди неудалённых). Поэтому сначала все меняющиеся
+    # единицы выводятся из-под проверки, потом получают итоговые значения.
+    moving = [
+        keeper.pk
+        for keeper in ItemUnit.objects.filter(pk__in=keepers)
+        if keeper.item_id != main.pk or str(keeper.unit_id) != str(keeper_plan[keeper.pk][0])
+    ]
+    ItemUnit.all_objects.filter(pk__in=moving).update(is_deleted=True)
+    for keeper in ItemUnit.all_objects.filter(pk__in=keepers):
         unit_id, ratio = keeper_plan[keeper.pk]
         keeper.item = main
         keeper.unit_id = unit_id
         keeper.ratio = ratio
+        keeper.is_deleted = False
         keeper.save()
 
     others = merge.items[1:]
