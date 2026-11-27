@@ -25,7 +25,8 @@
                 map-options outlined dense use-input input-debounce="0" new-value-mode="add-unique"
                 label="Единица учёта *" class="col-6 col-md-3" hint="В ней хранится остаток на складе"
                 @new-value="createUnit" />
-              <q-input v-model="form.barcode" label="Штрихкод" outlined dense class="col-6 col-md-3" />
+              <q-input v-model="form.barcode" label="Штрихкод" outlined dense class="col-6 col-md-3"
+                hint="Обычно пусто: код с коробки — в строке упаковки ниже" />
             </template>
             <div v-if="can('catalog.view_cost')" class="col-6 col-md-3 row no-wrap q-gutter-x-xs">
               <q-input v-model="costInUnit" type="number" step="0.01" min="0" outlined dense clearable class="col"
@@ -87,6 +88,9 @@
               <q-select v-if="isGoods && unit.pricing === 'markup'" v-model="unit.rounding" :options="ROUNDING"
                 emit-value map-options outlined dense label="Округлять до" class="col-6 col-sm-2" />
               <q-input v-if="isGoods" v-model="unit.barcode" outlined dense label="Штрихкод единицы" class="col-6 col-sm-3" />
+              <q-select v-if="isGoods" v-model="unit.extra_barcodes" multiple use-chips use-input hide-dropdown-icon
+                new-value-mode="add-unique" input-debounce="0" outlined dense class="col-12 col-sm-4"
+                label="Другие штрихкоды этой упаковки" hint="Новая коробка, другой импортёр — сканер найдёт по любому" />
               <div v-if="isGoods" class="col-auto">
                 <q-checkbox v-model="unit.for_sale" label="продажа" dense class="q-mr-md" />
                 <q-checkbox v-model="unit.for_purchase" label="закупка" dense />
@@ -368,7 +372,7 @@ const costHint = computed(() => {
 
 const newUnit = (unitId, ratio = '1') => ({
   unit: unitId, ratio, size: 'bigger', count: Number(ratio) === 1 ? null : Number(ratio), pricing: 'fixed', price: null, markup_percent: null, price_min: null, price_max: null,
-  rounding: '0.01', barcode: '', for_sale: true, for_purchase: false,
+  rounding: '0.01', barcode: '', extra_barcodes: [], for_sale: true, for_purchase: false,
 })
 
 function addUnit() {
@@ -438,7 +442,8 @@ async function save() {
       // Доля хранится с шестью знаками: 1/8 = 0,125; 1/3 = 0,333333.
       ratio: String(Math.round(ratioOf(u) * 1e6) / 1e6), pricing: u.pricing, price: clean(u.price), markup_percent: clean(u.markup_percent),
       price_min: clean(u.price_min), price_max: clean(u.price_max), rounding: u.rounding || '0.01',
-      barcode: u.barcode || '', for_sale: u.for_sale, for_purchase: u.for_purchase,
+      barcode: (u.barcode || '').trim(), extra_barcodes: (u.extra_barcodes || []).map((c) => String(c).trim()).filter(Boolean),
+      for_sale: u.for_sale, for_purchase: u.for_purchase,
     })),
   }
   if (!isGoods.value && canSeeUsers) body.responsible = form.value.responsible

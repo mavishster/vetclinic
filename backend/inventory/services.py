@@ -370,33 +370,78 @@ def _execute_inventory(document: StockDocument, lines: list[StockLine]) -> None:
 
     Учётный остаток берётся на момент выполнения (а не заполнения), поэтому продажи,
     прошедшие между заполнением и выполнением, не исказят результат.
-    Излишек товара без партии — новая партия по закупочной цене строки или последней партии.
+
+    Строка без партии (отсканировали упаковку, ввели срок) сначала ищет партии этого товара
+    на складе с тем же сроком (и серией, если она известна с обеих сторон) — насчитанное
+    сравнивается с ними, а не заводит партию-двойник рядом со старой (ADR-025).
+    Не нашлось — новая партия по закупочной цене строки или последней партии.
+    Строки с одним и тем же товаром, сроком и серией складываются.
     """
-    for line in lines:
-        current = available(line.item, document.warehouse_id, line.batch) if line.batch else ZERO
-        diff = line.qty_base - current
-        if diff == 0:
+    taken: set[Any] = set()
+    for group in _inventory_groups(lines):
+        first = group[0]
+        counted = sum((line.qty_base for line in group), ZERO)
+        if first.batch is not None:
+            taken.add(first.batch_id)
+            diff = counted - available(first.item, document.warehouse_id, first.batch)
+            if diff:
+                _post(document, first.item, first.batch, document.warehouse_id, diff,
+                      first.batch.cost_per_base)  # fmt: skip
             continue
-        batch = line.batch
-        if batch is None:
-            if diff < 0:
-                continue  # нечего списывать: партии нет, учётный остаток 0
-            if line.price:
-                cost = (line.price / line.item_unit.ratio).quantize(D("0.01"))
+        matches = [
+            s
+            for s in batch_stock(first.item, document.warehouse_id)
+            if s.batch.pk not in taken
+            and s.batch.expiry_date == first.expiry_date
+            and (not first.series or not s.batch.series or s.batch.series == first.series)
+        ]
+        taken.update(s.batch.pk for s in matches)
+        diff = counted - sum((s.qty for s in matches), ZERO)
+        if diff > 0 and matches:
+            batch = matches[-1].batch  # излишек — к самой свежей из совпавших партий
+            _post(document, first.item, batch, document.warehouse_id, diff, batch.cost_per_base)
+        elif diff > 0:
+            priced = next((line for line in group if line.price), None)
+            if priced is not None and priced.price is not None:
+                cost = (priced.price / priced.item_unit.ratio).quantize(D("0.01"))
             else:
-                cost = _last_cost(line.item)
+                cost = _last_cost(first.item)
             batch = Batch.objects.create(
-                item=line.item,
-                receipt_line=line,
-                series=line.series,
-                expiry_date=line.expiry_date,
+                item=first.item,
+                receipt_line=first,
+                series=first.series,
+                expiry_date=first.expiry_date,
                 cost_per_base=cost,
                 received_at=document.date,
             )
-            line.batch = batch
-            line.save(update_fields=["batch"])
-            catalog.mark_stock_tracked(line.item)
-        _post(document, line.item, batch, document.warehouse_id, diff, batch.cost_per_base)
+            first.batch = batch
+            first.save(update_fields=["batch"])
+            catalog.mark_stock_tracked(first.item)
+            _post(document, first.item, batch, document.warehouse_id, diff, cost)
+        elif diff < 0:
+            short = -diff  # недостача — с партий с ближайшим сроком
+            for stock in matches:
+                take = min(stock.qty, short)
+                _post(document, first.item, stock.batch, document.warehouse_id, -take,
+                      stock.batch.cost_per_base)  # fmt: skip
+                short -= take
+                if short <= 0:
+                    break
+
+
+def _inventory_groups(lines: list[StockLine]) -> list[list[StockLine]]:
+    """Строки инвентаризации по партиям: явная партия — сама по себе; без партии —
+    товар + срок + серия. Сначала строки с партией, потом с серией, потом без неё:
+    точное совпадение забирает партию раньше, чем приблизительное."""
+    groups: dict[tuple[Any, ...], list[StockLine]] = {}
+    for line in lines:
+        if line.batch_id is not None:
+            key: tuple[Any, ...] = (0, line.batch_id)
+        else:
+            series = line.series.strip()
+            key = (1 if series else 2, line.item_id, line.expiry_date, series)
+        groups.setdefault(key, []).append(line)
+    return [groups[key] for key in sorted(groups, key=lambda k: k[0])]
 
 
 def _check_incoming_still_here(document: StockDocument, message: str) -> None:
@@ -848,41 +893,81 @@ def to_replenish() -> list[ReplenishRow]:
 # --- Перемещение по сканеру ---------------------------------------------------------
 
 _GS = "\x1d"
+# Префиксы, которые некоторые сканеры ставят перед кодом GS1 (идентификатор символики).
+_SYMBOLOGY_PREFIXES = ("]d2", "]C1", "]Q3", "]e0")
+# Сканер «как клавиатура» при русской раскладке печатает русские буквы вместо латинских:
+# серийный номер «Честного знака» ломается. Возвращаем клавиши к английской раскладке.
+_RU_KEYS = 'йцукенгшщзхъфывапролджэячсмитьбю.ЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ,ёЁ"№;:?'
+_EN_KEYS = "qwertyuiop[]asdfghjkl;'zxcvbnm,./QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>?`~@#$^&"
+_FROM_RU_LAYOUT = str.maketrans(_RU_KEYS, _EN_KEYS)
+_CYRILLIC = re.compile("[а-яА-ЯёЁ]")
+# Окончания кода маркировки «Честный знак», когда сканер не передал разделители GS:
+# серийный номер (21) переменной длины узнаётся по известному хвосту кода.
+_MARKING_TAILS = (
+    r"91.{4}92.{44}",  # лекарства и ветпрепараты: ключ проверки и криптоподпись
+    r"93.{4}",  # короткий код проверки
+    r"21.{13}91.{4}92.{44}",  # серия (10) без GS перед серийным номером
+    r"21.{13}93.{4}",
+)
+# Поля фиксированной длины: GTIN, даты (производства, годности).
+_FIXED = {"01": 14, "11": 6, "17": 6}
+_VARIABLE = {"10", "21", "91", "92", "93"}
+
+
+def _split_variable(rest: str) -> tuple[str, str]:
+    """Поле переменной длины: до разделителя GS, а без него — до известного хвоста кода."""
+    if _GS in rest:
+        value, _, tail = rest.partition(_GS)
+        return value, tail
+    for tail in _MARKING_TAILS:
+        match = re.fullmatch(rf"(.+?)({tail})", rest, flags=re.S)
+        if match:
+            return match.group(1), match.group(2)
+    return rest, ""
 
 
 def parse_gs1(code: str) -> dict[str, Any] | None:
-    """Код GS1 DataMatrix (лекарства): GTIN (01), срок годности (17, ГГММДД), серия (10).
+    """Код GS1 DataMatrix с упаковки: GTIN (01), срок годности (17, ГГММДД), серия (10),
+    серийный номер экземпляра (21, код маркировки «Честный знак»).
 
-    Понимает и вариант со скобками «(01)…(17)…(10)…», и «сплошной» с разделителем GS.
+    Понимает вариант со скобками «(01)…(17)…(10)…», «сплошной» с разделителем GS и без
+    него (сканер его не передал), а также код, набранный сканером в русской раскладке.
+    Срока и серии в коде маркировки обычно нет — тогда expiry=None, batch="".
     Обычный штрихкод (EAN-13) — не GS1, возвращает None.
     """
     raw = code.strip()
+    if _CYRILLIC.search(raw):
+        raw = raw.translate(_FROM_RU_LAYOUT)
+    for prefix in _SYMBOLOGY_PREFIXES:
+        if raw.startswith(prefix):
+            raw = raw[len(prefix) :]
+    raw = raw.lstrip(_GS)
     parts: dict[str, str] = {}
     if raw.startswith("("):
         parts = dict(re.findall(r"\((\d{2,4})\)([^(]*)", raw))
     elif raw.startswith("01") and len(raw) >= 16 and raw[2:16].isdigit():
-        rest = raw.replace("]d2", "")
+        rest = raw
         while rest:
             ai = rest[:2]
-            if ai == "01":
-                parts["01"], rest = rest[2:16], rest[16:]
-            elif ai == "17" or ai == "11":
-                parts[ai], rest = rest[2:8], rest[8:]
-            elif ai in ("10", "21"):
-                value, _, rest = rest[2:].partition(_GS)
-                parts[ai] = value
+            if ai in _FIXED:
+                size = _FIXED[ai]
+                parts[ai], rest = rest[2 : 2 + size], rest[2 + size :]
+            elif ai in _VARIABLE:
+                parts[ai], rest = _split_variable(rest[2:])
             else:
                 break
             rest = rest.lstrip(_GS)
     else:
         return None
     gtin = parts.get("01")
-    if not gtin:
+    if not gtin or not gtin.isdigit():
         return None
     expiry = None
-    if len(parts.get("17", "")) == 6:
+    if len(parts.get("17", "")) == 6 and parts["17"].isdigit():
         yy, mm, dd = int(parts["17"][:2]), int(parts["17"][2:4]), int(parts["17"][4:6])
         try:
+            # День 00 — «до конца месяца»; хранится 28-м числом, как и раньше,
+            # чтобы срок совпадал с партиями, заведёнными до этого.
             expiry = date(2000 + yy, mm, dd) if dd else date(2000 + yy, mm, 28)
         except ValueError:
             expiry = None
@@ -891,6 +976,7 @@ def parse_gs1(code: str) -> dict[str, Any] | None:
         "ean": gtin[1:] if gtin.startswith("0") else gtin,
         "batch": parts.get("10", ""),
         "expiry": expiry,
+        "serial": parts.get("21", ""),
     }
 
 

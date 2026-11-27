@@ -190,6 +190,55 @@ def test_save_barcodes_skips_code_taken_by_other_item(stock) -> None:
     assert stock["plaster"].units.get().barcode == ""
 
 
+def test_save_barcodes_adds_second_code_of_the_same_pack(stock) -> None:
+    """У упаковки уже есть код, в файле — другой (новая коробка): становится дополнительным."""
+    document = draft()
+    checklist.load(
+        document, xlsx([(4600000000017, "Фелиферон уп. 5 фл.", None, "уп", 1)]), "f.xlsx"
+    )
+    pack = stock["feliferon"].units.get(unit__name="упак.")
+    document.checklist[0]["match"] = "manual"
+    document.checklist[0]["item_unit"] = str(pack.pk)
+    document.save(update_fields=["checklist"])
+
+    result = checklist.save_barcodes(document)
+
+    assert result == {"saved": 1, "skipped": []}
+    assert catalog.find_by_barcode("4600000000017") == pack
+    assert catalog.find_by_barcode("4680015640031") == pack  # старый код остался
+
+
+def test_unknown_scanned_code_is_remembered_for_the_pack(stock, api) -> None:
+    pack = stock["zoocard"].units.get(unit__name="упак.")
+    code = "0104607145637069" + "17280600" + "10LOT7"  # квадратный код новой коробки
+
+    added = api.post("/api/inventory/stock/add_barcode/", {"item_unit": str(pack.pk), "code": code})
+    found = api.get("/api/inventory/stock/lookup/", {"barcode": code}).json()
+    taken = api.post(
+        "/api/inventory/stock/add_barcode/", {"item_unit": str(pack.pk), "code": "4680015640031"}
+    )
+
+    assert added.status_code == 200 and added.json()["code"] == "4607145637069"
+    assert found[0]["item_unit"] == str(pack.pk) and found[0]["scanned_series"] == "LOT7"
+    assert taken.status_code == 400 and "Фелиферон" in taken.json()["code"][0]
+
+
+def test_remember_code_needs_catalog_right_only(stock) -> None:
+    from django.contrib.auth.models import Permission
+
+    user = get_user_model().objects.create_user(username="nurse", password="x")
+    client = APIClient()
+    client.force_authenticate(user)
+    pack = stock["zoocard"].units.get(unit__name="упак.")
+    body = {"item_unit": str(pack.pk), "code": "4600000000017"}
+
+    assert client.post("/api/inventory/stock/add_barcode/", body).status_code == 403
+    user.user_permissions.add(Permission.objects.get(codename="change_item"))
+    user = get_user_model().objects.get(pk=user.pk)  # сбросить кэш прав
+    client.force_authenticate(user)
+    assert client.post("/api/inventory/stock/add_barcode/", body).status_code == 200
+
+
 def test_checklist_only_for_inventory_draft(stock) -> None:
     receipt = services.save_document(
         StockDocument(kind="receipt", warehouse=Warehouse.objects.get(name="Основной склад"))

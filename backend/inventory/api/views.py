@@ -10,6 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import JSONParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -68,6 +69,9 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     unit_name = serializers.CharField(source="item_unit.unit.name", read_only=True)
     base_unit = serializers.CharField(source="item.base_unit.name", read_only=True)
     batch_label = serializers.SerializerMethodField()
+    # Срок и серия партии строки — сканер сверяет с ними пачку того же товара (ADR-025).
+    batch_expiry = serializers.DateField(source="batch.expiry_date", read_only=True, default=None)
+    batch_series = serializers.CharField(source="batch.series", read_only=True, default="")
     manufacturer_name = serializers.CharField(
         source="manufacturer.name", read_only=True, default=""
     )
@@ -91,6 +95,8 @@ class LineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
             "manufacturer_name",
             "batch",
             "batch_label",
+            "batch_expiry",
+            "batch_series",
             "checklist_row",
         ]
         read_only_fields = ["item", "qty_base"]
@@ -306,6 +312,12 @@ class StockViewSet(viewsets.ViewSet):
     def get_queryset(self) -> QuerySet[StockMovement]:
         return StockMovement.objects.none()
 
+    def get_permissions(self) -> Any:
+        # Запомнить код — правка справочника: право catalog.change_item проверяет само действие.
+        if self.action == "add_barcode":
+            return [IsAuthenticated()]
+        return super().get_permissions()
+
     @action(detail=False, methods=["get"])
     def balances(self, request: Request) -> Response:
         params = request.query_params
@@ -385,6 +397,23 @@ class StockViewSet(viewsets.ViewSet):
                 for s in services.batch_stock(item, warehouse)
             ]
         )
+
+    @action(detail=False, methods=["post"])
+    def add_barcode(self, request: Request) -> Response:
+        """Незнакомый код со сканера — ещё один код упаковки из справочника (ADR-025):
+        {"item_unit", "code"}. С квадратного кода (DataMatrix) запоминается код товара."""
+        if not request.user.has_perm("catalog.change_item"):
+            raise PermissionDenied("Нет права менять товары и услуги.")
+        unit = catalog.get_item_unit(request.data.get("item_unit"))
+        if unit is None or unit.item.kind != Kind.GOODS:
+            raise ValidationError({"item_unit": ["Выберите товар."]})
+        raw = str(request.data.get("code") or "").strip()
+        gs1 = services.parse_gs1(raw)
+        try:
+            catalog.add_barcode(unit, gs1["ean"] if gs1 else raw)
+        except catalog.CatalogError as error:
+            raise ValidationError({"code": [str(error)]}) from error
+        return Response({"item_unit": str(unit.pk), "code": gs1["ean"] if gs1 else raw})
 
     @action(detail=False, methods=["get"])
     def lookup(self, request: Request) -> Response:

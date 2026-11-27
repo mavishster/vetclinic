@@ -73,6 +73,9 @@
           <q-td key="counted" :props="props" style="width: 120px">
             <q-input v-if="lineOf(props.row)" v-model="lineOf(props.row).quantity" type="number" step="any" min="0" dense
               borderless input-class="text-right text-weight-medium" :readonly="executed" :suffix="unitOfLine(props.row)" />
+            <div v-if="otherExpiries(props.row) > 0" class="text-caption text-grey-7 text-right">
+              + другие сроки: {{ otherExpiries(props.row) }} стр.
+            </div>
           </q-td>
         </q-tr>
       </template>
@@ -126,7 +129,14 @@ const columns = [
   { name: 'counted', label: 'Насчитано', align: 'right' },
 ]
 
-const byRow = computed(() => new Map(props.lines.filter((l) => l.checklist_row != null).map((l) => [l.checklist_row, l])))
+// Строка файла → первая строка документа. Пачки с другим сроком — отдельные строки документа
+// с той же строкой файла (одна позиция — несколько партий).
+const byRow = computed(() => {
+  const map = new Map()
+  for (const l of props.lines) if (l.checklist_row != null && !map.has(l.checklist_row)) map.set(l.checklist_row, l)
+  return map
+})
+const otherExpiries = (row) => props.lines.filter((l) => l.checklist_row === row.row).length - 1
 const lineOf = (row) => byRow.value.get(row.row)
 const tickedCount = computed(() => props.rows.filter((r) => byRow.value.has(r.row)).length)
 const barcodeCount = computed(() => props.rows.filter((r) => r.barcode && r.item_unit && r.match !== 'barcode'

@@ -15,7 +15,16 @@ from django.contrib.postgres.search import TrigramWordSimilarity
 from django.db import transaction
 from django.db.models import Case, F, IntegerField, Q, QuerySet, When
 
-from catalog.models import CombinationLine, DrugGroup, Item, ItemUnit, Kind, Substance, Unit
+from catalog.models import (
+    CombinationLine,
+    DrugGroup,
+    Item,
+    ItemUnit,
+    ItemUnitBarcode,
+    Kind,
+    Substance,
+    Unit,
+)
 from core import services as core
 
 D = Decimal
@@ -84,6 +93,7 @@ class UnitData(TypedDict, total=False):
     price_max: Decimal | None
     rounding: Decimal
     barcode: str
+    extra_barcodes: list[str]
 
 
 def _check_unit(item: Item, unit: ItemUnit) -> None:
@@ -199,8 +209,9 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
 
     for position, data in enumerate(units):
         unit = matched.get(position) or ItemUnit(item=item)
+        extra = data.get("extra_barcodes")
         for field, value in data.items():
-            if field == "id":
+            if field in ("id", "extra_barcodes"):
                 continue
             if field == "unit":
                 unit.unit_id = _unit_id(data)
@@ -210,8 +221,113 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
             unit.ratio = Decimal("1")
             unit.pricing = ItemUnit.Pricing.FIXED
         _check_unit(item, unit)
+        unit.barcode = (unit.barcode or "").strip()
+        _check_barcodes(unit, extra)
         unit.save()
+        if extra is not None:
+            _save_extra_barcodes(unit, extra)
     return item
+
+
+# --- Штрихкоды (ADR-025) ----------------------------------------------------------
+
+
+def _clean_codes(codes: list[str] | None) -> list[str]:
+    result: list[str] = []
+    for code in codes or []:
+        code = str(code).strip()
+        if code and code not in result:
+            result.append(code)
+    return result
+
+
+def barcode_owner(code: str, exclude_unit: Any = None) -> str | None:
+    """Чей это штрихкод: «Синулокс 50 мг (упак.)» — или None, если код свободен.
+
+    Смотрит основной код единицы, дополнительные коды и код товара (верхнее поле).
+    exclude_unit — единица, которую сейчас сохраняют (её собственные коды не мешают).
+    """
+    code = code.strip()
+    if not code:
+        return None
+    exclude = getattr(exclude_unit, "pk", exclude_unit)
+    units = ItemUnit.objects.select_related("item", "unit").filter(item__is_deleted=False)
+    if exclude is not None:
+        units = units.exclude(pk=exclude)
+    unit = (
+        units.filter(barcode=code).first()
+        or units.filter(extra_barcodes__code=code, extra_barcodes__is_deleted=False).first()
+    )
+    if unit is not None:
+        return f"{unit.item.name} ({unit.unit.name})"
+    items = Item.objects.filter(barcode=code)
+    if exclude is not None:
+        items = items.exclude(units__pk=exclude)
+    item = items.first()
+    return item.name if item is not None else None
+
+
+def _check_barcodes(unit: ItemUnit, extra: list[str] | None) -> None:
+    """Новые коды единицы не должны принадлежать другим позициям: один код — одна упаковка.
+
+    Проверяются только изменённые коды: старые совпадения (например, после переноса из
+    другой программы) не мешают сохранить карточку — их показывает поиск по коду.
+    """
+    label = f"Единица «{unit.unit}»"
+    stored_main = ""
+    stored_extra: set[str] = set()
+    if unit.pk and not unit._state.adding:
+        stored_main = (
+            ItemUnit.objects.filter(pk=unit.pk).values_list("barcode", flat=True).first() or ""
+        )
+        stored_extra = set(unit.extra_barcodes.values_list("code", flat=True))
+    codes = _clean_codes(extra) if extra is not None else []
+    if unit.barcode and unit.barcode in codes:
+        raise CatalogError(f"{label}: код {unit.barcode} уже указан как основной.")
+    new_codes = [c for c in codes if c not in stored_extra]
+    if unit.barcode and unit.barcode != stored_main:
+        new_codes.insert(0, unit.barcode)
+    for code in new_codes:
+        owner = barcode_owner(code, exclude_unit=unit.pk)
+        if owner:
+            raise CatalogError(
+                f"{label}: штрихкод {code} уже записан у «{owner}». Один код — одна упаковка: "
+                f"если это тот же товар, уберите код там; если другой — проверьте код на коробке."
+            )
+
+
+def _save_extra_barcodes(unit: ItemUnit, codes: list[str]) -> None:
+    wanted = _clean_codes(codes)
+    current = {b.code: b for b in unit.extra_barcodes.all()}
+    for code, stored in current.items():
+        if code not in wanted:
+            stored.delete()
+    for code in wanted:
+        if code not in current:
+            ItemUnitBarcode.objects.create(item_unit=unit, code=code)
+
+
+@transaction.atomic
+def add_barcode(item_unit: ItemUnit, code: str) -> ItemUnit:
+    """Привязать отсканированный код к единице товара: «это ещё один код этой упаковки».
+
+    Нет основного кода — код становится основным, иначе — дополнительным.
+    Код другой позиции не перехватывается — это ошибка (CatalogError).
+    """
+    code = code.strip()
+    if not code:
+        raise CatalogError("Пустой штрихкод.")
+    if code == item_unit.barcode or item_unit.extra_barcodes.filter(code=code).exists():
+        return item_unit
+    owner = barcode_owner(code, exclude_unit=item_unit.pk)
+    if owner:
+        raise CatalogError(f"Штрихкод {code} уже записан у «{owner}».")
+    if not item_unit.barcode:
+        item_unit.barcode = code
+        item_unit.save(update_fields=["barcode"])
+    else:
+        ItemUnitBarcode.objects.create(item_unit=item_unit, code=code)
+    return item_unit
 
 
 # --- Поиск -------------------------------------------------------------------------
@@ -220,7 +336,12 @@ def save_item(item: Item, units: list[UnitData] | None = None) -> Item:
 def search_items(queryset: QuerySet[Item], text: str) -> QuerySet[Item]:
     """Поиск: слова — в названии; ещё точное совпадение артикула и штрихкода (товара и единиц)."""
     text = text.strip()
-    exact = Q(article__iexact=text) | Q(barcode=text) | Q(units__barcode=text)
+    exact = (
+        Q(article__iexact=text)
+        | Q(barcode=text)
+        | Q(units__barcode=text)
+        | Q(units__extra_barcodes__code=text, units__extra_barcodes__is_deleted=False)
+    )
     by_words = Q()
     for word in text.split():
         by_words &= Q(name__icontains=word)
@@ -638,11 +759,15 @@ def get_item_unit(pk: Any) -> ItemUnit | None:
 
 
 def find_by_barcode(code: str) -> ItemUnit | None:
-    """Позиция по штрихкоду: сначала штрихкод единицы (упаковки), потом — товара."""
+    """Позиция по штрихкоду: основной код единицы (упаковки), дополнительный код единицы,
+    потом — код товара (верхнее поле карточки; ведёт к единице учёта)."""
     code = code.strip()
     if not code:
         return None
-    unit = ItemUnit.objects.select_related("item", "unit").filter(barcode=code).first()
+    units = ItemUnit.objects.select_related("item", "unit").filter(item__is_deleted=False)
+    unit = units.filter(barcode=code).order_by("created_at").first()
+    if unit is None:
+        unit = units.filter(extra_barcodes__code=code, extra_barcodes__is_deleted=False).first()
     if unit is not None:
         return unit
     item = Item.objects.filter(barcode=code).first()
@@ -679,6 +804,7 @@ def ensure_barcode(item_unit: ItemUnit) -> str:
         taken = (
             ItemUnit.objects.filter(barcode=code).exists()
             or Item.objects.filter(barcode=code).exists()
+            or ItemUnitBarcode.objects.filter(code=code).exists()
         )
         if not taken:
             break

@@ -251,8 +251,8 @@ def save_barcodes(document: StockDocument) -> dict[str, Any]:
     """Записать штрихкоды из файла в прайс — подтверждённым строкам без штрихкода.
 
     Подтверждённая — совпала по названию, выбрана вручную или уже отмечена на полке.
-    Штрихкод пишется в единицу упаковки (уп., фл., амп.), если у неё своего нет и
-    он не занят другой позицией.
+    Штрихкод пишется в единицу упаковки (уп., фл., амп.): основным, если своего нет,
+    иначе — дополнительным. Код, занятый другой позицией, пропускается.
     """
     confirmed = set(
         document.lines.exclude(checklist_row=None).values_list("checklist_row", flat=True)
@@ -268,18 +268,15 @@ def save_barcodes(document: StockDocument) -> dict[str, Any]:
         unit = ItemUnit.objects.select_related("item").filter(pk=unit_id).first()
         if unit is None:
             continue
-        taken = catalog.find_by_barcode(code)
-        if taken is not None and taken.item_id != unit.item_id:
-            skipped.append(f"{code} («{row['name']}») уже у «{taken.item.name}»")
+        owner = catalog.barcode_owner(code, exclude_unit=unit.pk)
+        if owner:
+            skipped.append(f"{code} («{row['name']}») уже у «{owner}»")
             continue
-        if unit.barcode and unit.barcode != code:
-            skipped.append(
-                f"у «{unit.item.name}» ({unit.unit.name}) уже свой штрихкод {unit.barcode}"
-            )
-            continue
-        if unit.barcode != code:
-            unit.barcode = code
-            unit.save(update_fields=["barcode"])
+        # Свой код у упаковки уже есть — этот становится дополнительным (ADR-025):
+        # та же коробка в другом оформлении или от другого импортёра.
+        known = unit.barcode == code or unit.extra_barcodes.filter(code=code).exists()
+        if not known:
+            catalog.add_barcode(unit, code)
             saved += 1
         row["match"] = "barcode"
     document.checklist = rows

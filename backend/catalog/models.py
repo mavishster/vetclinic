@@ -248,6 +248,34 @@ class ItemUnit(BaseModel):
         return f"{self.item} ({self.unit})"
 
 
+class ItemUnitBarcode(BaseModel):
+    """Ещё один штрихкод единицы товара (ADR-025).
+
+    Основной код — ItemUnit.barcode (его печатают на этикетке). Здесь — остальные коды
+    той же упаковки: новый дизайн коробки, другой импортёр, старая внутренняя этикетка.
+    Один код ведёт ровно к одной единице: это проверяет catalog.services.
+    """
+
+    item_unit = models.ForeignKey(ItemUnit, on_delete=models.CASCADE, related_name="extra_barcodes")
+    code = models.CharField("штрихкод", max_length=50, db_index=True)
+
+    class Meta:
+        default_permissions = ()  # часть карточки товара
+        ordering = ["created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["code"],
+                condition=models.Q(is_deleted=False),
+                name="catalog_itemunitbarcode_unique_code",
+            )
+        ]
+        verbose_name = "дополнительный штрихкод"
+        verbose_name_plural = "дополнительные штрихкоды"
+
+    def __str__(self) -> str:
+        return self.code
+
+
 class CombinationLine(models.Model):
     """Позиция комбинации: товар или услуга в своей единице, количество, цена.
 

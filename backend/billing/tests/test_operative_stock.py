@@ -110,6 +110,7 @@ def test_gs1_datamatrix_parsing(main, operative, drug) -> None:
         "ean": "4680015640031",
         "batch": "EARLY",
         "expiry": date(2027, 3, 1),
+        "serial": "ABC123",
     }
     assert inventory.parse_gs1("(01)04680015640031(17)280101(10)LATE")["batch"] == "LATE"
     assert inventory.parse_gs1("4680015640031") is None

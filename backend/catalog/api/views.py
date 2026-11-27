@@ -55,13 +55,17 @@ class ItemUnitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
     unit_name = serializers.CharField(source="unit.name", read_only=True)
     current_price = serializers.SerializerMethodField()
     effective_markup = serializers.SerializerMethodField()
+    # Ещё коды той же упаковки (ADR-025): новая коробка, другой импортёр.
+    extra_barcodes = serializers.ListField(
+        child=serializers.CharField(max_length=50), required=False, write_only=True
+    )
 
     class Meta:
         model = ItemUnit
         fields = [
             "id", "unit", "unit_name", "ratio", "for_sale", "for_purchase", "pricing", "price",
             "markup_percent", "effective_markup", "price_min", "price_max", "rounding", "barcode",
-            "current_price",
+            "extra_barcodes", "current_price",
         ]  # fmt: skip
 
     def get_current_price(self, unit: ItemUnit) -> str | None:
@@ -71,6 +75,11 @@ class ItemUnitSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
 
     def get_effective_markup(self, unit: ItemUnit) -> str:
         return str(services.effective_markup(unit))
+
+    def to_representation(self, unit: ItemUnit) -> dict[str, Any]:
+        data = super().to_representation(unit)
+        data["extra_barcodes"] = [b.code for b in unit.extra_barcodes.all()]
+        return data
 
 
 class CombinationLineSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
@@ -188,7 +197,8 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
 
     def get_queryset(self) -> QuerySet[Item]:
         queryset = Item.objects.select_related("group", "base_unit").prefetch_related(
-            "units__unit", "units__item__group", "responsible", "substances", "drug_groups",
+            "units__unit", "units__item__group", "units__extra_barcodes", "responsible",
+            "substances", "drug_groups",
             "lines__item_unit__item__group", "lines__item_unit__unit",
         )  # fmt: skip
         params = self.request.query_params

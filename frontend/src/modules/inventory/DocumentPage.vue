@@ -106,7 +106,10 @@
               <td style="width: 150px"><q-input v-model="line.expiry_date" type="date" dense borderless :readonly="executed" /></td>
             </template>
             <template v-else-if="form.kind === 'inventory'">
-              <td>{{ line.batch_label || (line.batch ? 'партия' : 'новая партия') }}</td>
+              <td>
+                {{ line.batch_label || (line.batch ? 'партия' : 'новая партия') }}
+                <q-input v-if="!line.batch" v-model="line.series" dense borderless :readonly="executed" placeholder="серия" />
+              </td>
               <td style="width: 150px">
                 <q-input v-if="!line.batch" v-model="line.expiry_date" type="date" dense borderless :readonly="executed" />
               </td>
@@ -135,6 +138,57 @@
       </div>
       <div v-if="error" class="text-negative q-mt-sm">{{ error }}</div>
     </template>
+
+    <q-dialog :model-value="!!expiryAsk" @update:model-value="(open) => !open && answerExpiry(null)">
+      <q-card v-if="expiryAsk" style="min-width: 340px; max-width: 480px">
+        <q-card-section>
+          <div class="text-h6">Какой срок у этой пачки?</div>
+          <div class="text-grey-7">{{ expiryAsk.item_name }} ({{ expiryAsk.unit_name }}). На обычном штрихкоде срока нет — посмотрите на коробку.</div>
+        </q-card-section>
+        <q-card-section v-if="expiryAsk.options.length" class="q-pt-none column q-gutter-y-sm">
+          <q-btn v-for="(o, i) in expiryAsk.options" :key="i" outline color="primary" no-caps align="left" @click="answerExpiry(o)">
+            <div class="column items-start text-left">
+              <div class="text-weight-medium">{{ o.expiry ? `годен до ${dateRu(o.expiry)}` : 'без срока' }}{{ o.series ? ` · серия ${o.series}` : '' }}</div>
+              <div class="text-caption text-grey-7">{{ o.where }}</div>
+            </div>
+          </q-btn>
+        </q-card-section>
+        <q-card-section class="q-pt-none">
+          <div class="text-subtitle2 q-mb-xs">{{ expiryAsk.options.length ? 'Другой срок' : 'Срок с коробки' }}</div>
+          <div class="row q-col-gutter-sm">
+            <q-input v-model="expiryAsk.date" type="date" outlined dense class="col-7" label="Годен до" stack-label
+              @keydown.enter.prevent="expiryAsk.date && answerExpiry({ expiry: expiryAsk.date, series: expiryAsk.series.trim() })" />
+            <q-input v-model="expiryAsk.series" outlined dense class="col-5" label="Серия" />
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Отмена" @click="answerExpiry(null)" />
+          <q-btn flat label="Без срока" @click="answerExpiry({ expiry: null, series: expiryAsk.series.trim() })" />
+          <q-btn unelevated color="primary" label="Добавить" :disable="!expiryAsk.date"
+            @click="answerExpiry({ expiry: expiryAsk.date, series: expiryAsk.series.trim() })" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog :model-value="!!unknown" @update:model-value="(open) => !open && (unknown = null)">
+      <q-card v-if="unknown" style="min-width: 360px; max-width: 520px">
+        <q-card-section>
+          <div class="text-h6">Штрихкод не найден</div>
+          <div class="text-grey-7 ellipsis-2-lines">{{ unknown.code }}</div>
+          <div class="q-mt-sm">Если это препарат из справочника в другой коробке — выберите его упаковку, и код запомнится.
+            Если препарата нет — заведите его в справочнике.</div>
+        </q-card-section>
+        <q-card-section class="q-pt-none">
+          <q-select v-model="unknown.picked" :options="unknown.found" option-value="item_unit" option-label="label" emit-value map-options
+            use-input input-debounce="300" outlined dense label="Препарат и упаковка" @filter="searchUnknown" />
+          <div v-if="unknown.error" class="text-negative q-mt-sm">{{ unknown.error }}</div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Отмена" @click="unknown = null" />
+          <q-btn unelevated color="primary" label="Запомнить код" :disable="!unknown.picked" :loading="busy === 'barcode'" @click="rememberCode" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -211,18 +265,80 @@ function toTop(line) {
   if (index > 0) form.value.lines.unshift(...form.value.lines.splice(index, 1))
 }
 
-async function addLine(unit) {
-  const existing = form.value.lines.find((l) => l.item_unit === unit.item_unit)
+// --- Сканер: товар по штрихкоду, партия — по сроку и серии (ADR-025) ----------------
+// Штрихкод говорит, ЧТО это за товар; какая это пачка — срок и серия. В приходе и
+// инвентаризации пачки с разными сроками — разные строки (разные партии). Срок берётся
+// из квадратного кода (DataMatrix); на обычном штрихкоде его нет — спрашиваем.
+const scanner = ref(null)
+const tracksExpiry = computed(() => ['receipt', 'inventory'].includes(form.value.kind))
+const expiryOf = (line) => (line.batch ? line.batch_expiry : line.expiry_date) || null
+const seriesOf = (line) => (line.batch ? line.batch_series : line.series) || ''
+// Та же партия: срок совпадает, серия — если известна с обеих сторон.
+const sameBatch = (line, pack) => expiryOf(line) === (pack.expiry || null)
+  && (!pack.series || !seriesOf(line) || seriesOf(line) === pack.series)
+const ratioOf = (line) => Number(unitOf(line)?.ratio || 1)
+const dateRu = (value) => (value ? new Date(value).toLocaleDateString('ru-RU') : '')
+
+// Добавить пачку: та же партия — +1 к её строке (в единице строки), иначе — новая строка.
+async function addPack(unit, pack = null, checklistRow = null) {
+  const matches = (l) => (pack && tracksExpiry.value
+    ? l.item === unit.item && sameBatch(l, pack)
+    : l.item_unit === unit.item_unit)
+    && (checklistRow === null || l.checklist_row === checklistRow)
+  const existing = form.value.lines.find(matches)
   if (existing) {
-    existing.quantity = String((Number(existing.quantity) || 0) + 1)
+    const add = Number(unit.ratio || 1) / ratioOf(existing)
+    existing.quantity = String(Number(((Number(existing.quantity) || 0) + add).toFixed(3)))
+    if (pack?.series && !existing.batch && !existing.series) existing.series = pack.series
     toTop(existing)
-    return
+    return existing
   }
   const units = await unitsOf(unit.item, unit.item_name)
-  form.value.lines.unshift({
+  const line = {
     item: unit.item, item_name: unit.item_name, base_unit: unit.base_unit, item_unit: unit.item_unit,
-    units: units.length ? units : [unit], quantity: '1', price: null, series: '', expiry_date: null, batch: null, batches: [],
+    units: units.length ? units : [unit], quantity: '1', price: null, series: pack?.series || '',
+    expiry_date: pack?.expiry || null, batch: null, batches: [], qty_expected: null, checklist_row: checklistRow,
+  }
+  form.value.lines.unshift(line)
+  return form.value.lines[0] ?? line
+}
+
+// Из поиска по названию: в приходе и инвентаризации — к строке без срока (срок впишут в ней),
+// иначе новая строка; в остальных документах — к строке той же единицы.
+const addLine = (unit) => addPack(unit, tracksExpiry.value ? { expiry: null, series: '' } : null)
+
+// Сроки, которые уже знаем у этого товара: строки документа и (в инвентаризации) партии склада.
+async function knownPacks(unit, fileExpiry = null) {
+  const list = []
+  const add = (expiry, series, where) => {
+    const same = list.find((o) => o.expiry === (expiry || null) && o.series === (series || ''))
+    if (same) same.where = `${same.where}, ${where}`
+    else list.push({ expiry: expiry || null, series: series || '', where })
+  }
+  for (const line of form.value.lines) {
+    if (line.item === unit.item) add(expiryOf(line), seriesOf(line), `в документе: ${line.quantity} ${unitOf(line)?.unit_name || ''}`)
+  }
+  if (fileExpiry) add(fileExpiry, '', 'по файлу склада')
+  if (form.value.kind === 'inventory' && form.value.warehouse) {
+    const params = new URLSearchParams({ item: unit.item, warehouse: form.value.warehouse })
+    const { data } = await apiGet(`inventory/stock/batches/?${params}`)
+    for (const b of data ?? []) add(b.expiry_date, b.series, `на складе: ${b.qty_text}`)
+  }
+  return list.sort((x, y) => (x.expiry || '9999').localeCompare(y.expiry || '9999'))
+}
+
+// Окно «Какой срок у этой пачки?» — ответ: { expiry, series } или null (отмена).
+const expiryAsk = ref(null)
+function askExpiry(unit, options) {
+  return new Promise((resolve) => {
+    expiryAsk.value = { item_name: unit.item_name, unit_name: unit.unit_name, options, date: '', series: '', resolve }
   })
+}
+function answerExpiry(choice) {
+  const ask = expiryAsk.value
+  expiryAsk.value = null
+  ask?.resolve(choice)
+  setTimeout(() => scanner.value?.focus(), 0)
 }
 
 async function scan() {
@@ -230,25 +346,64 @@ async function scan() {
   barcode.value = ''
   if (!code) return
   const { data } = await apiGet(`inventory/stock/lookup/?barcode=${encodeURIComponent(code)}`)
-  // Список из файла: строка с этим штрихкодом (или с этой позицией прайса) — отметить, +1 упаковка.
-  const plain = data?.[0]?.scanned_code || code.replace(/\D/g, '')
+  if (!data?.length) return unknownCode(code)
+  const unit = data[0]
+  const plain = unit.scanned_code || code.replace(/\D/g, '')
+  // Список из файла: строка с этим штрихкодом (или с этой позицией прайса).
   const rows = form.value.checklist || []
-  const same = data?.length ? rows.filter((r) => r.item_unit === data[0].item_unit) : []
-  const row = rows.find((r) => r.barcode && r.barcode === plain)
-    || same.find((r) => lineByRow(r)) || same[0]
+  const same = rows.filter((r) => r.item_unit === unit.item_unit)
+  const row = rows.find((r) => r.barcode && r.barcode === plain) || same.find((r) => lineByRow(r)) || same[0]
+  let pack = null
+  if (tracksExpiry.value) {
+    if (unit.scanned_expiry) pack = { expiry: unit.scanned_expiry, series: unit.scanned_series || '' }
+    else {
+      const options = await knownPacks(unit, row?.item_unit ? row.expiry : null)
+      pack = await askExpiry(unit, options)
+      if (!pack) return
+    }
+  }
   if (row && row.item_unit) {
-    const line = lineByRow(row)
-    if (line) line.quantity = String((Number(line.quantity) || 0) + 1)
-    else await tickRow(row, '1')
-    const ticked = lineByRow(row)
-    if (ticked) toTop(ticked)
-    if (data?.[0]?.scanned_expiry && ticked) ticked.expiry_date = data[0].scanned_expiry
-    if (data?.[0]?.scanned_series && ticked) ticked.series = data[0].scanned_series
+    if (!lineByRow(row)) {
+      await tickRow(row, '1')
+      // Срок с самой пачки (или выбранный) точнее, чем срок из старого файла.
+      const ticked = lineByRow(row)
+      if (ticked && pack) Object.assign(ticked, { expiry_date: pack.expiry, series: pack.series })
+    } else {
+      // Та же партия — +1; другой срок — ещё одна строка той же позиции файла.
+      const rowUnit = { ...unit, item: row.item, item_unit: row.item_unit, item_name: row.item_name,
+        unit_name: row.unit_name, base_unit: row.base_unit, ratio: row.ratio }
+      await addPack(unit.item === row.item ? unit : rowUnit, pack, row.row)
+    }
     panel.value?.reveal(row)
     return
   }
-  if (!data?.length) return $q.notify({ type: 'warning', message: `Товар со штрихкодом ${code} не найден` })
-  addLine(data[0])
+  addPack(unit, pack)
+}
+
+// Незнакомый код: это знакомый препарат в другой коробке — выбрать его, код запомнится.
+const unknown = ref(null)
+function unknownCode(code) {
+  if (!can('catalog.change_item')) {
+    return $q.notify({ type: 'warning', message: `Товар со штрихкодом ${code} не найден. Найдите его по названию.` })
+  }
+  unknown.value = { code, picked: null, found: [], error: '' }
+}
+async function searchUnknown(text, update, abort) {
+  if (text.trim().length < 2) return update(() => (unknown.value.found = []))
+  const { ok, data } = await apiGet(`inventory/stock/lookup/?search=${encodeURIComponent(text)}`)
+  if (!ok) return abort()
+  update(() => (unknown.value.found = data.map((u) => ({ ...u, label: `${u.item_name} — ${u.unit_name}` }))))
+}
+async function rememberCode() {
+  const { code, picked } = unknown.value
+  busy.value = 'barcode'
+  const { ok, data } = await apiPost('inventory/stock/add_barcode/', { item_unit: picked, code })
+  busy.value = ''
+  if (!ok) return (unknown.value.error = Object.values(fieldErrors(data))[0] || 'Не удалось запомнить код')
+  unknown.value = null
+  $q.notify({ type: 'positive', message: `Код ${data.code} запомнен — дальше сканер найдёт эту упаковку` })
+  barcode.value = code
+  await scan()
 }
 
 // --- Список из файла склада ------------------------------------------------------
