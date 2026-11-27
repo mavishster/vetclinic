@@ -26,25 +26,32 @@
                 <div class="text-caption text-grey-7">{{ row.unit_name }}{{ row.price ? ` · ${money(row.price)}` : '' }}</div>
               </td>
               <td style="width: 150px">
-                <q-select v-model="row.unit" :options="units" option-value="id" option-label="name" emit-value map-options dense borderless />
+                <q-select v-model="row.unit" :options="units" option-value="id" option-label="name" emit-value map-options dense borderless
+                  @update:model-value="defaultFor(row)" />
               </td>
-              <td style="width: 170px">
-                <q-input v-if="row.unit !== baseUnit" v-model="row.ratio" type="number" step="any" min="0" dense borderless
-                  input-class="text-right" :prefix="'='" :suffix="baseName" />
-                <span v-else class="text-grey-7">= 1 {{ baseName }}</span>
+              <td style="width: 260px">
+                <template v-if="row.unit !== baseUnit">
+                  <!-- Как в карточке препарата: больше или меньше единицы учёта и сколько -->
+                  <q-btn-toggle v-model="row.size" no-caps unelevated dense toggle-color="primary" spread class="q-mb-xs"
+                    :options="[{ label: `больше ${baseName}`, value: 'bigger' }, { label: `меньше ${baseName}`, value: 'smaller' }]" />
+                  <q-input v-model="row.count" type="number" step="any" min="0" dense outlined input-class="text-right"
+                    :prefix="row.size === 'smaller' ? `в 1 ${baseName} —` : `в 1 ${unitName(row)} —`"
+                    :suffix="row.size === 'smaller' ? unitName(row) : baseName" />
+                </template>
+                <span v-else class="text-grey-7">единица учёта — остаток ведётся в ней</span>
               </td>
             </tr>
           </tbody>
         </q-markup-table>
         <div class="text-caption text-grey-7">
-          Например, учёт в таблетках: таблетка = 1 таб., упаковка из 4 таблеток = 4 таб.
+          Как в карточке препарата. Учёт в упаковках: таблетка — «меньше упак.», в 1 упак. — 4 таб.
         </div>
 
         <div v-if="preview" class="q-mt-md">
           <div class="text-subtitle2">Что изменится</div>
           <div v-if="!preview.changes.length" class="text-grey-7">Ссылок на эти позиции нет — просто объединятся.</div>
           <div v-for="c in preview.changes" :key="c.title">{{ c.title }}: <b>{{ c.count }}</b></div>
-          <div class="q-mt-xs">Единицы: {{ preview.units.map((u) => `${u.unit} = ${u.ratio} ${baseName}`).join(', ') }}</div>
+          <div class="q-mt-xs">Единицы: {{ preview.units.map(describe).join('; ') }}</div>
         </div>
         <div v-if="error" class="text-negative q-mt-md">{{ error }}</div>
       </q-card-section>
@@ -77,9 +84,27 @@ const preview = ref(null)
 const error = ref('')
 const busy = ref('')
 
-// Самые мелкие единицы — кандидаты в единицы учёта.
-const PIECES = ['таб.', 'капс.', 'мл', 'шт.', 'доза', 'амп.', 'саше', 'г', 'фл.']
 const baseName = computed(() => units.value.find((u) => u.id === baseUnit.value)?.name || '')
+const unitName = (row) => units.value.find((u) => u.id === row.unit)?.name || ''
+const round = (n) => Math.round(n * 1000) / 1000
+
+// Сколько единиц учёта в единице строки: «больше» — count, «меньше» — доля 1/count.
+function ratioOf(row) {
+  if (row.unit === baseUnit.value) return 1
+  const count = Number(String(row.count ?? '').replace(',', '.'))
+  if (!count || count <= 0) return 0
+  return row.size === 'smaller' ? 1 / count : count
+}
+function setRatio(row, ratio) {
+  if (!ratio) return Object.assign(row, { size: row.size || 'bigger', count: '' })
+  const smaller = ratio < 1
+  Object.assign(row, { size: smaller ? 'smaller' : 'bigger', count: String(round(smaller ? 1 / ratio : ratio)) })
+}
+const describe = (u) => {
+  const ratio = Number(u.ratio)
+  if (ratio === 1) return `${u.unit} — единица учёта`
+  return ratio < 1 ? `в 1 ${baseName.value} — ${round(1 / ratio)} ${u.unit}` : `в 1 ${u.unit} — ${round(ratio)} ${baseName.value}`
+}
 
 // Сколько единиц учёта в позиции — из названия: «…, 4табл.» при учёте в «таб.» → 4.
 function countInName(itemName, unitName) {
@@ -89,17 +114,24 @@ function countInName(itemName, unitName) {
   return match ? Number(match[1].replace(',', '.')) : null
 }
 
-function defaults() {
-  for (const row of rows.value) {
-    const item = props.items.find((i) => i.id === row.item)
-    if (row.unit === baseUnit.value) row.ratio = '1'
-    else if (item.base_unit === baseUnit.value) row.ratio = String(Number(row.old_ratio))
-    else {
-      const count = countInName(item.name, baseName.value)
-      row.ratio = count ? String(count * Number(row.old_ratio)) : ''
-    }
-  }
+// Подсказка по умолчанию — пользователь проверяет и правит:
+// у позиции та же единица учёта — как в её карточке; иначе — по числу в названиях:
+// «…, 4табл.» при учёте в «таб.» → упаковка больше, 4; при учёте в «упак.» — таблетка меньше, 4.
+function defaultFor(row) {
+  const item = props.items.find((i) => i.id === row.item)
+  if (!item || row.unit === baseUnit.value) return
+  if (item.base_unit === baseUnit.value) return setRatio(row, Number(row.old_ratio))
+  const own = countInName(item.name, baseName.value)
+  if (own) return setRatio(row, own * Number(row.old_ratio))
+  // Сколько таких единиц в упаковке — из названия позиции, учёт которой уже в этой упаковке
+  // («…, 4табл.» при учёте в «упак.»), а не из названия самой строки («…, 1табл.»).
+  const inPack = props.items
+    .filter((i) => i.id !== row.item && i.base_unit === baseUnit.value)
+    .map((i) => countInName(i.name, unitName(row)))
+    .find((n) => n && n !== 1)
+  setRatio(row, inPack ? Number(row.old_ratio) / inPack : 0)
 }
+const defaults = () => rows.value.forEach(defaultFor)
 
 watch(() => props.modelValue, async (open) => {
   if (!open) return
@@ -109,16 +141,21 @@ watch(() => props.modelValue, async (open) => {
   const items = props.items
   mainId.value = [...items].sort((a, b) => (b.units?.length || 0) - (a.units?.length || 0))[0]?.id ?? null
   name.value = items.find((i) => i.id === mainId.value)?.name || ''
-  const pieceItem = items.find((i) => PIECES.includes(units.value.find((u) => u.id === i.base_unit)?.name))
-  baseUnit.value = (pieceItem || items[0])?.base_unit ?? null
   rows.value = items.flatMap((item) => (item.units || []).map((u) => ({
     item: item.id, item_name: item.name, item_unit: u.id, unit_name: u.unit_name, price: u.current_price ?? u.price,
-    unit: u.unit, old_ratio: u.ratio, ratio: '',
+    unit: u.unit, old_ratio: u.ratio, size: 'bigger', count: '',
   })))
+  // Единица учёта — как у основной позиции: так устроен весь справочник клиники.
+  baseUnit.value = items.find((i) => i.id === mainId.value)?.base_unit ?? null
   defaults()
 })
 
-watch(mainId, (id) => { name.value = props.items.find((i) => i.id === id)?.name || name.value })
+watch(mainId, (id) => {
+  const main = props.items.find((i) => i.id === id)
+  if (!main) return
+  name.value = main.name
+  baseUnit.value = main.base_unit
+})
 watch(baseUnit, () => defaults())
 // Изменили план — прежняя проверка уже не про него.
 watch([mainId, name, baseUnit, rows], () => { preview.value = null }, { deep: true })
@@ -126,7 +163,8 @@ watch([mainId, name, baseUnit, rows], () => { preview.value = null }, { deep: tr
 function body(dryRun) {
   return {
     main: mainId.value, items: props.items.map((i) => i.id), name: name.value, base_unit: baseUnit.value, dry_run: dryRun,
-    units: rows.value.map((r) => ({ item_unit: r.item_unit, unit: r.unit, ratio: r.unit === baseUnit.value ? '1' : r.ratio || '0' })),
+    // Доля хранится с шестью знаками, как в карточке: 1/3 = 0,333333.
+    units: rows.value.map((r) => ({ item_unit: r.item_unit, unit: r.unit, ratio: String(Math.round(ratioOf(r) * 1e6) / 1e6) })),
   }
 }
 

@@ -1075,8 +1075,8 @@ def _merge_plan(
             raise CatalogError(f"{label}: единица учёта «{base}» всегда равна 1 {base}.")
         if target.pk != base_unit.pk and ratio == 1:
             raise CatalogError(
-                f"{label}: «{target}» не может быть равна 1 {base} — укажите, сколько {base} "
-                f"в одной «{target}» (например, 4 для упаковки из 4 таблеток)."
+                f"{label}: «{target}» не может быть равна 1 {base} — укажите, больше она или "
+                f"меньше «{base}» и сколько (например, «меньше {base}», в 1 {base} — 4 {target})."
             )
         if target.pk in targets and targets[target.pk] != ratio:
             raise CatalogError(

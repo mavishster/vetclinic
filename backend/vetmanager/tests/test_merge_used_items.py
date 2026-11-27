@@ -181,3 +181,31 @@ def test_merge_api(pair, invoices) -> None:
     assert done.status_code == 200, done.json()
     assert done.json()["item"]["base_unit_name"] == "таб."
     assert ItemUnit.objects.filter(item=pack).count() == 2
+
+
+def test_merge_keeping_stock_in_packs(pair, invoices) -> None:
+    """Как устроен справочник клиники: учёт в упаковках, таблетка — «меньше упак.», в 1 упак. — 4 таб."""
+    tablet, pack = pair
+    tab, upak = Unit.objects.get(name="таб."), Unit.objects.get(name="упак.")
+
+    catalog.merge_items(
+        pack.pk,
+        [pack.pk, tablet.pk],
+        "Пинпрамиль 4мг/10мг для кошек и котят (0,5–2 кг)",
+        upak.pk,
+        [
+            {"item_unit": pack.units.get().pk, "unit": upak.pk, "ratio": D("1")},
+            {"item_unit": tablet.units.get().pk, "unit": tab.pk, "ratio": D("0.25")},
+        ],
+        dry_run=False,
+    )
+
+    main = Item.objects.get(pk=pack.pk)
+    assert main.base_unit == upak
+    assert sorted((u.unit.name, u.ratio, u.price) for u in main.units.all()) == [
+        ("таб.", D("0.25"), D("110")),
+        ("упак.", D("1"), D("425")),
+    ]
+    lines = {line.item_unit.unit.name: line for line in InvoiceLine.objects.filter(item=main)}
+    assert (lines["таб."].quantity, lines["таб."].qty_base) == (D("2"), D("0.5"))  # 2 таб = ½ упак
+    assert (lines["упак."].quantity, lines["упак."].qty_base) == (D("1"), D("1"))
