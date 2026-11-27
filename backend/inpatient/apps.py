@@ -6,8 +6,14 @@ class InpatientConfig(AppConfig):
     verbose_name = "Стационар"
 
     def ready(self) -> None:
+        from core.events import items_merging
         from core.printing import register_kind
         from inpatient import qr, services
+
+        items_merging.connect(
+            lambda sender, merge, **kw: services.merge_items(merge),
+            weak=False, dispatch_uid="inpatient_merge_items",
+        )  # fmt: skip
 
         register_kind(
             "treatment_sheet",

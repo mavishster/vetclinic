@@ -13,3 +13,9 @@ from django.dispatch import Signal
 
 document_executed = Signal()  # аргументы: document
 document_rolled_back = Signal()  # аргументы: document
+
+# Объединение позиций прайса (ADR-026). Аргументы: merge (catalog.services.ItemMerge).
+# Каждый модуль переводит свои записи на основную позицию и возвращает, сколько их,
+# [(что, сколько)]. При merge.dry_run ничего не меняет — только считает. Нельзя объединять —
+# CatalogError с понятным текстом.
+items_merging = Signal()

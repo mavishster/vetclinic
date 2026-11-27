@@ -8,6 +8,7 @@
 
 import re
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, TypedDict
 
@@ -929,3 +930,259 @@ def qty_formatter(item_ids: Iterable[Any]) -> Callable[[Any, Decimal | None], st
 def qty_text(item: Any, qty: Decimal | None) -> str:
     """Остаток одного товара словами (см. qty_formatter)."""
     return qty_formatter([item])(item, qty)
+
+
+# --- Объединение позиций (ADR-026) -------------------------------------------------
+
+
+@dataclass
+class ItemMerge:
+    """Что во что переводится при объединении позиций.
+
+    units — старая единица → единица, которая останется у основной позиции (та же
+    упаковка; количество «в этой единице» в строках не меняется). factors — во сколько раз
+    меняется количество «в единицах учёта» у записей каждой позиции: была единица учёта
+    «упак.», стала «таб.» при 4 таб. в упаковке → 4.
+    """
+
+    main: Item
+    items: list[Item]  # все объединяемые, основная — первой
+    units: dict[Any, Any]
+    owners: dict[Any, Any]  # единица → позиция, которой она принадлежала
+    factors: dict[Any, Decimal]
+    dry_run: bool
+
+    def changes_item(self, item_id: Any) -> bool:
+        return item_id != self.main.pk or self.factors[item_id] != 1
+
+
+class MergeUnit(TypedDict):
+    item_unit: Any
+    unit: Any
+    ratio: Decimal
+
+
+def repoint_rows(
+    model: Any,
+    merge: ItemMerge,
+    item_field: str | None = None,
+    unit_field: str | None = None,
+    qty_fields: tuple[str, ...] = (),
+) -> int:
+    """Перевести записи чужого модуля на основную позицию: позицию, единицу и количества
+    в единицах учёта (× factor). Возвращает, сколько записей затронуто.
+
+    Сначала собираются номера записей, потом обновляются: запись, переведённая на
+    единицу-«хранителя», не пересчитывается второй раз.
+    """
+    manager = model._base_manager
+    plan: list[tuple[list[Any], dict[str, Any]]] = []
+
+    def updates(item_id: Any, keeper: Any = None) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        if item_field:
+            result[f"{item_field}_id"] = merge.main.pk
+        if keeper is not None and unit_field:
+            result[f"{unit_field}_id"] = keeper
+        factor = merge.factors[item_id]
+        if factor != 1:
+            result.update({name: F(name) * factor for name in qty_fields})
+        return result
+
+    if unit_field:
+        for old, keeper in merge.units.items():
+            owner = merge.owners[old]
+            if old == keeper and not merge.changes_item(owner):
+                continue
+            pks = list(manager.filter(**{unit_field: old}).values_list("pk", flat=True))
+            if pks:
+                plan.append((pks, updates(owner, keeper)))
+    if item_field:
+        rows = manager.all()
+        if unit_field:
+            rows = rows.filter(**{f"{unit_field}__isnull": True})
+        for item in merge.items:
+            if not merge.changes_item(item.pk):
+                continue
+            pks = list(rows.filter(**{item_field: item.pk}).values_list("pk", flat=True))
+            if pks:
+                plan.append((pks, updates(item.pk)))
+    total = sum(len(pks) for pks, _ in plan)
+    if not merge.dry_run:
+        for pks, values in plan:
+            manager.filter(pk__in=pks).update(**values)
+    return total
+
+
+def _merge_plan(
+    main_id: Any, item_ids: list[Any], base_unit_id: Any, units: list[MergeUnit]
+) -> tuple[ItemMerge, dict[Any, tuple[Any, Decimal]]]:
+    """Проверить план объединения. Возвращает ItemMerge и для каждой единицы-«хранителя» —
+    (единица, количество в единице учёта)."""
+    ids = list(dict.fromkeys(str(i) for i in item_ids))
+    if str(main_id) not in ids:
+        ids.insert(0, str(main_id))
+    found = {str(i.pk): i for i in Item.objects.filter(pk__in=ids).select_related("base_unit")}
+    if len(found) != len(ids):
+        raise CatalogError("Позиция не найдена — обновите страницу.")
+    if len(ids) < 2:
+        raise CatalogError("Отметьте хотя бы две позиции.")
+    items = [found[str(main_id)]] + [found[i] for i in ids if i != str(main_id)]
+    if len({i.kind for i in items}) > 1 or items[0].kind == Kind.COMBO:
+        raise CatalogError("Объединять можно товары с товарами или услуги с услугами.")
+    base_unit = Unit.objects.filter(pk=base_unit_id).first()
+    if base_unit is None:
+        raise CatalogError("Выберите единицу учёта.")
+    base = base_unit.name
+
+    stored = {
+        str(u.pk): u for u in ItemUnit.objects.filter(item__in=items).select_related("unit", "item")
+    }
+    plan = {str(row.get("item_unit")): row for row in units}
+    missing = [u for key, u in stored.items() if key not in plan]
+    if missing:
+        raise CatalogError(f"Не указано, чем станет «{missing[0].unit}» у «{missing[0].item}».")
+    targets: dict[Any, Decimal] = {}  # единица → количество в единице учёта
+    target_of: dict[str, Any] = {}  # старая единица → во что превращается
+    factors: dict[Any, Decimal] = {}
+    for key, unit in stored.items():
+        row = plan[key]
+        ratio = D(str(row.get("ratio") or 0))
+        target = Unit.objects.filter(pk=row.get("unit")).first()
+        label = f"«{unit.item}» ({unit.unit})"
+        if target is None or ratio <= 0:
+            raise CatalogError(f"{label}: выберите единицу и укажите, сколько в ней {base}.")
+        if target.pk == base_unit.pk and ratio != 1:
+            raise CatalogError(f"{label}: единица учёта «{base}» всегда равна 1 {base}.")
+        if target.pk != base_unit.pk and ratio == 1:
+            raise CatalogError(
+                f"{label}: «{target}» не может быть равна 1 {base} — укажите, сколько {base} "
+                f"в одной «{target}» (например, 4 для упаковки из 4 таблеток)."
+            )
+        if target.pk in targets and targets[target.pk] != ratio:
+            raise CatalogError(
+                f"«{target}» указана с разным количеством: {_num(targets[target.pk])} и "
+                f"{_num(ratio)} {base}. Для одной из упаковок выберите другую единицу."
+            )
+        targets[target.pk] = ratio
+        target_of[key] = target.pk
+        factor = ratio / unit.ratio
+        previous = factors.setdefault(unit.item_id, factor)
+        if abs(previous - factor) > D("0.000001") * previous:
+            raise CatalogError(
+                f"«{unit.item}»: количества единиц не сходятся между собой — проверьте, сколько "
+                f"{base} в каждой её единице."
+            )
+    for item in items:
+        factors.setdefault(item.pk, D("1"))  # у позиции нет единиц — пересчитывать нечего
+
+    # Хранитель единицы: своя единица основной позиции, иначе — первая по порядку позиций.
+    order = {item.pk: n for n, item in enumerate(items)}
+    keepers: dict[Any, ItemUnit] = {}
+    for unit in sorted(stored.values(), key=lambda u: (order[u.item_id], u.ratio)):
+        keepers.setdefault(target_of[str(unit.pk)], unit)
+    unit_map = {u.pk: keepers[target_of[key]].pk for key, u in stored.items()}
+    owners = {u.pk: u.item_id for u in stored.values()}
+    keeper_plan = {keeper.pk: (unit_id, targets[unit_id]) for unit_id, keeper in keepers.items()}
+    merge = ItemMerge(
+        main=items[0],
+        items=items,
+        units=unit_map,
+        owners=owners,
+        factors=factors,
+        dry_run=True,
+    )
+    merge.main.base_unit = base_unit
+    return merge, keeper_plan
+
+
+def _num(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def _merge_own(merge: ItemMerge) -> list[tuple[str, int]]:
+    """Свои записи каталога: строки комбинаций (единица)."""
+    lines = repoint_rows(CombinationLine, merge, unit_field="item_unit")
+    return [("строки комбинаций", lines)] if lines else []
+
+
+@transaction.atomic
+def merge_items(
+    main_id: Any,
+    item_ids: list[Any],
+    name: str,
+    base_unit_id: Any,
+    units: list[MergeUnit],
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Объединить позиции прайса в одну, в том числе уже использованные (ADR-026).
+
+    Все записи (счета, медкарта, черновики склада, комбинации, связи с VetManager)
+    переводятся на основную позицию; количества в единицах учёта пересчитываются.
+    Остатки и движения склада не пересчитываются — с ними объединять нельзя.
+    dry_run — только посчитать, что изменится.
+    """
+    from core.events import items_merging
+
+    merge, keeper_plan = _merge_plan(main_id, item_ids, base_unit_id, units)
+    changes: list[tuple[str, int]] = _merge_own(merge)
+    for _receiver, result in items_merging.send(sender=Item, merge=merge):
+        changes.extend(list(result or []))
+    summary = {
+        "changes": [{"title": t, "count": c} for t, c in changes if c],
+        "units": [
+            {"unit": Unit.objects.get(pk=unit_id).name, "ratio": _num(ratio)}
+            for unit_id, ratio in sorted(keeper_plan.values(), key=lambda row: row[1])
+        ],
+    }
+    if dry_run:
+        return summary
+
+    merge.dry_run = False
+    main = merge.main
+    _merge_own(merge)
+    items_merging.send(sender=Item, merge=merge)
+
+    keepers = set(keeper_plan)
+    stored = ItemUnit.objects.filter(item__in=merge.items)
+    for unit in stored.exclude(pk__in=keepers):
+        keeper_id = merge.units[unit.pk]
+        ItemUnitBarcode.objects.filter(item_unit=unit).update(item_unit_id=keeper_id)
+        if unit.barcode:
+            keeper = ItemUnit.objects.get(pk=keeper_id)
+            if unit.barcode != keeper.barcode and not keeper.barcode:
+                keeper.barcode = unit.barcode
+                keeper.save(update_fields=["barcode"])
+            elif unit.barcode != keeper.barcode:
+                ItemUnitBarcode.objects.create(item_unit=keeper, code=unit.barcode)
+            unit.barcode = ""
+            unit.save(update_fields=["barcode"])
+        unit.delete()
+    for keeper in ItemUnit.objects.filter(pk__in=keepers):
+        unit_id, ratio = keeper_plan[keeper.pk]
+        keeper.item = main
+        keeper.unit_id = unit_id
+        keeper.ratio = ratio
+        keeper.save()
+
+    others = merge.items[1:]
+    main.name = (name or main.name).strip()[:255]
+    if not main.name:
+        raise CatalogError("Укажите название.")
+    if main.manual_cost is not None:
+        main.manual_cost = (main.manual_cost / merge.factors[main.pk]).quantize(D("0.01"))
+    else:
+        donor = next((o for o in others if o.manual_cost is not None), None)
+        if donor is not None and donor.manual_cost is not None:
+            main.manual_cost = (donor.manual_cost / merge.factors[donor.pk]).quantize(D("0.01"))
+    main.stock_tracked = any(i.stock_tracked for i in merge.items)
+    main.save()
+    for other in others:
+        main.substances.add(*other.substances.all())
+        main.drug_groups.add(*other.drug_groups.all())
+        main.responsible.add(*other.responsible.all())
+        other.is_active = False
+        other.save(update_fields=["is_active"])
+        other.delete()
+    summary["item"] = str(main.pk)
+    return summary

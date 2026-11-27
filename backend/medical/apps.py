@@ -7,8 +7,14 @@ class MedicalConfig(AppConfig):
 
     def ready(self) -> None:
         from core.attachments import register_owner
+        from core.events import items_merging
         from core.printing import register_kind
         from medical import services
+
+        items_merging.connect(
+            lambda sender, merge, **kw: services.merge_items(merge),
+            weak=False, dispatch_uid="medical_merge_items",
+        )  # fmt: skip
 
         register_owner("medical.visit")  # снимки, результаты, сканы к записи медкарты
         register_kind(

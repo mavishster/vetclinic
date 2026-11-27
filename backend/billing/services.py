@@ -1116,3 +1116,15 @@ def margin_text(margin: Margin) -> dict[str, Any]:
         "margin": str(margin["margin"]) if margin["margin"] is not None else None,
         "unknown_cost": margin["unknown_cost"],
     }
+
+
+# --- Объединение позиций прайса (ADR-026) -------------------------------------------
+
+
+def merge_items(merge: Any) -> list[tuple[str, int]]:
+    """Строки счетов — на основную позицию. Количество в единице строки и суммы не меняются
+    (та же упаковка), количество в единицах учёта пересчитывается."""
+    lines = catalog.repoint_rows(
+        InvoiceLine, merge, item_field="item", unit_field="item_unit", qty_fields=("qty_base",)
+    )
+    return [("строки счетов", lines)]

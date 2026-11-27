@@ -745,3 +745,23 @@ def visit_by_lab_code(code: Any) -> Visit | None:
     except ValueError:
         return None
     return Visit.objects.select_related("pet", "client").filter(lab_code=number).first()
+
+
+# --- Объединение позиций прайса (ADR-026) -------------------------------------------
+
+
+def merge_items(merge: Any) -> list[tuple[str, int]]:
+    """Медкарта: профилактика (количество — в единицах учёта), назначения и позиции приёма."""
+    from medical.models import Prescription
+
+    return [
+        (
+            "профилактика в медкартах",
+            catalog.repoint_rows(Prevention, merge, item_field="item", qty_fields=("quantity",)),
+        ),
+        (
+            "назначения в медкартах",
+            catalog.repoint_rows(Prescription, merge, item_field="item", unit_field="sell_unit"),
+        ),
+        ("позиции приёмов", catalog.repoint_rows(VisitItem, merge, unit_field="item_unit")),
+    ]

@@ -17,6 +17,13 @@ class BillingConfig(AppConfig):
 
         document_executed.connect(use_advance, sender=Invoice, dispatch_uid="billing_use_advance")
 
+        from core.events import items_merging
+
+        items_merging.connect(
+            lambda sender, merge, **kw: services.merge_items(merge),
+            weak=False, dispatch_uid="billing_merge_items",
+        )  # fmt: skip
+
         register_kind(
             "invoice",
             "Счёт",

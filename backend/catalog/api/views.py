@@ -278,6 +278,30 @@ class ItemViewSet(viewsets.ModelViewSet):  # type: ignore[type-arg]
             item.save(update_fields=["group"])
         return Response({"updated": len(items)})
 
+    @action(detail=False, methods=["post"])
+    def merge(self, request: Request) -> Response:
+        """Объединить позиции (ADR-026): {"main", "items", "name", "base_unit",
+        "units": [{"item_unit", "unit", "ratio"}], "dry_run"}. dry_run — только посчитать,
+        что изменится: {"changes": [{"title", "count"}], "units": [{"unit", "ratio"}]}."""
+        user = request.user
+        if not (user.has_perm("catalog.change_item") and user.has_perm("catalog.delete_item")):
+            raise PermissionDenied("Объединять может тот, кому можно менять и удалять позиции.")
+        data = request.data
+        try:
+            result = services.merge_items(
+                data.get("main"),
+                list(data.get("items") or []),
+                str(data.get("name") or ""),
+                data.get("base_unit"),
+                list(data.get("units") or []),
+                dry_run=bool(data.get("dry_run", True)),
+            )
+        except services.CatalogError as error:
+            raise ValidationError({"non_field_errors": [str(error)]}) from error
+        if "item" in result:
+            result["item"] = self.get_serializer(services.get_item(result["item"])).data
+        return Response(result)
+
     @action(detail=True, methods=["post"], url_path="reset-prices")
     def reset_prices(self, request: Request, pk: str | None = None) -> Response:
         """Комбинация: сбросить свои цены позиций — дальше они идут по прайсу."""

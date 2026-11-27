@@ -400,3 +400,13 @@ def my_tasks(user: Any, everyone: bool = False) -> QuerySet[TreatmentTask]:
     return tasks.select_related("plan", "hospitalization__pet", "hospitalization__ward").order_by(
         "scheduled_at"
     )
+
+
+# --- Объединение позиций прайса (ADR-026) -------------------------------------------
+
+
+def merge_items(merge: Any) -> list[tuple[str, int]]:
+    """Стационар: суточная позиция палаты и препараты в листах назначений."""
+    wards = catalog.repoint_rows(Ward, merge, item_field="daily_item")
+    plans = catalog.repoint_rows(TreatmentPlan, merge, item_field="item")
+    return [("палаты (суточная позиция)", wards), ("листы назначений стационара", plans)]

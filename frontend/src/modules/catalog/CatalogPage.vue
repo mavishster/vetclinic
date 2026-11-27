@@ -42,6 +42,7 @@
       <!-- Переложить разом: пригодилось после разбора групп -->
       <q-select v-model="moveTo" :options="moveOptions" option-value="id" option-label="name" emit-value map-options
         dense outlined label="Переложить в группу" style="min-width: 220px" @update:model-value="moveGroup" />
+      <q-btn v-if="canMerge" outline color="primary" icon="merge" label="Объединить" @click="mergeOpen = true" />
       <q-btn flat label="Снять отметки" @click="selected = []" />
     </div>
 
@@ -71,6 +72,7 @@
     </q-table>
 
     <DrugBulkDialog v-model="drugBulkOpen" :items="selected" @saved="selected = []; reload()" />
+    <MergeItemsDialog v-model="mergeOpen" :items="selected" @merged="selected = []; reload()" />
     <ItemEditDialog v-model="editorOpen" :item="editing" :kind="newKind" @saved="reload" />
     <ComboEditDialog v-model="comboOpen" :item="editing" @saved="reload" />
     <ImportDialog v-model="importOpen" @imported="reload" />
@@ -85,6 +87,7 @@ import { can } from '@/session'
 import ComboEditDialog from './ComboEditDialog.vue'
 import ImportDialog from './ImportDialog.vue'
 import DrugBulkDialog from './DrugBulkDialog.vue'
+import MergeItemsDialog from './MergeItemsDialog.vue'
 import ItemEditDialog from './ItemEditDialog.vue'
 import { money } from './money'
 
@@ -154,6 +157,11 @@ const groupOptions = computed(() => {
   return groups.value.filter((g) => !groupKind || g.kind === groupKind)
 })
 const selected = ref([])
+const mergeOpen = ref(false)
+// Объединить — две и больше позиции одного вида (товары или услуги), не комбинации.
+const canMerge = computed(() => can('catalog.change_item') && can('catalog.delete_item')
+  && selected.value.length > 1 && new Set(selected.value.map((r) => r.kind)).size === 1
+  && selected.value[0].kind !== 'combo')
 const drugBulkOpen = ref(false)
 const canEditItems = can('catalog.change_item')
 

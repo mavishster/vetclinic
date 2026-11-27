@@ -22,6 +22,7 @@ from catalog.models import Kind
 from core import services as core
 from inventory.models import (
     Batch,
+    DepartmentNorm,
     MinStock,
     StockDocument,
     StockLine,
@@ -1086,3 +1087,57 @@ def warehouse_totals(visible: Any = None) -> list[WarehouseTotal]:
         total["positions"] = len({r["item"] for r in balances(key) if r["qty"] > 0})
         total["cost"] = total["cost"].quantize(Decimal("0.01"))
     return sorted(result.values(), key=lambda t: t["warehouse_name"])
+
+
+# --- Объединение позиций прайса (ADR-026) -------------------------------------------
+
+
+def merge_items(merge: Any) -> list[tuple[str, int]]:
+    """Склад при объединении позиций: черновики документов, минимумы и нормы отделений.
+
+    Остатки и движения не пересчитываются: журнал склада не переписывается задним числом.
+    Позицию с движениями (кроме основной без смены единицы учёта) объединять нельзя.
+    """
+    changed = [item for item in merge.items if merge.changes_item(item.pk)]
+    for item in changed:
+        moved = StockMovement.objects.filter(item=item).effective().exists()
+        if moved or Batch.objects.filter(item=item).exists():
+            raise catalog.CatalogError(
+                f"По «{item.name}» уже есть остатки или движения на складе — объединять нельзя: "
+                "склад не пересчитывается задним числом. Объединяйте до прихода и инвентаризации "
+                "или откатите их, объедините позиции и выполните документы снова."
+            )
+    lines = catalog.repoint_rows(
+        StockLine, merge, item_field="item", unit_field="item_unit",
+        qty_fields=("qty_base", "qty_expected"),
+    )  # fmt: skip
+    result = [("строки складских документов (черновики)", lines)]
+    for model, key, field, title in (
+        (MinStock, "warehouse_id", "min_qty", "минимальные остатки"),
+        (DepartmentNorm, "department_id", "norm_qty", "нормы отделений"),
+    ):
+        result.append((title, _merge_limits(model, key, field, merge)))
+    return result
+
+
+def _merge_limits(model: Any, key: str, field: str, merge: Any) -> int:
+    """Минимумы и нормы: в единицах учёта (× factor); на одном складе — складываются."""
+    rows = list(model.objects.filter(item__in=[i.pk for i in merge.items]).order_by("created_at"))
+    rows.sort(key=lambda row: row.item_id != merge.main.pk)  # строки основной — первыми
+    touched = [row for row in rows if merge.changes_item(row.item_id)]
+    if merge.dry_run:
+        return len(touched)
+    kept: dict[Any, Any] = {}
+    for row in rows:
+        value = getattr(row, field) * merge.factors[row.item_id]
+        target = kept.get(getattr(row, key))
+        if target is None:
+            row.item_id = merge.main.pk
+            setattr(row, field, value)
+            kept[getattr(row, key)] = row
+        else:
+            setattr(target, field, getattr(target, field) + value)
+            row.delete()
+    for row in kept.values():
+        row.save()
+    return len(touched)

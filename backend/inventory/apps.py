@@ -6,8 +6,14 @@ class InventoryConfig(AppConfig):
     verbose_name = "Склад"
 
     def ready(self) -> None:
+        from core.events import items_merging
         from core.printing import register_kind
-        from inventory import labels
+        from inventory import labels, services
+
+        items_merging.connect(
+            lambda sender, merge, **kw: services.merge_items(merge),
+            weak=False, dispatch_uid="inventory_merge_items",
+        )  # fmt: skip
 
         register_kind(
             "label",
